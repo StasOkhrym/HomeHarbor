@@ -1,0 +1,60 @@
+---
+- name: Deploy Go Tunnels
+  hosts: go_tunnels
+  become: true
+  vars:
+    go_tunnels_dir: /opt/go-tunnels
+  tasks:
+    - name: Install Docker packages
+      ansible.builtin.apt:
+        name: [docker.io, docker-compose-v2]
+        state: present
+        update_cache: true
+    - name: Enable Docker
+      ansible.builtin.service:
+        name: docker
+        enabled: true
+        state: started
+    - name: Create application directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      loop: ["{{ go_tunnels_dir }}", "{{ go_tunnels_dir }}/config", "{{ go_tunnels_dir }}/deploy", "{{ go_tunnels_dir }}/secrets"]
+    - name: Copy repository deployment bundle
+      ansible.builtin.copy:
+        src: "../../../{{ item }}"
+        dest: "{{ go_tunnels_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: preserve
+      loop: [go.mod, go.sum, cmd, internal, config, deploy]
+      notify: Restart Go Tunnels
+    - name: Write deployment secrets
+      ansible.builtin.copy:
+        content: "{{ item.value }}\n"
+        dest: "{{ go_tunnels_dir }}/secrets/{{ item.key }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      loop: "{{ go_tunnels_secrets | dict2items }}"
+      notify: Restart Go Tunnels
+    - name: Render service configuration
+      ansible.builtin.template:
+        src: "templates/{{ item }}.toml.j2"
+        dest: "{{ go_tunnels_dir }}/config/{{ item }}.toml"
+        owner: root
+        group: root
+        mode: "0640"
+      no_log: true
+      loop: [control, relay]
+      notify: Restart Go Tunnels
+  handlers:
+    - name: Restart Go Tunnels
+      ansible.builtin.command:
+        cmd: docker compose -f deploy/compose.yaml up -d --build --remove-orphans
+        chdir: "{{ go_tunnels_dir }}"
+      changed_when: true

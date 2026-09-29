@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS webauthn_credentials;
+DROP TABLE IF EXISTS recovery_codes;
+DROP TABLE IF EXISTS policy_revisions;
+DROP TABLE IF EXISTS policy_rules;
+DROP TABLE IF EXISTS dns_routes;
+DROP TABLE IF EXISTS advertised_routes;
+DROP TABLE IF EXISTS audit_events;
+DROP TABLE IF EXISTS device_credentials;
+DROP TABLE IF EXISTS devices;
+DROP TABLE IF EXISTS enrollment_tokens;

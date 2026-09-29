@@ -1,0 +1,14 @@
+.env
+.DS_Store
+.idea/
+.vscode/
+bin/
+coverage.out
+dist/
+tmp/
+.superpowers/
+.worktrees/
+secrets/
+*.local.toml
+config/control.toml
+config/relay.toml

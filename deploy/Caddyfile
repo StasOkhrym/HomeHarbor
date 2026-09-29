@@ -1,0 +1,8 @@
+{$CONTROL_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy control:8080
+}
+
+{$RELAY_DOMAIN} {
+    reverse_proxy relay:8081
+}
