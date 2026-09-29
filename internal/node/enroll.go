@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -29,7 +30,7 @@ func Enroll(ctx context.Context, httpClient *http.Client, controlURL, token, nam
 	if err != nil {
 		return fmt.Errorf("enroll device: %w", err)
 	}
-	defer response.Body.Close()
+	defer func(body io.ReadCloser) { _ = body.Close() }(response.Body)
 	if response.StatusCode != http.StatusCreated {
 		return fmt.Errorf("enroll device: control plane returned %s", response.Status)
 	}
@@ -42,5 +43,41 @@ func Enroll(ctx context.Context, httpClient *http.Client, controlURL, token, nam
 	}
 	state.DeviceID = device.ID
 	state.DeviceCredential = device.Credential
+	return nil
+}
+
+// RefreshCredential rotates the bearer credential before its short lifetime
+// expires. Only the current credential is sent; the replacement is persisted
+// by the caller through the same atomic state-file path as enrollment.
+func RefreshCredential(ctx context.Context, httpClient *http.Client, controlURL string, state *State) error {
+	if state == nil || state.DeviceID == "" || state.DeviceCredential == "" {
+		return errors.New("node identity and credential are required")
+	}
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(controlURL, "/")+"/api/v1/devices/credentials/rotate", nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+state.DeviceCredential)
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("rotate device credential: %w", err)
+	}
+	defer func(body io.ReadCloser) { _ = body.Close() }(response.Body)
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("rotate device credential: control plane returned %s", response.Status)
+	}
+	var result struct {
+		Credential string `json:"credential"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return err
+	}
+	if result.Credential == "" {
+		return errors.New("control plane returned an empty rotated credential")
+	}
+	state.DeviceCredential = result.Credential
 	return nil
 }

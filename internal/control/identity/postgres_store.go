@@ -20,7 +20,7 @@ func (s *PostgresStore) SaveRecoveryCodes(ctx context.Context, codes []RecoveryC
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	// Rotation is a set replacement, not an append. Deleting and inserting in
 	// one transaction prevents old and new emergency credentials overlapping.
 	if _, err = tx.Exec(ctx, `DELETE FROM recovery_codes`); err != nil {
@@ -90,7 +90,7 @@ func (s *PostgresStore) SaveCredential(ctx context.Context, userHandle []byte, c
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	// A table lock serializes the empty-set check with the first insert. Row
 	// locks cannot protect an absence, which is the state bootstrap relies on.
 	if _, err = tx.Exec(ctx, `LOCK TABLE webauthn_credentials IN EXCLUSIVE MODE`); err != nil {
@@ -114,7 +114,7 @@ func (s *PostgresStore) UpdateCredential(ctx context.Context, userHandle []byte,
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var storedPayload []byte
 	if err = tx.QueryRow(ctx, `SELECT credential_data FROM webauthn_credentials WHERE user_handle=$1 AND credential_id=$2 FOR UPDATE`, userHandle, credential.ID).Scan(&storedPayload); errors.Is(err, pgx.ErrNoRows) {
 		return ErrInvalidCredential

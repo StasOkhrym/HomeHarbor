@@ -26,6 +26,11 @@ const (
 	StatusRevoked Status = "revoked"
 )
 
+// CredentialTTL limits the useful lifetime of a bearer credential. Clients
+// rotate before expiry, so compromise has a bounded window without forcing a
+// user through enrollment again.
+const CredentialTTL = 15 * time.Minute
+
 var (
 	ErrInvalidEnrollmentToken = errors.New("invalid or expired enrollment token")
 	ErrDeviceNotFound         = errors.New("device not found")
@@ -74,6 +79,14 @@ type Store interface {
 	ListDevices(context.Context) ([]Device, error)
 	RevokeDevice(context.Context, string, time.Time) error
 	AuthenticateCredential(context.Context, [32]byte, time.Time) (Device, error)
+	RotateCredential(context.Context, string, [32]byte, [32]byte, time.Time, time.Time) error
+}
+
+// AtomicEnroller combines token consumption and device persistence. PostgreSQL
+// implements this with one transaction so a failed device insert cannot burn a
+// one-time enrollment token.
+type AtomicEnroller interface {
+	Enroll(context.Context, [32]byte, time.Time, Device) (Role, error)
 }
 
 type Service struct {
@@ -135,10 +148,6 @@ func (s *Service) Enroll(ctx context.Context, request EnrollRequest) (Device, er
 		return Device{}, errors.New("name and public keys are required")
 	}
 	now := s.now().UTC()
-	role, err := s.store.ConsumeEnrollmentToken(ctx, sha256.Sum256([]byte(request.Token)), now)
-	if err != nil {
-		return Device{}, ErrInvalidEnrollmentToken
-	}
 	id, err := s.randomString(16)
 	if err != nil {
 		return Device{}, err
@@ -147,9 +156,25 @@ func (s *Service) Enroll(ctx context.Context, request EnrollRequest) (Device, er
 	if err != nil {
 		return Device{}, err
 	}
-	device := Device{ID: id, Name: request.Name, Role: role, Status: StatusActive, IdentityPublicKey: request.IdentityPublicKey, WireGuardPublicKey: request.WireGuardPublicKey, CreatedAt: now, Credential: credential, CredentialHash: sha256.Sum256([]byte(credential))}
-	if err := s.store.SaveDevice(ctx, device); err != nil {
-		return Device{}, err
+	device := Device{ID: id, Name: request.Name, Status: StatusActive, IdentityPublicKey: request.IdentityPublicKey, WireGuardPublicKey: request.WireGuardPublicKey, CreatedAt: now, Credential: credential, CredentialHash: sha256.Sum256([]byte(credential))}
+	if atomic, ok := s.store.(AtomicEnroller); ok {
+		role, atomicErr := atomic.Enroll(ctx, sha256.Sum256([]byte(request.Token)), now, device)
+		if atomicErr != nil {
+			if errors.Is(atomicErr, ErrInvalidEnrollmentToken) {
+				return Device{}, ErrInvalidEnrollmentToken
+			}
+			return Device{}, atomicErr
+		}
+		device.Role = role
+	} else {
+		role, consumeErr := s.store.ConsumeEnrollmentToken(ctx, sha256.Sum256([]byte(request.Token)), now)
+		if consumeErr != nil {
+			return Device{}, ErrInvalidEnrollmentToken
+		}
+		device.Role = role
+		if saveErr := s.store.SaveDevice(ctx, device); saveErr != nil {
+			return Device{}, saveErr
+		}
 	}
 	if s.publisher != nil {
 		// GoChannel events are side effects, not part of the enrollment
@@ -177,6 +202,25 @@ func (s *Service) Authenticate(ctx context.Context, credential string) (Device, 
 
 	return s.store.AuthenticateCredential(ctx, sha256.Sum256([]byte(credential)), s.now().UTC())
 }
+
+// RotateCredential atomically replaces a still-valid credential. The old hash
+// is part of the update predicate, preventing two concurrent refreshes from
+// both succeeding with the same bearer credential.
+func (s *Service) RotateCredential(ctx context.Context, deviceID, credential string) (string, error) {
+	if strings.TrimSpace(deviceID) == "" || credential == "" {
+		return "", ErrDeviceNotFound
+	}
+	newCredential, err := s.randomString(32)
+	if err != nil {
+		return "", err
+	}
+	now := s.now().UTC()
+	if err := s.store.RotateCredential(ctx, deviceID, sha256.Sum256([]byte(credential)), sha256.Sum256([]byte(newCredential)), now, now.Add(CredentialTTL)); err != nil {
+		return "", err
+	}
+	return newCredential, nil
+}
+
 func (s *Service) randomString(size int) (string, error) {
 	b := make([]byte, size)
 	if _, err := io.ReadFull(s.random, b); err != nil {

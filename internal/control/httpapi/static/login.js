@@ -1,0 +1,42 @@
+const status = document.querySelector('#status');
+const bytes = value => Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+const encode = value => btoa(String.fromCharCode(...new Uint8Array(value))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+document.querySelector('#passkey').onclick = async () => {
+  const begin = await fetch('/api/v1/auth/login/begin', {method: 'POST'}).then(r => r.json());
+  const options = begin.options.publicKey;
+  options.challenge = bytes(options.challenge);
+  if (options.allowCredentials) options.allowCredentials.forEach(c => c.id = bytes(c.id));
+  const credential = await navigator.credentials.get({publicKey: options});
+  const response = {id: credential.id, rawId: encode(credential.rawId), type: credential.type, response: {
+    authenticatorData: encode(credential.response.authenticatorData),
+    clientDataJSON: encode(credential.response.clientDataJSON),
+    signature: encode(credential.response.signature),
+    userHandle: credential.response.userHandle ? encode(credential.response.userHandle) : null
+  }};
+  const result = await fetch('/api/v1/auth/login/finish', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ceremony_id: begin.ceremony_id, response})});
+  location.href = result.ok ? '/admin' : '/admin/login';
+};
+
+document.querySelector('#bootstrap').onclick = async () => {
+  const begin = await fetch('/api/v1/auth/bootstrap/begin', {method: 'POST'}).then(r => r.json());
+  const options = begin.options.publicKey;
+  options.challenge = bytes(options.challenge);
+  options.user.id = bytes(options.user.id);
+  if (options.excludeCredentials) options.excludeCredentials.forEach(c => c.id = bytes(c.id));
+  const credential = await navigator.credentials.create({publicKey: options});
+  const response = {id: credential.id, rawId: encode(credential.rawId), type: credential.type, response: {
+    attestationObject: encode(credential.response.attestationObject),
+    clientDataJSON: encode(credential.response.clientDataJSON)
+  }};
+  const result = await fetch('/api/v1/auth/bootstrap/finish', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ceremony_id: begin.ceremony_id, response})});
+  const body = await result.json();
+  status.textContent = result.ok ? 'Save these recovery codes now:\n' + body.recovery_codes.join('\n') : 'Bootstrap failed';
+};
+
+document.querySelector('#recovery').onsubmit = async event => {
+  event.preventDefault();
+  const code = new FormData(event.target).get('code');
+  const result = await fetch('/api/v1/auth/recovery', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({code})});
+  if (result.ok) location.href = '/admin'; else status.textContent = 'Recovery failed';
+};

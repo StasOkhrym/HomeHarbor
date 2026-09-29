@@ -17,6 +17,7 @@ type Service struct {
 func NewService(store Store, compiler Compiler) *Service {
 	return &Service{store: store, compiler: compiler}
 }
+
 func (s *Service) Replace(ctx context.Context, rules []Rule) (Snapshot, error) {
 	return s.store.Replace(ctx, rules, s.compiler)
 }
@@ -38,6 +39,7 @@ func (s *MemoryStore) Replace(_ context.Context, rules []Rule, compiler Compiler
 	s.latest = snapshot
 	return snapshot, nil
 }
+
 func (s *MemoryStore) Latest(_ context.Context) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

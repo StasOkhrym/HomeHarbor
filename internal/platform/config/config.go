@@ -12,11 +12,14 @@ import (
 )
 
 type Control struct {
-	Server        Server        `toml:"server"`
-	Database      Database      `toml:"database"`
-	Auth          Auth          `toml:"auth"`
-	Relay         Relay         `toml:"relay"`
-	Observability Observability `toml:"observability"`
+	Server        Server          `toml:"server"`
+	Database      Database        `toml:"database"`
+	Auth          Auth            `toml:"auth"`
+	Relay         Relay           `toml:"relay"`
+	Networking    Networking      `toml:"networking"`
+	DNS           DNS             `toml:"dns"`
+	Security      ControlSecurity `toml:"security"`
+	Observability Observability   `toml:"observability"`
 }
 
 type Server struct {
@@ -55,6 +58,19 @@ func (a Auth) CeremonyDuration() time.Duration {
 
 type Relay struct {
 	PublicURL string `toml:"public_url"`
+}
+
+type Networking struct {
+	NetworkID string `toml:"network_id"`
+}
+
+type DNS struct {
+	Enabled bool `toml:"enabled"`
+}
+
+type ControlSecurity struct {
+	RootPublicKeyFile string   `toml:"root_public_key_file"`
+	TrustedProxyCIDRs []string `toml:"trusted_proxy_cidrs"`
 }
 
 type Observability struct {

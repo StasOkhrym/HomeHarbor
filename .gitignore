@@ -12,3 +12,4 @@ secrets/
 *.local.toml
 config/control.toml
 config/relay.toml
+.local/

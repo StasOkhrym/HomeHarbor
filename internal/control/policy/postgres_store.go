@@ -17,7 +17,7 @@ func (s *PostgresStore) Replace(ctx context.Context, rules []Rule, compiler Comp
 	if err != nil {
 		return Snapshot{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	// Serializing writers keeps revision allocation and the corresponding
 	// immutable snapshot in the same transaction across control-plane replicas.
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('go_tunnels_policy'))`); err != nil {
@@ -53,6 +53,7 @@ func (s *PostgresStore) Replace(ctx context.Context, rules []Rule, compiler Comp
 	}
 	return snapshot, nil
 }
+
 func (s *PostgresStore) Latest(ctx context.Context) (Snapshot, error) {
 	var payload []byte
 	err := s.pool.QueryRow(ctx, `SELECT snapshot FROM policy_revisions ORDER BY revision DESC LIMIT 1`).Scan(&payload)

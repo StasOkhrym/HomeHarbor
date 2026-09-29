@@ -24,9 +24,11 @@ func NewIdentity() (Identity, error) {
 	}
 	return Identity{PrivateKey: privateKey.String(), PublicKey: privateKey.PublicKey().String()}, nil
 }
+
 func (i Identity) EnrollmentPublicKeys(identityPublicKey string) EnrollmentPublicKeys {
 	return EnrollmentPublicKeys{IdentityPublicKey: identityPublicKey, WireGuardPublicKey: i.PublicKey}
 }
+
 func (i Identity) Save(path string) error {
 	data, err := json.MarshalIndent(i, "", "  ")
 	if err != nil {
@@ -34,6 +36,7 @@ func (i Identity) Save(path string) error {
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
+
 func LoadIdentity(path string) (Identity, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

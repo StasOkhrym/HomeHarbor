@@ -24,8 +24,31 @@ services:
         target: /etc/go-tunnels/control.toml
     secrets: [postgres_password, session_signing_key, ceremony_encryption_key]
     depends_on:
-      postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    init: true
     restart: unless-stopped
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: migrate
+    command: ["-config", "/etc/go-tunnels/control.toml"]
+    configs:
+      - source: control_config
+        target: /etc/go-tunnels/control.toml
+    secrets: [postgres_password, session_signing_key, ceremony_encryption_key]
+    depends_on:
+      postgres: {condition: service_healthy}
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    init: true
+    restart: "no"
   relay:
     build:
       context: ..
@@ -36,6 +59,11 @@ services:
       - source: relay_config
         target: /etc/go-tunnels/relay.toml
     secrets: [relay_ticket_key]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    init: true
     restart: unless-stopped
   caddy:
     image: caddy:2.10-alpine
@@ -48,10 +76,15 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     depends_on: [control, relay]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    init: true
     restart: unless-stopped
 configs:
-  control_config: {file: ../config/control.toml}
-  relay_config: {file: ../config/relay.toml}
+  control_config:
+    file: "${CONTROL_CONFIG:-../config/control.toml}"
+  relay_config:
+    file: "${RELAY_CONFIG:-../config/relay.toml}"
 secrets:
   postgres_password: {file: ../secrets/postgres_password}
   relay_ticket_key: {file: ../secrets/relay_ticket_key}

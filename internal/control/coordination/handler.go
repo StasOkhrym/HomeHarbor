@@ -10,31 +10,29 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+
 	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	controlnetwork "github.com/sokhrym/go-tunnels/internal/control/network"
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
 	controlprotocol "github.com/sokhrym/go-tunnels/internal/protocol"
+	"github.com/sokhrym/go-tunnels/internal/snapshot"
 )
 
 type Authenticator interface {
 	Authenticate(context.Context, string) (devices.Device, error)
 }
-type PolicyProvider interface {
-	Latest(context.Context) (policy.Snapshot, error)
-}
-type NetworkProvider interface {
-	Approved(context.Context) ([]controlnetwork.Advertisement, error)
+type SnapshotProvider interface {
+	Latest(context.Context) (snapshot.Envelope, error)
 }
 type Handler struct {
-	Auth    Authenticator
-	Policy  PolicyProvider
-	Network NetworkProvider
-	hub     *hub
+	Auth           Authenticator
+	Snapshots      SnapshotProvider
+	AllowedOrigins []string
+	hub            *hub
 }
 
-func NewHandler(auth Authenticator, policy PolicyProvider, network NetworkProvider) *Handler {
-	return &Handler{Auth: auth, Policy: policy, Network: network, hub: newHub()}
+func NewHandler(auth Authenticator, snapshots SnapshotProvider, allowedOrigins []string) *Handler {
+	return &Handler{Auth: auth, Snapshots: snapshots, AllowedOrigins: append([]string(nil), allowedOrigins...), hub: newHub()}
 }
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	credential := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	device, err := h.Auth.Authenticate(r.Context(), credential)
@@ -42,11 +40,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	connection, err := websocket.Accept(w, r, nil)
+	options := &websocket.AcceptOptions{OriginPatterns: h.AllowedOrigins}
+	connection, err := websocket.Accept(w, r, options)
 	if err != nil {
 		return
 	}
-	defer connection.CloseNow()
+	defer func() { _ = connection.CloseNow() }()
+	connection.SetReadLimit(64 << 10)
 	// Bound the initial read so an authenticated client cannot retain a
 	// coordination slot forever without completing protocol negotiation.
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -78,23 +78,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err = wsjson.Write(r.Context(), connection, map[string]any{"type": "welcome", "protocol": negotiated}); err != nil {
 		return
 	}
-	snapshot, err := h.Policy.Latest(r.Context())
+	if h.Snapshots == nil {
+		_ = connection.Close(websocket.StatusTryAgainLater, "signed snapshot unavailable")
+		return
+	}
+	signedSnapshot, err := h.Snapshots.Latest(r.Context())
 	if err != nil {
+		_ = connection.Close(websocket.StatusTryAgainLater, "signed snapshot unavailable")
 		return
 	}
-	routes, err := h.Network.Approved(r.Context())
-	if err != nil {
-		return
-	}
-	if err = writePayload(r.Context(), connection, "policy.snapshot", snapshot); err != nil {
-		return
-	}
-	if err = writePayload(r.Context(), connection, "network.snapshot", routes); err != nil {
+	if err = writePayload(r.Context(), connection, "network.snapshot", signedSnapshot); err != nil {
 		return
 	}
 	for {
 		var message controlprotocol.Message
-		if err = wsjson.Read(r.Context(), connection, &message); err != nil {
+		readContext, readCancel := context.WithTimeout(r.Context(), 2*time.Minute)
+		err = wsjson.Read(readContext, connection, &message)
+		readCancel()
+		if err != nil {
 			return
 		}
 		switch message.Type {
@@ -105,6 +106,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
 func writePayload(ctx context.Context, connection *websocket.Conn, messageType string, value any) error {
 	payload, err := json.Marshal(value)
 	if err != nil {

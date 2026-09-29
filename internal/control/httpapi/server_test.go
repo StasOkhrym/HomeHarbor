@@ -3,13 +3,23 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/sokhrym/go-tunnels/internal/control/devices"
+	controlinvites "github.com/sokhrym/go-tunnels/internal/control/invites"
+	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
+	controlsnapshots "github.com/sokhrym/go-tunnels/internal/control/snapshots"
+	"github.com/sokhrym/go-tunnels/internal/invite"
+	"github.com/sokhrym/go-tunnels/internal/snapshot"
 )
 
 func TestEnrollmentAPIRequiresAdminAndEnrollsDevice(t *testing.T) {
@@ -40,6 +50,17 @@ func TestEnrollmentAPIRequiresAdminAndEnrollsDevice(t *testing.T) {
 	if enrolled.Code != http.StatusCreated {
 		t.Fatalf("enroll status = %d body=%s", enrolled.Code, enrolled.Body.String())
 	}
+	var enrolledDevice devices.Device
+	if err := json.NewDecoder(enrolled.Body).Decode(&enrolledDevice); err != nil {
+		t.Fatal(err)
+	}
+	rotateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/devices/credentials/rotate", nil)
+	rotateRequest.Header.Set("Authorization", "Bearer "+enrolledDevice.Credential)
+	rotated := httptest.NewRecorder()
+	handler.ServeHTTP(rotated, rotateRequest)
+	if rotated.Code != http.StatusOK {
+		t.Fatalf("rotate status = %d body=%s", rotated.Code, rotated.Body.String())
+	}
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/devices", nil)
 	listRequest.Header.Set("X-Test-Admin", "true")
@@ -58,6 +79,120 @@ func TestHealthEndpoints(t *testing.T) {
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("%s status = %d", path, recorder.Code)
 		}
+	}
+}
+
+func TestReadinessAndSecurityHeaders(t *testing.T) {
+	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}, WithReadiness(func(context.Context) error {
+		return errors.New("database unavailable")
+	})).Handler()
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("ready status = %d", recorder.Code)
+	}
+	if recorder.Header().Get("Content-Security-Policy") == "" || recorder.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("security headers = %#v", recorder.Header())
+	}
+}
+
+func TestAdminPageUsesLocalAssets(t *testing.T) {
+	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	body := recorder.Body.String()
+	if strings.Contains(body, "unpkg.com") || strings.Contains(body, "<style>") || !strings.Contains(body, "/assets/admin.css") {
+		t.Fatalf("admin page assets are not local: %s", body)
+	}
+}
+
+func TestServiceCatalogAPIUsesAdminBoundary(t *testing.T) {
+	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), headerAuthorizer{}, WithServiceCatalog(catalog)).Handler()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/services", bytes.NewBufferString(`{"id":"cloud","name":"Nextcloud","kind":"web","url":"https://cloud.home.example.com"}`))
+	request.Header.Set("X-Test-Admin", "true")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create service status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/services", nil)
+	request.Header.Set("X-Test-Admin", "true")
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "cloud") {
+		t.Fatalf("list service status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestInviteProofAPIDoesNotRequireAdmin(t *testing.T) {
+	rootPublic, rootPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	item, err := invite.New("home", "family", time.Minute, now, rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permit, err := invite.SignPermit(item.Permit, rootPrivate, "root-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	devicePublic, devicePrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = devicePublic
+	proof, err := item.Proof("device-1", devicePrivate, item.Code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := controlinvites.NewService(controlinvites.NewMemoryStore(), rootPublic, "home", func() time.Time { return now })
+	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), headerAuthorizer{}, WithInviteService(service)).Handler()
+	body, _ := json.Marshal(map[string]any{"permit": permit, "proof": proof})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/invites/proof", bytes.NewReader(body)))
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("submit invite proof status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestClientKeyUsesForwardedAddressOnlyFromTrustedProxy(t *testing.T) {
+	server := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}, WithTrustedProxyCIDRs([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}))
+	trusted := httptest.NewRequest(http.MethodGet, "/", nil)
+	trusted.RemoteAddr = "10.1.2.3:443"
+	trusted.Header.Set("X-Forwarded-For", "192.0.2.10, 10.1.2.3")
+	if got := server.clientKey(trusted); got != "192.0.2.10" {
+		t.Fatalf("trusted client key = %q", got)
+	}
+	untrusted := httptest.NewRequest(http.MethodGet, "/", nil)
+	untrusted.RemoteAddr = "198.51.100.7:443"
+	untrusted.Header.Set("X-Forwarded-For", "192.0.2.10")
+	if got := server.clientKey(untrusted); got != "198.51.100.7" {
+		t.Fatalf("untrusted client key = %q", got)
+	}
+}
+
+func TestSignedSnapshotPublishDoesNotRequireAdmin(t *testing.T) {
+	rootPublic, rootPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, rootPrivate, "root-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := controlsnapshots.NewService(controlsnapshots.NewMemoryStore(), rootPublic, "home")
+	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), headerAuthorizer{}, WithSnapshotService(service)).Handler()
+	body, _ := json.Marshal(envelope)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/coordination/snapshots", bytes.NewReader(body)))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("publish snapshot status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

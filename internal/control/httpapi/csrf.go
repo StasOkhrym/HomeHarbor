@@ -6,27 +6,30 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 )
 
 const (
-	csrfCookieName = "go_tunnels_csrf"
+	csrfCookieName = "__Host-go_tunnels_csrf"
 	csrfHeaderName = "X-CSRF-Token"
 )
 
-func (a *BrowserAuth) csrfCookie(sessionToken string, expires time.Time) *http.Cookie {
+var readRandom = rand.Read
+
+func (a *BrowserAuth) csrfCookie(sessionToken string, expires time.Time) (*http.Cookie, error) {
 	nonce := make([]byte, 24)
-	if _, err := rand.Read(nonce); err != nil {
-		return expiredCookie(csrfCookieName)
+	if _, err := readRandom(nonce); err != nil {
+		return nil, fmt.Errorf("generate csrf nonce: %w", err)
 	}
 	encodedNonce := base64.RawURLEncoding.EncodeToString(nonce)
 	value := encodedNonce + "." + a.sign("csrf."+sessionToken+"."+encodedNonce)
 	// JavaScript must echo this cookie in a header, so HttpOnly is intentionally
 	// false. SameSite and the session-bound MAC prevent reuse from another site
 	// or another authenticated browser session.
-	return &http.Cookie{Name: csrfCookieName, Value: value, Path: "/", Expires: expires, Secure: true, HttpOnly: false, SameSite: http.SameSiteStrictMode}
+	return &http.Cookie{Name: csrfCookieName, Value: value, Path: "/", Expires: expires, Secure: true, HttpOnly: false, SameSite: http.SameSiteStrictMode}, nil
 }
 
 func (a *BrowserAuth) validCSRF(request *http.Request, sessionToken string) bool {

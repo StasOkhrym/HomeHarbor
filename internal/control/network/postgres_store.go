@@ -15,7 +15,7 @@ func (s *PostgresStore) Save(ctx context.Context, item Advertisement) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err = tx.Exec(ctx, `INSERT INTO advertised_routes(id,gateway_device_id,prefix,status,created_at) VALUES($1,$2,$3,$4,$5)`, item.ID, item.GatewayDeviceID, item.Prefix.String(), item.Status, item.CreatedAt); err != nil {
 		return err
 	}
@@ -24,12 +24,13 @@ func (s *PostgresStore) Save(ctx context.Context, item Advertisement) error {
 	}
 	return tx.Commit(ctx)
 }
+
 func (s *PostgresStore) SetStatus(ctx context.Context, id string, status Status) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `UPDATE advertised_routes SET status=$2 WHERE id=$1`, id, status)
 	if err != nil {
 		return err
@@ -42,6 +43,7 @@ func (s *PostgresStore) SetStatus(ctx context.Context, id string, status Status)
 	}
 	return tx.Commit(ctx)
 }
+
 func (s *PostgresStore) List(ctx context.Context, status *Status) ([]Advertisement, error) {
 	query := `SELECT r.id,r.gateway_device_id,r.prefix::text,d.resolver::text,d.domain_suffix,r.status,r.created_at FROM advertised_routes r JOIN dns_routes d USING(id)`
 	args := []any{}

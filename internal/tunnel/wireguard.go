@@ -41,14 +41,17 @@ func BuildWireGuardConfig(privateKey string, peers []PeerConfig) (wgtypes.Config
 	}
 	return config, nil
 }
+
 func ApplyWireGuardConfig(interfaceName string, config wgtypes.Config) error {
 	client, err := wgctrl.New()
 	if err != nil {
 		return fmt.Errorf("open WireGuard control: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
+
 	if err = client.ConfigureDevice(interfaceName, config); err != nil {
 		return fmt.Errorf("configure WireGuard interface %s: %w", interfaceName, err)
 	}
+
 	return nil
 }

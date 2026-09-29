@@ -1,0 +1,21 @@
+version: "2"
+
+# Formatting tools are configured under formatters in golangci-lint v2. They
+# are kept together so local editors, `make lint`, and CI apply the same import
+# grouping and function spacing rules.
+formatters:
+  enable:
+    - gofumpt
+    - gci
+    - goimports
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/sokhrym/go-tunnels)
+
+issues:
+  # Keep fix support enabled for local tooling. The Makefile and CI explicitly
+  # pass --fix=false for checks, while `make lint-fix` opts into mutation.
+  fix: true

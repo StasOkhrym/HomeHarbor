@@ -28,6 +28,7 @@ func TestAdvertisementRequiresApproval(t *testing.T) {
 		t.Fatalf("approved=%#v", approved)
 	}
 }
+
 func TestAdvertisementRejectsResolverOutsidePrefix(t *testing.T) {
 	service := NewService(NewMemoryStore(), time.Now)
 	_, err := service.Advertise(context.Background(), AdvertisementRequest{ID: "bad", GatewayDeviceID: "gateway", Prefix: netip.MustParsePrefix("10.0.0.0/24"), Resolver: netip.MustParseAddr("192.168.1.1"), DomainSuffix: "home.arpa"})

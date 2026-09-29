@@ -14,7 +14,21 @@ import (
 var files embed.FS
 
 func Up(ctx context.Context, pool *pgxpool.Pool) error {
-	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations(name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration connection: %w", err)
+	}
+	defer conn.Release()
+	// Advisory locks are session-scoped, so all migration statements must use
+	// the same acquired connection. This prevents two control processes from
+	// both observing an unapplied migration and racing its DDL.
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(hashtextextended('go_tunnels:migrations', 0))`); err != nil {
+		return fmt.Errorf("lock migrations: %w", err)
+	}
+	defer func() {
+		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtextextended('go_tunnels:migrations', 0))`)
+	}()
+	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations(name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
 		return fmt.Errorf("create migration ledger: %w", err)
 	}
 	entries, err := fs.Glob(files, "*.up.sql")
@@ -24,7 +38,7 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 	sort.Strings(entries)
 	for _, name := range entries {
 		var applied bool
-		if err = pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name=$1)`, name).Scan(&applied); err != nil {
+		if err = conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name=$1)`, name).Scan(&applied); err != nil {
 			return err
 		}
 		if applied {
@@ -36,7 +50,7 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 		// Each file and its ledger entry commit together. A crash can therefore
 		// only leave a migration fully applied or ready to retry.
-		tx, beginErr := pool.Begin(ctx)
+		tx, beginErr := conn.Begin(ctx)
 		if beginErr != nil {
 			return beginErr
 		}

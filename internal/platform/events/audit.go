@@ -3,11 +3,13 @@ package events
 import (
 	"context"
 	"encoding/json"
-	"github.com/ThreeDotsLabs/watermill/message"
-	"github.com/sokhrym/go-tunnels/internal/control/audit"
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
 	"log/slog"
 	"time"
+
+	"github.com/ThreeDotsLabs/watermill/message"
+
+	"github.com/sokhrym/go-tunnels/internal/control/audit"
+	"github.com/sokhrym/go-tunnels/internal/control/devices"
 )
 
 type AuditSink interface {

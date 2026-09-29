@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/sokhrym/go-tunnels/internal/control/identity"
 )
 
@@ -23,22 +25,26 @@ type fakeSessions struct {
 func (f *fakeSessions) CreateSession(context.Context, time.Duration) (identity.IssuedSession, error) {
 	return f.session, nil
 }
+
 func (f *fakeSessions) ValidateSession(_ context.Context, token string) (identity.Session, error) {
 	if token != f.valid || !time.Now().Before(f.session.ExpiresAt) {
 		return identity.Session{}, identity.ErrInvalidCredential
 	}
 	return identity.Session{ExpiresAt: f.session.ExpiresAt}, nil
 }
+
 func (f *fakeSessions) RevokeSession(_ context.Context, token string) error {
 	f.revoked = token
 	return nil
 }
+
 func (f *fakeSessions) ConsumeRecoveryCode(_ context.Context, code string) error {
 	if code != f.recovery {
 		return identity.ErrInvalidCredential
 	}
 	return nil
 }
+
 func (f *fakeSessions) GenerateRecoveryCodes(context.Context, int) ([]string, error) {
 	return []string{"save-once"}, nil
 }
@@ -48,12 +54,15 @@ type fakePasskeys struct{}
 func (fakePasskeys) BeginBootstrap(context.Context) (identity.BeginCeremony, error) {
 	return identity.BeginCeremony{}, nil
 }
+
 func (fakePasskeys) FinishBootstrap(context.Context, string, []byte) (webauthn.Credential, error) {
 	return webauthn.Credential{}, nil
 }
+
 func (fakePasskeys) BeginLogin(context.Context) (identity.BeginCeremony, error) {
 	return identity.BeginCeremony{}, nil
 }
+
 func (fakePasskeys) FinishLogin(context.Context, string, []byte) (webauthn.Credential, error) {
 	return webauthn.Credential{}, nil
 }
@@ -81,6 +90,9 @@ func TestRecoveryLoginSetsHardenedCookies(t *testing.T) {
 	cookies := rec.Result().Cookies()
 	if len(cookies) != 2 {
 		t.Fatalf("cookies = %d", len(cookies))
+	}
+	if cookies[0].Name != "__Host-go_tunnels_admin" || cookies[1].Name != "__Host-go_tunnels_csrf" {
+		t.Fatalf("cookie names = %q, %q", cookies[0].Name, cookies[1].Name)
 	}
 	if !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
 		t.Fatalf("session cookie is not hardened: %#v", cookies[0])
@@ -116,7 +128,10 @@ func TestSignedSessionRejectsTamperingAndExpiry(t *testing.T) {
 func TestCSRFRejectsMismatchAndLogoutRevokesSession(t *testing.T) {
 	auth, sessions := newBrowserAuthTest(t)
 	sessionCookie := auth.sessionCookie(sessions.session)
-	csrfCookie := auth.csrfCookie(sessions.session.Token, sessions.session.ExpiresAt)
+	csrfCookie, err := auth.csrfCookie(sessions.session.Token, sessions.session.ExpiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
 	req.AddCookie(sessionCookie)
 	req.AddCookie(csrfCookie)
@@ -159,5 +174,29 @@ func TestBootstrapReturnsRecoveryCodesOnlyOnce(t *testing.T) {
 	auth.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "save-once") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCSRFCookieCreationReturnsRandomnessFailure(t *testing.T) {
+	auth, _ := newBrowserAuthTest(t)
+	previous := readRandom
+	readRandom = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+	t.Cleanup(func() { readRandom = previous })
+	if _, err := auth.csrfCookie("session", time.Now().Add(time.Hour)); err == nil {
+		t.Fatal("csrfCookie() error = nil")
+	}
+}
+
+func TestLoginPageUsesLocalScriptAsset(t *testing.T) {
+	auth, _ := newBrowserAuthTest(t)
+	recorder := httptest.NewRecorder()
+	auth.LoginHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/login", nil))
+	if strings.Contains(recorder.Body.String(), "<script>") || !strings.Contains(recorder.Body.String(), "/assets/login.js") {
+		t.Fatalf("login page contains inline or missing script: %s", recorder.Body.String())
+	}
+	asset := httptest.NewRecorder()
+	auth.LoginAssetHandler().ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/assets/login.js", nil))
+	if asset.Code != http.StatusOK || !strings.Contains(asset.Body.String(), "navigator.credentials") {
+		t.Fatalf("login asset status=%d body=%s", asset.Code, asset.Body.String())
 	}
 }

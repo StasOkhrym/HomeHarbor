@@ -13,13 +13,17 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/sokhrym/go-tunnels/internal/control/identity"
 )
 
-const sessionCookieName = "go_tunnels_admin"
+const sessionCookieName = "__Host-go_tunnels_admin"
 
 //go:embed templates/login.html
 var loginPage []byte
+
+//go:embed static/login.js
+var loginScript []byte
 
 // PasskeyCeremonies is the HTTP layer's narrow view of WebAuthn state.
 type PasskeyCeremonies interface {
@@ -94,6 +98,10 @@ func (a *BrowserAuth) Handler() http.Handler {
 // LoginHandler serves the browser entry point separately from the JSON API.
 func (a *BrowserAuth) LoginHandler() http.Handler { return http.HandlerFunc(a.loginPage) }
 
+// LoginAssetHandler serves the browser code from the same origin so CSP does
+// not need an inline-script exception or a third-party CDN dependency.
+func (a *BrowserAuth) LoginAssetHandler() http.Handler { return http.HandlerFunc(a.loginAsset) }
+
 // IsAdmin requires both a valid cookie signature and a live server-side session.
 func (a *BrowserAuth) IsAdmin(ctx context.Context, request *http.Request) bool {
 	token, ok := a.sessionToken(request)
@@ -147,7 +155,11 @@ func (a *BrowserAuth) establishSession(w http.ResponseWriter, ctx context.Contex
 		return err
 	}
 	http.SetCookie(w, a.sessionCookie(session))
-	http.SetCookie(w, a.csrfCookie(session.Token, session.ExpiresAt))
+	csrf, err := a.csrfCookie(session.Token, session.ExpiresAt)
+	if err != nil {
+		return err
+	}
+	http.SetCookie(w, csrf)
 	return nil
 }
 
@@ -168,14 +180,23 @@ func (a *BrowserAuth) loginPage(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(loginPage)
 }
+
+func (a *BrowserAuth) loginAsset(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600, immutable")
+	_, _ = w.Write(loginScript)
+}
+
 func (a *BrowserAuth) beginBootstrap(w http.ResponseWriter, r *http.Request) {
 	result, err := a.passkeys.BeginBootstrap(r.Context())
 	a.writeBegin(w, result, err)
 }
+
 func (a *BrowserAuth) beginLogin(w http.ResponseWriter, r *http.Request) {
 	result, err := a.passkeys.BeginLogin(r.Context())
 	a.writeBegin(w, result, err)
 }
+
 func (a *BrowserAuth) writeBegin(w http.ResponseWriter, result identity.BeginCeremony, err error) {
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "ceremony unavailable")

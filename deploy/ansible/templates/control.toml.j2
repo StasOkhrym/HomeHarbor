@@ -13,5 +13,15 @@ session_ttl = "12h"
 ceremony_ttl = "5m"
 [relay]
 public_url = "wss://{{ relay_domain }}/relay/v1"
+
+[networking]
+network_id = "{{ network_id | default('home') }}"
+
+[dns]
+enabled = true
+
+[security]
+trusted_proxy_cidrs = {{ trusted_proxy_cidrs | default([]) | to_json }}
+
 [observability]
 metrics_address = ":9090"

@@ -51,6 +51,7 @@ func NewService(store Store, now func() time.Time) *Service {
 	}
 	return &Service{store: store, now: now}
 }
+
 func (s *Service) Advertise(ctx context.Context, request AdvertisementRequest) (Advertisement, error) {
 	suffix := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(request.DomainSuffix)), ".")
 	if request.ID == "" || request.GatewayDeviceID == "" || !request.Prefix.IsValid() || !request.Resolver.IsValid() || suffix == "" {
@@ -65,16 +66,20 @@ func (s *Service) Advertise(ctx context.Context, request AdvertisementRequest) (
 	}
 	return advertisement, nil
 }
+
 func (s *Service) Approve(ctx context.Context, id string) error {
 	return s.store.SetStatus(ctx, id, StatusApproved)
 }
+
 func (s *Service) Reject(ctx context.Context, id string) error {
 	return s.store.SetStatus(ctx, id, StatusRejected)
 }
+
 func (s *Service) Approved(ctx context.Context) ([]Advertisement, error) {
 	status := StatusApproved
 	return s.store.List(ctx, &status)
 }
+
 func (s *Service) List(ctx context.Context) ([]Advertisement, error) { return s.store.List(ctx, nil) }
 
 type MemoryStore struct {
@@ -89,6 +94,7 @@ func (s *MemoryStore) Save(_ context.Context, item Advertisement) error {
 	s.items[item.ID] = item
 	return nil
 }
+
 func (s *MemoryStore) SetStatus(_ context.Context, id string, status Status) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -100,6 +106,7 @@ func (s *MemoryStore) SetStatus(_ context.Context, id string, status Status) err
 	s.items[id] = item
 	return nil
 }
+
 func (s *MemoryStore) List(_ context.Context, status *Status) ([]Advertisement, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

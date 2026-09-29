@@ -3,27 +3,40 @@ package relay
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 )
 
 type WebSocketHandler struct {
-	Hub     *Hub
-	Tickets TicketIssuer
+	Hub            *Hub
+	Tickets        TicketIssuer
+	AllowedOrigins []string
+	MaxPacketBytes int64
 }
 
 func (h WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	claims, err := h.Tickets.Verify(r.URL.Query().Get("ticket"))
+	claims, err := h.Tickets.Verify(relayTicketFromRequest(r))
 	if err != nil {
 		http.Error(w, "invalid relay ticket", http.StatusUnauthorized)
 		return
 	}
-	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
+	options := &websocket.AcceptOptions{}
+	if len(h.AllowedOrigins) > 0 {
+		options.OriginPatterns = h.AllowedOrigins
+	}
+	connection, err := websocket.Accept(w, r, options)
 	if err != nil {
 		return
 	}
-	defer connection.CloseNow()
+	defer func() { _ = connection.CloseNow() }()
+	maxPacketBytes := h.MaxPacketBytes
+	if maxPacketBytes <= 0 {
+		maxPacketBytes = maxPacketPayload + 512
+	}
+	connection.SetReadLimit(maxPacketBytes)
 	sender := &webSocketSender{connection: connection}
 	if err = h.Hub.Register(claims.SessionID, claims.DeviceID, sender); err != nil {
 		_ = connection.Close(websocket.StatusPolicyViolation, err.Error())
@@ -31,7 +44,9 @@ func (h WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.Hub.Unregister(claims.SessionID, claims.DeviceID)
 	for {
-		messageType, data, readErr := connection.Read(r.Context())
+		readContext, readCancel := context.WithTimeout(r.Context(), 2*time.Minute)
+		messageType, data, readErr := connection.Read(readContext)
+		readCancel()
 		if readErr != nil {
 			return
 		}
@@ -50,6 +65,14 @@ func (h WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func relayTicketFromRequest(r *http.Request) string {
+	value := strings.TrimSpace(r.Header.Get("Authorization"))
+	if len(value) <= len("Bearer ") || !strings.EqualFold(value[:len("Bearer ")], "Bearer ") {
+		return ""
+	}
+	return strings.TrimSpace(value[len("Bearer "):])
+}
+
 type webSocketSender struct {
 	mu         sync.Mutex
 	connection *websocket.Conn
@@ -62,5 +85,7 @@ func (s *webSocketSender) Send(ctx context.Context, packet Packet) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.connection.Write(ctx, websocket.MessageBinary, data)
+	writeContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return s.connection.Write(writeContext, websocket.MessageBinary, data)
 }

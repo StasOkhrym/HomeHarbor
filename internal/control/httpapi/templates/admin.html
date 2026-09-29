@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <title>Go Tunnels</title>
+  <link rel="stylesheet" href="/assets/admin.css">
+</head>
+<body>
+  <h1>Go Tunnels</h1>
+  <p>Homelab control plane</p>
+  <h2>Devices</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Device ID</th></tr></thead>
+    <tbody>
+      {{range .Devices}}<tr><td>{{.Name}}</td><td>{{.Role}}</td><td class="{{.Status}}">{{.Status}}</td><td><code>{{.ID}}</code></td></tr>
+      {{else}}<tr><td colspan="4">No enrolled devices.</td></tr>{{end}}
+    </tbody>
+  </table>
+  <h2>Routes and split DNS</h2>
+  <table>
+    <thead><tr><th>Prefix</th><th>Resolver</th><th>Domain</th><th>Status</th></tr></thead>
+    <tbody>
+      {{range .Routes}}<tr><td><code>{{.Prefix}}</code></td><td><code>{{.Resolver}}</code></td><td>{{.DomainSuffix}}</td><td class="{{.Status}}">{{.Status}}</td></tr>
+      {{else}}<tr><td colspan="4">No advertised routes.</td></tr>{{end}}
+    </tbody>
+  </table>
+</body>
+</html>

@@ -79,6 +79,56 @@ func TestEnrollPublishesDomainEvent(t *testing.T) {
 	}
 }
 
+func TestEnrollUsesAtomicStoreOperation(t *testing.T) {
+	store := &atomicEnrollmentStore{MemoryStore: NewMemoryStore()}
+	service := NewService(store, time.Now, fixedRandom{'a'})
+	issued, err := service.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Enroll(context.Background(), EnrollRequest{Token: issued.Token, Name: "phone", IdentityPublicKey: "i", WireGuardPublicKey: "w"})
+	if !errors.Is(err, errAtomicEnrollment) {
+		t.Fatalf("Enroll() error = %v, want atomic store error", err)
+	}
+}
+
+func TestRotateCredentialRevokesPreviousCredential(t *testing.T) {
+	store := NewMemoryStore()
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	service := NewService(store, func() time.Time { return now }, &sequenceRandom{})
+	issued, err := service.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := service.Enroll(context.Background(), EnrollRequest{
+		Token: issued.Token, Name: "phone", IdentityPublicKey: "i", WireGuardPublicKey: "w",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := service.RotateCredential(context.Background(), device.ID, device.Credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated == device.Credential {
+		t.Fatal("rotation returned the previous credential")
+	}
+	if _, err := service.Authenticate(context.Background(), device.Credential); !errors.Is(err, ErrDeviceNotFound) {
+		t.Fatalf("old credential authentication error = %v", err)
+	}
+	if got, err := service.Authenticate(context.Background(), rotated); err != nil || got.ID != device.ID {
+		t.Fatalf("new credential authentication = %#v, %v", got, err)
+	}
+}
+
+var errAtomicEnrollment = errors.New("atomic enrollment failed")
+
+type atomicEnrollmentStore struct{ *MemoryStore }
+
+func (s *atomicEnrollmentStore) Enroll(context.Context, [32]byte, time.Time, Device) (Role, error) {
+	return "", errAtomicEnrollment
+}
+
 type recordPublisher struct{ events []Event }
 
 func (r *recordPublisher) Publish(_ context.Context, event Event) error {
@@ -91,6 +141,17 @@ type fixedRandom struct{ b byte }
 func (f fixedRandom) Read(p []byte) (int, error) {
 	for i := range p {
 		p[i] = f.b
+	}
+
+	return len(p), nil
+}
+
+type sequenceRandom struct{ next byte }
+
+func (r *sequenceRandom) Read(p []byte) (int, error) {
+	r.next++
+	for i := range p {
+		p[i] = r.next
 	}
 
 	return len(p), nil

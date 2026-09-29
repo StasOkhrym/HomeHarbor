@@ -30,6 +30,7 @@ func (h *Hub) Register(sessionID, deviceID string, sender Sender) error {
 	h.peers[sessionID][deviceID] = sender
 	return nil
 }
+
 func (h *Hub) Unregister(sessionID, deviceID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -40,6 +41,7 @@ func (h *Hub) Unregister(sessionID, deviceID string) {
 		}
 	}
 }
+
 func (h *Hub) Forward(ctx context.Context, authenticatedSession, authenticatedDevice string, packet Packet) error {
 	if packet.SessionID != authenticatedSession || packet.SourceDeviceID != authenticatedDevice {
 		return errors.New("relay packet identity mismatch")

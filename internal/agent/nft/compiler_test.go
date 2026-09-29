@@ -1,10 +1,11 @@
 package nft
 
 import (
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
 	"net/netip"
 	"strings"
 	"testing"
+
+	"github.com/sokhrym/go-tunnels/internal/control/policy"
 )
 
 func TestCompileUsesDefaultDropAndExplicitAllows(t *testing.T) {
@@ -18,6 +19,7 @@ func TestCompileUsesDefaultDropAndExplicitAllows(t *testing.T) {
 		}
 	}
 }
+
 func TestCompileRejectsNonDenySnapshot(t *testing.T) {
 	if _, err := Compile("gt0", nil, policy.Snapshot{DefaultAction: policy.ActionAllow}); err == nil {
 		t.Fatal("Compile() error=nil")

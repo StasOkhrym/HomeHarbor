@@ -31,6 +31,7 @@ func NewState() (State, error) {
 	}
 	return State{IdentityPrivateKey: base64.RawURLEncoding.EncodeToString(privateKey), IdentityPublicKey: base64.RawURLEncoding.EncodeToString(publicKey), WireGuard: wireGuard}, nil
 }
+
 func (s State) Save(path string) error {
 	if path == "" {
 		return errors.New("state path is required")
@@ -47,7 +48,7 @@ func (s State) Save(path string) error {
 		return err
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if err = temporary.Chmod(0o600); err == nil {
 		_, err = temporary.Write(append(data, '\n'))
 	}
@@ -59,6 +60,29 @@ func (s State) Save(path string) error {
 	}
 	return os.Rename(temporaryPath, path)
 }
+
+// LoadOrCreate makes node identity persistence explicit at the command boundary.
+// A restart must reuse the existing WireGuard and device keys; generating a new
+// identity would strand the old peer and could accidentally create a second
+// device with the same local configuration.
+func LoadOrCreate(path string) (State, error) {
+	state, err := Load(path)
+	if err == nil {
+		return state, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return State{}, err
+	}
+	state, err = NewState()
+	if err != nil {
+		return State{}, err
+	}
+	if err = state.Save(path); err != nil {
+		return State{}, err
+	}
+	return state, nil
+}
+
 func Load(path string) (State, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

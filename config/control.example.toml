@@ -17,5 +17,17 @@ ceremony_ttl = "5m"
 [relay]
 public_url = "wss://relay.example.com/relay/v1"
 
+[networking]
+network_id = "home"
+
+[dns]
+enabled = true
+
+[security]
+# The public half of the trusted Mac companion root key. The private key never
+# belongs on the control plane.
+# root_public_key_file = "/run/secrets/root_public_key"
+trusted_proxy_cidrs = []
+
 [observability]
 metrics_address = ":9090"

@@ -2,17 +2,23 @@ package httpapi
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"html/template"
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	controlnetwork "github.com/sokhrym/go-tunnels/internal/control/network"
+	controlinvites "github.com/sokhrym/go-tunnels/internal/control/invites"
 	"github.com/sokhrym/go-tunnels/internal/control/policy"
+	controlnetwork "github.com/sokhrym/go-tunnels/internal/control/routes"
+	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
+	"github.com/sokhrym/go-tunnels/internal/invite"
+	"github.com/sokhrym/go-tunnels/internal/snapshot"
 )
 
 // DeviceService is intentionally defined by the HTTP consumer. Keeping this
@@ -23,6 +29,8 @@ type DeviceService interface {
 	Enroll(context.Context, devices.EnrollRequest) (devices.Device, error)
 	List(context.Context) ([]devices.Device, error)
 	Revoke(context.Context, string) error
+	Authenticate(context.Context, string) (devices.Device, error)
+	RotateCredential(context.Context, string, string) (string, error)
 }
 
 type Authorizer interface {
@@ -32,13 +40,21 @@ type Authorizer interface {
 // Server composes optional module capabilities at the HTTP boundary. Domain
 // services remain unaware of chi and continue to satisfy narrow interfaces.
 type Server struct {
-	devices      DeviceService
-	network      NetworkService
-	policy       PolicyService
-	authorizer   Authorizer
-	logger       *slog.Logger
-	coordination http.Handler
-	metrics      http.Handler
+	devices       DeviceService
+	network       NetworkService
+	policy        PolicyService
+	authorizer    Authorizer
+	logger        *slog.Logger
+	coordination  http.Handler
+	metrics       http.Handler
+	ready         func(context.Context) error
+	apiLimiter    *RateLimiter
+	authLimiter   *RateLimiter
+	deviceLimiter *RateLimiter
+	services      ServiceCatalog
+	invites       InviteService
+	snapshots     SnapshotService
+	trustedProxy  []netip.Prefix
 }
 
 type NetworkService interface {
@@ -61,23 +77,73 @@ type PolicyService interface {
 func WithPolicyService(service PolicyService) ServerOption {
 	return func(server *Server) { server.policy = service }
 }
+
 func WithCoordinationHandler(handler http.Handler) ServerOption {
 	return func(server *Server) { server.coordination = handler }
 }
+
 func WithMetricsHandler(handler http.Handler) ServerOption {
 	return func(server *Server) { server.metrics = handler }
 }
 
+// WithReadiness lets the composition root expose real dependency health without
+// coupling the HTTP package to PostgreSQL, migrations, or a specific runtime.
+func WithReadiness(check func(context.Context) error) ServerOption {
+	return func(server *Server) { server.ready = check }
+}
+
+// ServiceCatalog is the HTTP-facing contract for named services and access
+// profiles. It intentionally contains no persistence methods.
+type ServiceCatalog interface {
+	Create(context.Context, controlservices.Service) (controlservices.Service, error)
+	List(context.Context) ([]controlservices.Service, error)
+	CreateProfile(context.Context, controlservices.AccessProfile) (controlservices.AccessProfile, error)
+	Profiles(context.Context) ([]controlservices.AccessProfile, error)
+}
+
+// InviteService accepts a signed device proof without exposing the companion's
+// short code to the control plane. Approval remains a local companion action.
+type InviteService interface {
+	SubmitProof(context.Context, invite.SignedPermit, invite.Proof) error
+	Get(context.Context, string) (controlinvites.Record, error)
+	ApproveSigned(context.Context, invite.SignedApproval) (controlinvites.Record, error)
+}
+
+func WithInviteService(service InviteService) ServerOption {
+	return func(server *Server) { server.invites = service }
+}
+
+type SnapshotService interface {
+	Publish(context.Context, snapshot.Envelope) error
+	Latest(context.Context) (snapshot.Envelope, error)
+}
+
+func WithSnapshotService(service SnapshotService) ServerOption {
+	return func(server *Server) { server.snapshots = service }
+}
+
+// WithTrustedProxyCIDRs permits forwarded client addresses only when the
+// immediate peer belongs to one of these explicitly configured proxies.
+func WithTrustedProxyCIDRs(prefixes []netip.Prefix) ServerOption {
+	return func(server *Server) { server.trustedProxy = append([]netip.Prefix(nil), prefixes...) }
+}
+
+func WithServiceCatalog(catalog ServiceCatalog) ServerOption {
+	return func(server *Server) { server.services = catalog }
+}
+
 func NewServer(deviceService DeviceService, authorizer Authorizer, options ...ServerOption) *Server {
-	server := &Server{devices: deviceService, authorizer: authorizer, logger: slog.Default()}
+	server := &Server{devices: deviceService, authorizer: authorizer, logger: slog.Default(), apiLimiter: NewRateLimiter(120, time.Minute, nil), authLimiter: NewRateLimiter(5, time.Minute, nil), deviceLimiter: NewRateLimiter(10, time.Minute, nil)}
 	for _, option := range options {
 		option(server)
 	}
 	return server
 }
+
 func (s *Server) Handler() http.Handler {
 	return recoverMiddleware(NewRouter(s), s.logger)
 }
+
 func (s *Server) latestPolicy(w http.ResponseWriter, r *http.Request) {
 	snapshot, err := s.policy.Latest(r.Context())
 	if err != nil {
@@ -86,6 +152,7 @@ func (s *Server) latestPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, snapshot)
 }
+
 func (s *Server) replacePolicy(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Rules []policy.Rule `json:"rules"`
@@ -100,6 +167,7 @@ func (s *Server) replacePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, snapshot)
 }
+
 func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 	list, err := s.devices.List(r.Context())
 	if err != nil {
@@ -115,6 +183,7 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("render admin", "error", err)
 	}
 }
+
 func (s *Server) advertiseRoute(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		ID              string `json:"id"`
@@ -143,6 +212,7 @@ func (s *Server) advertiseRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, item)
 }
+
 func (s *Server) listRoutes(w http.ResponseWriter, r *http.Request) {
 	items, err := s.network.List(r.Context())
 	if err != nil {
@@ -151,6 +221,7 @@ func (s *Server) listRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"routes": items})
 }
+
 func (s *Server) approveRoute(w http.ResponseWriter, r *http.Request) {
 	if err := s.network.Approve(r.Context(), r.PathValue("id")); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -158,6 +229,7 @@ func (s *Server) approveRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
 func (s *Server) rejectRoute(w http.ResponseWriter, r *http.Request) {
 	if err := s.network.Reject(r.Context(), r.PathValue("id")); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -165,6 +237,7 @@ func (s *Server) rejectRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authorized := s.authorizer != nil && s.authorizer.IsAdmin(r.Context(), r)
@@ -182,6 +255,7 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
 func (s *Server) issueToken(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Role       devices.Role `json:"role"`
@@ -197,6 +271,7 @@ func (s *Server) issueToken(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, token)
 }
+
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	var input devices.EnrollRequest
 	if !decodeJSON(w, r, &input) {
@@ -213,6 +288,22 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, device)
 }
+
+func (s *Server) rotateCredential(w http.ResponseWriter, r *http.Request) {
+	credential := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	device, err := s.devices.Authenticate(r.Context(), credential)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid device credential")
+		return
+	}
+	rotated, err := s.devices.RotateCredential(r.Context(), device.ID, credential)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "device credential expired or revoked")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"credential": rotated})
+}
+
 func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	list, err := s.devices.List(r.Context())
 	if err != nil {
@@ -221,6 +312,7 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"devices": list})
 }
+
 func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 	if err := s.devices.Revoke(r.Context(), r.PathValue("id")); err != nil {
 		status := http.StatusInternalServerError
@@ -232,6 +324,67 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (s *Server) submitInviteProof(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Permit invite.SignedPermit `json:"permit"`
+		Proof  invite.Proof        `json:"proof"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if err := s.invites.SubmitProof(r.Context(), input.Permit, input.Proof); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid invite proof")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": string(controlinvites.StatusPending)})
+}
+
+func (s *Server) getInvite(w http.ResponseWriter, r *http.Request) {
+	record, err := s.invites.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "invite not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, record)
+}
+
+func (s *Server) approveInvite(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Approval invite.SignedApproval `json:"approval"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	record, err := s.invites.ApproveSigned(r.Context(), input.Approval)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid invite approval")
+		return
+	}
+	writeJSON(w, http.StatusOK, record)
+}
+
+func (s *Server) publishSnapshot(w http.ResponseWriter, r *http.Request) {
+	var envelope snapshot.Envelope
+	if !decodeJSON(w, r, &envelope) {
+		return
+	}
+	if err := s.snapshots.Publish(r.Context(), envelope); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid signed snapshot")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) latestSnapshot(w http.ResponseWriter, r *http.Request) {
+	envelope, err := s.snapshots.Latest(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "signed snapshot unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, envelope)
+}
+
 func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
 	decoder.DisallowUnknownFields()
@@ -246,14 +399,40 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 	}
 	return true
 }
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
+
 func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+	writeJSON(w, status, map[string]string{"code": errorCode(status), "error": message})
 }
+
+func errorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "bad_request"
+	case http.StatusUnauthorized:
+		return "unauthorized"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusConflict:
+		return "conflict"
+	case http.StatusRequestEntityTooLarge:
+		return "request_too_large"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	case http.StatusServiceUnavailable:
+		return "unavailable"
+	default:
+		return "internal_error"
+	}
+}
+
 func recoverMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -266,4 +445,10 @@ func recoverMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 	})
 }
 
-var adminTemplate = template.Must(template.New("admin").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Go Tunnels</title><script src="https://unpkg.com/htmx.org@2.0.7"></script><style>body{font:16px system-ui;max-width:1100px;margin:3rem auto;padding:0 1rem;background:#0b1020;color:#e8edf7}table{width:100%;border-collapse:collapse;background:#141b2d;margin-bottom:2rem}th,td{text-align:left;padding:.8rem;border-bottom:1px solid #28324a}.active,.approved{color:#5ee6a8}.revoked,.rejected{color:#ff7c8a}.pending{color:#ffd166}code{color:#9dc1ff}</style></head><body><h1>Go Tunnels</h1><p>Homelab control plane</p><h2>Devices</h2><table><thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Device ID</th></tr></thead><tbody>{{range .Devices}}<tr><td>{{.Name}}</td><td>{{.Role}}</td><td class="{{.Status}}">{{.Status}}</td><td><code>{{.ID}}</code></td></tr>{{else}}<tr><td colspan="4">No enrolled devices.</td></tr>{{end}}</tbody></table><h2>Routes and split DNS</h2><table><thead><tr><th>Prefix</th><th>Resolver</th><th>Domain</th><th>Status</th></tr></thead><tbody>{{range .Routes}}<tr><td><code>{{.Prefix}}</code></td><td><code>{{.Resolver}}</code></td><td>{{.DomainSuffix}}</td><td class="{{.Status}}">{{.Status}}</td></tr>{{else}}<tr><td colspan="4">No advertised routes.</td></tr>{{end}}</tbody></table></body></html>`))
+//go:embed templates/admin.html
+var adminPage []byte
+
+//go:embed static/admin.css
+var adminCSS []byte
+
+var adminTemplate = template.Must(template.New("admin").Parse(string(adminPage)))

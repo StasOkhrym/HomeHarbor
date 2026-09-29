@@ -5,8 +5,9 @@ Linux vertical slice remain higher priority than mobile UI.
 
 ## 1. HTTP composition and routing
 
-- Introduce `github.com/go-chi/chi/v5` when the API gains passkey, credential
-  rotation, audit, and service-management route groups.
+- Use `github.com/go-chi/chi/v5` with standard `net/http`; Gin is intentionally
+  not part of the architecture because WebSockets, middleware, and existing
+  handlers already use the standard interfaces.
 - Keep every endpoint as a standard `http.Handler`/`http.HandlerFunc`. Chi owns
   route composition and middleware only; domain code must not depend on chi.
 - Group `/api/v1`, `/admin`, `/healthz`, `/readyz`, and `/metrics` explicitly.
@@ -22,8 +23,9 @@ Linux vertical slice remain higher priority than mobile UI.
 - Do **not** create one large `Service` interface containing every operation.
   Such an interface couples unrelated modules and becomes harder to test and
   split when the monolith grows.
-- Add an `application.Container` (or `App`) for composition. It holds concrete
-  module services and shared infrastructure but contains no business logic.
+- Keep composition in `internal/app/control.App` and `internal/app/relay.App`.
+  Each executable has a thin `cmd/*` entrypoint and implements the common
+  lifecycle contract `Component.Run(context.Context) error`.
 - Define small interfaces at the consumer boundary. For example,
   `DeviceReader`, `EnrollmentIssuer`, `PolicyProvider`, `PolicyEditor`,
   `RouteReader`, and `RouteApprover`.
@@ -35,11 +37,9 @@ Linux vertical slice remain higher priority than mobile UI.
 Target composition shape:
 
 ```go
-type Application struct {
-    Devices *devices.Service
-    Network *network.Service
-    Policy  *policy.Service
-    Audit   *audit.Service
+type App struct {
+    server *http.Server
+    pool   *pgxpool.Pool
 }
 
 type DeviceReader interface {
@@ -47,20 +47,21 @@ type DeviceReader interface {
 }
 ```
 
-`Application` is the unified wiring surface; the narrow interfaces are the
+`App` is the unified wiring surface; the narrow interfaces are the
 contracts used by handlers, coordinators, jobs, and future extracted services.
 
 ## 3. Security and networking milestones
 
 1. **Completed:** replace bootstrap bearer authentication with WebAuthn/passkey
    ceremonies, signed sessions, recovery codes, CSRF protection, and audit events.
-2. Add short-lived device credential rotation and a grace window for reconnects.
+2. **Completed:** add short-lived device credential rotation with atomic replacement.
 3. Complete Linux interface, route, nftables, and systemd-resolved lifecycle
    with rollback to the last valid snapshot.
 4. Issue relay sessions from the control plane and complete live WireGuard
    packet transport with direct-to-relay path switching.
 5. Add PostgreSQL integration tests and Linux network-namespace acceptance tests.
-6. Build the rough Android `VpnService` client, then the iOS Network Extension.
+6. Build the rough Android `VpnService` client, then finish the iOS Network Extension
+   target and physical-device Packet Tunnel verification.
 
 ## 4. Self-documenting code standard
 
@@ -76,7 +77,20 @@ contracts used by handlers, coordinators, jobs, and future extracted services.
   identity, devices, network, policy, coordination, relay, tunnel, and audit.
 - During review, treat stale or misleading comments as correctness defects.
 
-## 5. Maintainability gates
+## 5. Local development contract
+
+- `make doctor` checks Go, Docker Compose, Lima, and Xcode prerequisites.
+- `make dev-init` creates ignored local config/secrets without overwriting them.
+- `make dev-up` starts PostgreSQL, the one-shot migration process, control,
+  relay, and Caddy. `make dev-down` stops the stack.
+- `make dev-trust-ca` exports Caddy's local CA for Linux test devices only.
+- `make vm-up` provisions the Ubuntu Lima VM with Docker, nftables, TUN tools,
+  and `make vm-down` stops it.
+- `make verify` runs formatting, tests, vet, and command builds.
+- `make acceptance` intentionally fails until the Linux namespace scenarios are
+  implemented; a green command must never be confused with a missing test.
+
+## 6. Maintainability gates
 
 - New handlers use a narrow application interface and router-level middleware.
 - New cross-module workflows document their transaction/event consistency model.

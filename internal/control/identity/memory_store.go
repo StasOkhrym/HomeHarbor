@@ -119,26 +119,24 @@ func (s *MemoryStore) Credential(_ context.Context, userHandle, credentialID []b
 func (s *MemoryStore) SaveCredential(_ context.Context, userHandle []byte, credential webauthn.Credential) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := string(userHandle)
 	// The first credential closes bootstrap under the same lock that performs
 	// the insert; two valid, concurrently finished ceremonies cannot both win.
-	if len(s.credentials[key]) != 0 {
+	if len(s.credentials[string(userHandle)]) != 0 {
 		return ErrBootstrapClosed
 	}
-	s.credentials[key] = append(s.credentials[key], credential)
+	s.credentials[string(userHandle)] = append(s.credentials[string(userHandle)], credential)
 	return nil
 }
 
 func (s *MemoryStore) UpdateCredential(_ context.Context, userHandle []byte, credential webauthn.Credential) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := string(userHandle)
-	for index, stored := range s.credentials[key] {
+	for index, stored := range s.credentials[string(userHandle)] {
 		if bytes.Equal(stored.ID, credential.ID) {
 			if stored.Authenticator.SignCount > 0 && credential.Authenticator.SignCount <= stored.Authenticator.SignCount {
 				return ErrInvalidCredential
 			}
-			s.credentials[key][index] = credential
+			s.credentials[string(userHandle)][index] = credential
 			return nil
 		}
 	}

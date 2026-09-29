@@ -6,6 +6,7 @@ import (
 	"net/netip"
 
 	"github.com/pion/stun/v3"
+
 	controlprotocol "github.com/sokhrym/go-tunnels/internal/protocol"
 )
 
@@ -18,7 +19,7 @@ func DiscoverServerReflexive(ctx context.Context, serverURI string) (controlprot
 	if err != nil {
 		return controlprotocol.Candidate{}, fmt.Errorf("dial STUN: %w", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	request, err := stun.Build(stun.TransactionID, stun.BindingRequest, stun.Fingerprint)
 	if err != nil {
 		return controlprotocol.Candidate{}, err

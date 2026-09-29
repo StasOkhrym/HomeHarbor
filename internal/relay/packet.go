@@ -2,7 +2,10 @@ package relay
 
 import "errors"
 
-const maxIdentifierLength = 128
+const (
+	maxIdentifierLength = 128
+	maxPacketPayload    = 64 << 10
+)
 
 type Packet struct {
 	SessionID           string
@@ -12,6 +15,9 @@ type Packet struct {
 }
 
 func EncodePacket(packet Packet) ([]byte, error) {
+	if len(packet.Payload) == 0 || len(packet.Payload) > maxPacketPayload {
+		return nil, errors.New("invalid relay packet payload size")
+	}
 	ids := []string{packet.SessionID, packet.SourceDeviceID, packet.DestinationDeviceID}
 	size := 3 + len(packet.Payload)
 	for _, id := range ids {
@@ -31,6 +37,7 @@ func EncodePacket(packet Packet) ([]byte, error) {
 	copy(out[offset:], packet.Payload)
 	return out, nil
 }
+
 func DecodePacket(data []byte) (Packet, error) {
 	var values [3]string
 	offset := 0
@@ -48,6 +55,9 @@ func DecodePacket(data []byte) (Packet, error) {
 	}
 	if offset >= len(data) {
 		return Packet{}, errors.New("empty relay payload")
+	}
+	if len(data)-offset > maxPacketPayload {
+		return Packet{}, errors.New("relay packet payload too large")
 	}
 	return Packet{SessionID: values[0], SourceDeviceID: values[1], DestinationDeviceID: values[2], Payload: data[offset:]}, nil
 }

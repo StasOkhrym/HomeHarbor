@@ -79,7 +79,9 @@ type PathSelector struct {
 	current Path
 }
 
-func NewPathSelector() *PathSelector              { return &PathSelector{current: PathRelay} }
-func (s *PathSelector) Current() Path             { s.mu.RLock(); defer s.mu.RUnlock(); return s.current }
+func NewPathSelector() *PathSelector  { return &PathSelector{current: PathRelay} }
+func (s *PathSelector) Current() Path { s.mu.RLock(); defer s.mu.RUnlock(); return s.current }
+
 func (s *PathSelector) DirectHandshakeSucceeded() { s.mu.Lock(); s.current = PathDirect; s.mu.Unlock() }
-func (s *PathSelector) DirectFailed()             { s.mu.Lock(); s.current = PathRelay; s.mu.Unlock() }
+
+func (s *PathSelector) DirectFailed() { s.mu.Lock(); s.current = PathRelay; s.mu.Unlock() }
