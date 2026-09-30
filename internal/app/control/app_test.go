@@ -18,7 +18,7 @@ type snapshotReader struct {
 func (r snapshotReader) Latest(context.Context) (snapshot.Envelope, error) { return r.envelope, nil }
 
 func TestAuthorizeRelayPeerRequiresSnapshotACLForGatewayRoute(t *testing.T) {
-	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,16 +39,21 @@ func TestAuthorizeRelayPeerRequiresSnapshotACLForGatewayRoute(t *testing.T) {
 	reader := snapshotReader{envelope: envelope}
 	client := devices.Device{ID: "client", Role: devices.RoleClient}
 	gateway := devices.Device{ID: "gateway", Role: devices.RoleGateway}
-	if !authorizeRelayPeer(context.Background(), reader, client, gateway) || !authorizeRelayPeer(context.Background(), reader, gateway, client) {
+	if !authorizeRelayPeer(context.Background(), reader, publicKey, "home", client, gateway) || !authorizeRelayPeer(context.Background(), reader, publicKey, "home", gateway, client) {
 		t.Fatal("authorized client/gateway pair was rejected")
 	}
-	if authorizeRelayPeer(context.Background(), reader, client, devices.Device{ID: "other", Role: devices.RoleGateway}) {
+	if authorizeRelayPeer(context.Background(), reader, publicKey, "home", client, devices.Device{ID: "other", Role: devices.RoleGateway}) {
 		t.Fatal("gateway absent from snapshot was authorized")
+	}
+	unsigned := reader.envelope
+	unsigned.Signature[0] ^= 0xff
+	if authorizeRelayPeer(context.Background(), snapshotReader{envelope: unsigned}, publicKey, "home", client, gateway) {
+		t.Fatal("snapshot with an invalid signature was authorized")
 	}
 }
 
 func TestAuthorizeRelayPeerRejectsSnapshotRoleMismatch(t *testing.T) {
-	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +68,7 @@ func TestAuthorizeRelayPeerRejectsSnapshotRoleMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authorizeRelayPeer(context.Background(), snapshotReader{envelope: envelope}, devices.Device{ID: "client", Role: devices.RoleClient}, devices.Device{ID: "gateway", Role: devices.RoleGateway}) {
+	if authorizeRelayPeer(context.Background(), snapshotReader{envelope: envelope}, publicKey, "home", devices.Device{ID: "client", Role: devices.RoleClient}, devices.Device{ID: "gateway", Role: devices.RoleGateway}) {
 		t.Fatal("snapshot role mismatch was authorized")
 	}
 }

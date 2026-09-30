@@ -37,6 +37,30 @@ func (s *PostgresStore) ListServices(ctx context.Context) ([]Service, error) {
 	return items, rows.Err()
 }
 
+func (s *PostgresStore) ListServicesForDevice(ctx context.Context, deviceID string) ([]Service, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT s.id,s.name,s.kind,s.url,COALESCE(s.native_url,''),
+		       COALESCE(s.health_url,''),s.description,s.created_at
+		FROM services s
+		JOIN access_profile_services aps ON aps.service_id=s.id
+		JOIN access_profile_devices apd ON apd.profile_id=aps.profile_id
+		WHERE apd.device_id=$1
+		ORDER BY s.id`, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Service{}
+	for rows.Next() {
+		var item Service
+		if err = rows.Scan(&item.ID, &item.Name, &item.Kind, &item.URL, &item.NativeURL, &item.HealthURL, &item.Description, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *PostgresStore) CreateProfile(ctx context.Context, profile AccessProfile) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

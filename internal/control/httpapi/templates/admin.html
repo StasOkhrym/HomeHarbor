@@ -40,14 +40,29 @@
       {{else}}<tr><td colspan="5">No enrolled devices.</td></tr>{{end}}
     </tbody>
   </table>
-  <h2>Routes and split DNS</h2>
-  <table>
-    <thead><tr><th>Prefix</th><th>Resolver</th><th>Domain</th><th>Status</th><th>Action</th></tr></thead>
-    <tbody>
-      {{range .Routes}}<tr><td><code>{{.Prefix}}</code></td><td><code>{{.Resolver}}</code></td><td>{{.DomainSuffix}}</td><td class="{{.Status}}">{{.Status}}</td><td>{{if eq .Status "pending"}}<form class="inline" method="post" action="/admin/routes/{{.ID}}/approve"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button type="submit">Approve</button></form><form class="inline" method="post" action="/admin/routes/{{.ID}}/reject"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button type="submit">Reject</button></form>{{end}}</td></tr>
-      {{else}}<tr><td colspan="5">No advertised routes.</td></tr>{{end}}
-    </tbody>
-  </table>
+  {{if .HasNetwork}}
+    <h2>Routes and split DNS</h2>
+    <section>
+      <h3>Add LAN route</h3>
+      <p>New routes stay pending until explicitly approved. The resolver must belong to the advertised LAN.</p>
+      <form method="post" action="/admin/routes">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <label>ID <input name="id" placeholder="home-lan" required></label>
+        <label>Gateway device ID <input name="gateway_device_id" required></label>
+        <label>LAN CIDR <input name="prefix" placeholder="192.168.50.0/24" required></label>
+        <label>DNS resolver <input name="resolver" placeholder="192.168.50.1" required></label>
+        <label>Private DNS suffix <input name="domain_suffix" placeholder="home.arpa" required></label>
+        <button type="submit">Advertise route</button>
+      </form>
+    </section>
+    <table>
+      <thead><tr><th>Prefix</th><th>Resolver</th><th>Domain</th><th>Status</th><th>Action</th></tr></thead>
+      <tbody>
+        {{range .Routes}}<tr><td><code>{{.Prefix}}</code></td><td><code>{{.Resolver}}</code></td><td>{{.DomainSuffix}}</td><td class="{{.Status}}">{{.Status}}</td><td>{{if eq .Status "pending"}}<form class="inline" method="post" action="/admin/routes/{{.ID}}/approve"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button type="submit">Approve</button></form><form class="inline" method="post" action="/admin/routes/{{.ID}}/reject"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button type="submit">Reject</button></form>{{end}}</td></tr>
+        {{else}}<tr><td colspan="5">No advertised routes.</td></tr>{{end}}
+      </tbody>
+    </table>
+  {{end}}
   <h2>Services</h2>
   <table>
     <thead><tr><th>Name</th><th>Type</th><th>URL</th><th>Description</th></tr></thead>

@@ -93,6 +93,9 @@ func NewRouter(server *Server) http.Handler {
 			invites.Get("/{id}", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.getInvite)).ServeHTTP)
 			invites.Post("/{id}/approval", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.approveInvite)).ServeHTTP)
 		})
+		if server.services != nil {
+			api.Get("/services/available", server.requireDevice(http.HandlerFunc(server.listAvailableServices)).ServeHTTP)
+		}
 		api.Route("/services", func(services chi.Router) {
 			if server.services == nil {
 				return
@@ -166,8 +169,11 @@ func NewRouter(server *Server) http.Handler {
 		admin.Get("/", server.requireAdmin(http.HandlerFunc(server.adminDashboard)).ServeHTTP)
 		admin.Post("/enrollment-tokens", server.requireAdmin(http.HandlerFunc(server.issueEnrollmentTokenForm)).ServeHTTP)
 		admin.Post("/devices/{id}/revoke", server.requireAdmin(http.HandlerFunc(server.revokeDeviceForm)).ServeHTTP)
-		admin.Post("/routes/{id}/approve", server.requireAdmin(http.HandlerFunc(server.approveRouteForm)).ServeHTTP)
-		admin.Post("/routes/{id}/reject", server.requireAdmin(http.HandlerFunc(server.rejectRouteForm)).ServeHTTP)
+		if server.network != nil {
+			admin.Post("/routes", server.requireAdmin(http.HandlerFunc(server.createRouteForm)).ServeHTTP)
+			admin.Post("/routes/{id}/approve", server.requireAdmin(http.HandlerFunc(server.approveRouteForm)).ServeHTTP)
+			admin.Post("/routes/{id}/reject", server.requireAdmin(http.HandlerFunc(server.rejectRouteForm)).ServeHTTP)
+		}
 		admin.Post("/services", server.requireAdmin(http.HandlerFunc(server.createServiceForm)).ServeHTTP)
 		admin.Post("/access-profiles", server.requireAdmin(http.HandlerFunc(server.createProfileForm)).ServeHTTP)
 		admin.Post("/policy", server.requireAdmin(http.HandlerFunc(server.replacePolicyForm)).ServeHTTP)

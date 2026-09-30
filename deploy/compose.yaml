@@ -95,7 +95,11 @@ services:
       control: {condition: service_healthy}
       relay: {condition: service_healthy}
     security_opt: [no-new-privileges:true]
+    # Docker Desktop rejects execve for the Caddy image with an entirely empty
+    # capability set. This is the only capability Caddy needs for the host
+    # ports below; it does not grant network administration or raw sockets.
     cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
     init: true
     restart: unless-stopped
 configs:

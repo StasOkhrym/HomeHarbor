@@ -30,6 +30,13 @@ func TestSignVerifyAndAcceptNextSnapshot(t *testing.T) {
 	if err = VerifyNext(next, publicKey, "home", 1, signed.Hash); err != nil {
 		t.Fatal(err)
 	}
+	verified, err := Verify(next, publicKey, "home")
+	if err != nil {
+		t.Fatalf("verify current head: %v", err)
+	}
+	if verified.Revision != 2 {
+		t.Fatalf("verified revision = %d, want 2", verified.Revision)
+	}
 }
 
 func TestVerifyRejectsTamperingRollbackAndGap(t *testing.T) {

@@ -20,14 +20,20 @@ direct UDP discovery, and an encrypted relay fallback.
 - Go-template device/route dashboard with self-hosted assets, structured logs,
   health endpoints, and metrics.
 - CSRF-protected admin forms for enrollment invites, device revoke, route
-  approval, service/access-profile creation, and advanced policy replacement.
+  advertisement/approval, service/access-profile creation, and advanced policy
+  replacement.
 - Read-only admin audit API (`/api/v1/admin/audit`) and recent-activity view;
   audit writes remain owned by durable domain/auth event consumers.
+- Device-authenticated service catalog (`/api/v1/services/available`) filtered
+  by explicit access-profile membership; an unassigned device receives no
+  service tiles.
 - Passkey bootstrap/login, signed server-side sessions, one-time recovery codes,
   strict Origin checks, CSRF protection, and identity audit events.
 - Docker Compose/Caddy and Ansible deployment scaffolding.
 - Thin `cmd/*` entrypoints with shared `internal/app/*` runtimes and a minimal
   `Run(context.Context) error` lifecycle contract.
+- Agent and client now share `internal/app/node.App`; transport functions are
+  adapted to the same lifecycle contract before the role-specific wiring runs.
 - Signed invite proofs with device-key possession, trusted-companion approval,
   PostgreSQL pending state, atomic device/profile activation, and
   age-encrypted local root-key storage. The proof carries only the public
@@ -59,16 +65,20 @@ direct UDP discovery, and an encrypted relay fallback.
   run both operations when removing an already-connected client.
 - Snapshot topology compilation now produces deterministic WireGuard peer
   allowed-prefixes while keeping relay/direct endpoint ownership separate.
-- Local developer workflow: `make doctor`, `make dev-init`, `make dev-up`,
-  `make dev-down`, `make vm-up`, `make relay-acceptance`, `make verify`.
+- Local developer workflow: `make doctor-compose`, `make dev-init`, `make dev-up`,
+  `make dev-down`, `make integration-local`, `make vm-up`,
+  `make relay-acceptance`, `make verify`.
 
 ## Not yet complete
 
 - External NAT traversal and roaming acceptance across two independent
   networks.
-- PostgreSQL integration tests still require an explicit database URL; the
-  Linux namespace acceptance now covers kernel WireGuard plus allowed HTTP/SSH
-  service reachability and forbidden-port default-deny behavior.
+- PostgreSQL integration tests pass through `make integration-local` with
+  Docker or through `make integration` with an explicit database URL; the
+  Linux namespace acceptance covers kernel WireGuard plus allowed HTTP/SSH
+  service reachability and forbidden-port default-deny behavior. The complete
+  local Compose stack has also been verified through control, relay, Caddy,
+  migrations, and readiness checks.
 - Signed iOS target configuration, WireGuardKit integration, and physical-device
   Packet Tunnel verification. A native source scaffold is in `apps/ios/`.
 
@@ -83,6 +93,7 @@ go build ./cmd/...
 make lint       # check lint, imports, and formatting
 make lint-fix   # apply the configured safe formatting fixes
 make vulncheck  # run the Go vulnerability database scan
+make ios-source-check  # compile unsigned iOS package targets on a full Xcode host
 ```
 
 After approval, publish the signed network diff with a configured overlay pool:
@@ -157,13 +168,22 @@ DNS-01 setup.
 `make dev-init` also creates the local age-encrypted companion root key and
 mounts only its public key into control. The migration container receives only
 the PostgreSQL password. `make compose-check` renders Compose and verifies
-these secret boundaries before a developer starts the stack.
+these secret boundaries before a developer starts the stack; initialization
+also fails early when a local secret or the companion passphrase is truncated.
+`make deploy-check` validates the Ansible bundle source paths and required
+deployment files before a VPS rollout.
 
 `make relay-acceptance` runs the portable authenticated relay-only vertical
-slice. `make acceptance` runs that test first and then executes the Linux
-namespace scenario directly on Linux or through the `go-tunnels-vm` Lima
-instance on macOS. Start that VM with `make vm-up`; set `LIMA_INSTANCE` when
-using a different instance name.
+slice through the production relay app and node bridge. `make acceptance` runs
+those tests first and then executes the Linux namespace scenario directly on
+Linux or through the `go-tunnels-vm` Lima instance on macOS. Start that VM with
+`make vm-up`; set `LIMA_INSTANCE` when using a different instance name.
+
+`make integration-local` creates a uniquely named, host-only PostgreSQL
+Compose project on port `55432`, runs the migration/store integration tests,
+and removes its volume on exit. `make integration` remains the CI/advanced
+path and requires an explicit `TEST_DATABASE_URL`; it never guesses a database
+or runs migrations against one implicitly.
 
 The current direct-path preview accepts a validated, comma-separated candidate
 list with `-direct-candidates`. Set `-stun stun:host:port` to run STUN on the

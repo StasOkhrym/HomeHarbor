@@ -10,8 +10,10 @@ import (
 	"syscall"
 	"time"
 
+	nodeapp "github.com/sokhrym/go-tunnels/internal/app/node"
 	"github.com/sokhrym/go-tunnels/internal/node"
 	platformconfig "github.com/sokhrym/go-tunnels/internal/platform/config"
+	"github.com/sokhrym/go-tunnels/internal/platform/lifecycle"
 	controlprotocol "github.com/sokhrym/go-tunnels/internal/protocol"
 )
 
@@ -42,6 +44,7 @@ func main() {
 	stunServer := flag.String("stun", "", "optional UDP STUN URI used to discover the bridge socket's public candidate")
 	flag.Parse()
 	var err error
+	var relayTicketLifetime time.Duration
 	if *configPath != "" {
 		cfg, configErr := platformconfig.LoadClient(*configPath)
 		if configErr != nil {
@@ -187,6 +190,7 @@ func main() {
 			session, err = node.IssueRelaySession(context.Background(), nil, *controlURL, state.DeviceCredential, *sessionID, *destination)
 			if err == nil {
 				*relayURL, *relayUDPAddress, *relayTicket = session.RelayURL, session.RelayUDPAddress, session.Ticket
+				relayTicketLifetime = time.Duration(session.ExpiresInSeconds) * time.Second
 			}
 		}
 	}
@@ -204,7 +208,7 @@ func main() {
 		}
 		if *interfaceName == "" {
 			components = append(components, func(componentContext context.Context) error {
-				return node.RunRelayBridgeLoop(componentContext, node.RelayBridgeConfig{RelayURL: *relayURL, RelayUDPAddress: *relayUDPAddress, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress, STUNServer: *stunServer, OnObservedEndpoint: func(endpoint netip.AddrPort) {
+				return node.RunRelayBridgeLoop(componentContext, node.RelayBridgeConfig{RelayURL: *relayURL, RelayUDPAddress: *relayUDPAddress, Ticket: *relayTicket, TicketLifetime: relayTicketLifetime, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress, STUNServer: *stunServer, OnObservedEndpoint: func(endpoint netip.AddrPort) {
 					if candidateSet != nil {
 						candidateSet.SetObservedEndpoint(endpoint)
 					}
@@ -219,7 +223,7 @@ func main() {
 				routePrefixes, parseErr = node.ParsePrefixList(*routes)
 				if parseErr == nil {
 					components = append(components, func(componentContext context.Context) error {
-						return node.RunKernelRelayLoop(componentContext, node.KernelRelayConfig{RelayBridgeConfig: node.RelayBridgeConfig{RelayURL: *relayURL, RelayUDPAddress: *relayUDPAddress, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress, STUNServer: *stunServer, OnObservedEndpoint: func(endpoint netip.AddrPort) {
+						return node.RunKernelRelayLoop(componentContext, node.KernelRelayConfig{RelayBridgeConfig: node.RelayBridgeConfig{RelayURL: *relayURL, RelayUDPAddress: *relayUDPAddress, Ticket: *relayTicket, TicketLifetime: relayTicketLifetime, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress, STUNServer: *stunServer, OnObservedEndpoint: func(endpoint netip.AddrPort) {
 							if candidateSet != nil {
 								candidateSet.SetObservedEndpoint(endpoint)
 							}
@@ -248,7 +252,11 @@ func main() {
 	if err == nil && len(components) > 0 {
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
-		err = node.RunComponents(ctx, components...)
+		runners := make([]lifecycle.Component, len(components))
+		for index, component := range components {
+			runners[index] = lifecycle.Func(component)
+		}
+		err = nodeapp.New(runners...).Run(ctx)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

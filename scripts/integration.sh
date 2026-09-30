@@ -2,11 +2,11 @@
 set -eu
 
 if [ -z "${TEST_DATABASE_URL:-}" ]; then
-    echo "TEST_DATABASE_URL is required; integration tests never guess or mutate a database" >&2
+    echo "TEST_DATABASE_URL is required; use make integration-local for an isolated local database" >&2
     exit 2
 fi
 
-CONTROL_DOMAIN="${CONTROL_DOMAIN:-control.localhost}" \
-RELAY_DOMAIN="${RELAY_DOMAIN:-relay.localhost}" \
-	docker compose -f deploy/compose.yaml config >/dev/null
-TEST_DATABASE_URL="$TEST_DATABASE_URL" go test ./... -run 'Integration|Postgres|Contract' -count=1
+# This command intentionally does not start Compose or run migrations against
+# an inferred URL. Callers own the database lifecycle and must opt into the
+# exact database that the tests are allowed to mutate.
+TEST_DATABASE_URL="$TEST_DATABASE_URL" go test ./... -run 'Integration|Postgres|Contract|AdvisoryLock' -count=1

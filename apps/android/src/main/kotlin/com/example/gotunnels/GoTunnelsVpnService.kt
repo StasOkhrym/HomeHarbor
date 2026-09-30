@@ -1,93 +1,75 @@
 package com.example.gotunnels
 
+import android.app.Service
 import android.content.Intent
-import android.net.VpnService
-import android.os.ParcelFileDescriptor
+import android.os.IBinder
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 /**
- * Owns the Android VPN lifecycle, while the WireGuard engine remains an
- * injected dependency. Keeping the engine out of this class prevents UI or
- * Android route code from becoming a second cryptographic implementation.
+ * Owns the controller lifecycle, while the official WireGuard backend owns
+ * the Android VPN service and TUN descriptor. Keeping those responsibilities
+ * separate avoids two independent VpnService builders racing to install
+ * routes for one tunnel.
  */
-class GoTunnelsVpnService : VpnService() {
-    private var tunnel: ParcelFileDescriptor? = null
-    private var engine: WireGuardEngine = MissingWireGuardEngine
+class GoTunnelsVpnService : Service() {
+    private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val keyMaterialStore by lazy { KeyMaterialStore(this) }
+    private val engine by lazy { OfficialWireGuardEngine(applicationContext) }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return try {
-            // Android may restart a sticky service without its original Intent.
-            // Tear down the previous descriptor before treating that restart as
-            // an invalid configuration; otherwise stale routes could survive
-            // while the UI believes the tunnel is stopped.
-            stopTunnel()
-            val configuration = TunnelConfiguration.from(intent ?: return START_NOT_STICKY)
-            val builder = Builder()
-                .setSession("Go Tunnels")
-                .addAddress(configuration.overlayAddress, configuration.overlayPrefixLength)
-
-            // Adding only signed, non-default routes is intentional. Android's
-            // Builder otherwise makes it easy to accidentally route all phone
-            // traffic through a homelab gateway.
-            configuration.routes.forEach { route ->
-                builder.addRoute(route.address, route.prefixLength)
-            }
-            configuration.dnsServers.forEach(builder::addDnsServer)
-            val establishedTunnel = builder.establish()
-                ?: error("Android denied VPN interface creation")
-            tunnel = establishedTunnel
-            engine.start(
-                establishedTunnel,
-                configuration.endpoint,
-                configuration.wireGuardPrivateKey,
-                configuration.peerPublicKey,
-            )
-            START_STICKY
-        } catch (error: IllegalArgumentException) {
-            stopTunnel()
-            START_NOT_STICKY
-        } catch (error: IllegalStateException) {
-            stopTunnel()
-            START_NOT_STICKY
+        val configuration = try {
+            TunnelConfiguration.from(intent ?: return START_NOT_STICKY)
+        } catch (_: IllegalArgumentException) {
+            stopSelfResult(startId)
+            return START_NOT_STICKY
+        } catch (_: IllegalStateException) {
+            stopSelfResult(startId)
+            return START_NOT_STICKY
         }
+
+        // Serialize stop/start transitions. A network change can deliver a
+        // second command while the first backend call is still resolving an
+        // endpoint; ordering keeps the old configuration from being revived.
+        executor.execute {
+            try {
+                engine.stop()
+                val privateKey = keyMaterialStore.loadWireGuardPrivateKey(configuration.wireGuardKeyAlias)
+                engine.start(configuration, privateKey)
+            } catch (_: Exception) {
+                engine.stop()
+                stopSelfResult(startId)
+            }
+        }
+        return START_STICKY
     }
 
     override fun onDestroy() {
-        stopTunnel()
+        executor.execute { engine.stop() }
+        executor.shutdown()
         super.onDestroy()
     }
 
-    private fun stopTunnel() {
-        tunnel?.let { descriptor ->
-            engine.stop()
-            descriptor.close()
-        }
-        tunnel = null
-    }
+    override fun onBind(intent: Intent?): IBinder? = null
 }
 
-/** The production build supplies an official WireGuard-compatible adapter. */
-interface WireGuardEngine {
-    fun start(tunnel: ParcelFileDescriptor, endpoint: String, privateKey: String, peerPublicKey: String)
+/** The only tunnel-engine contract used by the Android lifecycle controller. */
+internal interface WireGuardEngine {
+    fun start(configuration: TunnelConfiguration, privateKey: String)
     fun stop()
 }
 
-private object MissingWireGuardEngine : WireGuardEngine {
-    override fun start(tunnel: ParcelFileDescriptor, endpoint: String, privateKey: String, peerPublicKey: String) {
-        error("WireGuard engine is not linked")
-    }
-
-    override fun stop() = Unit
+internal data class Route(val address: String, val prefixLength: Int) {
+    fun cidr(): String = "$address/$prefixLength"
 }
 
-private data class Route(val address: String, val prefixLength: Int)
-
-private data class TunnelConfiguration(
+internal data class TunnelConfiguration(
     val overlayAddress: String,
     val overlayPrefixLength: Int,
     val routes: List<Route>,
     val dnsServers: List<String>,
     val endpoint: String,
-    val wireGuardPrivateKey: String,
+    val wireGuardKeyAlias: String,
     val peerPublicKey: String,
 ) {
     companion object {
@@ -99,9 +81,9 @@ private data class TunnelConfiguration(
             val dnsServers = intent.getStringArrayListExtra("dns_servers") ?: arrayListOf()
             dnsServers.forEach { require(isIpAddress(it)) { "invalid DNS server" } }
             val endpoint = intent.requireString("endpoint")
-            val privateKey = intent.requireString("wireguard_private_key")
+            val keyAlias = intent.requireString("wireguard_key_alias")
             val peerKey = intent.requireString("peer_public_key")
-            return TunnelConfiguration(overlay.address, overlay.prefixLength, routes, dnsServers, endpoint, privateKey, peerKey)
+            return TunnelConfiguration(overlay.address, overlay.prefixLength, routes, dnsServers, endpoint, keyAlias, peerKey)
         }
 
         private fun parsePrefix(value: String, allowDefault: Boolean): Route {

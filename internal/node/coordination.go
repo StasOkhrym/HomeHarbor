@@ -230,23 +230,7 @@ func runCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 	heartbeat := time.NewTicker(heartbeatEvery)
 	defer heartbeat.Stop()
 	candidateChanges := cfg.CandidateChanges
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-heartbeat.C:
-				_ = write(controlprotocol.Message{Type: "heartbeat"})
-				_ = sendCandidates()
-			case _, ok := <-candidateChanges:
-				if !ok {
-					candidateChanges = nil
-					continue
-				}
-				_ = sendCandidates()
-			}
-		}
-	}()
+	go runCandidatePublisher(sessionContext, heartbeat.C, candidateChanges, write, sendCandidates)
 
 	for {
 		readContext, readCancel := context.WithTimeout(sessionContext, 2*time.Minute)
@@ -303,6 +287,36 @@ func runCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 				continue
 			}
 			return fmt.Errorf("unsupported coordination message %q", message.Type)
+		}
+	}
+}
+
+// runCandidatePublisher owns the periodic coordination writes for one
+// authenticated WebSocket session. It must use sessionContext rather than the
+// node's parent context: a reconnect cancels the old session before creating a
+// new publisher, otherwise every control outage leaks a goroutine that keeps
+// trying to write through a closed socket.
+func runCandidatePublisher(
+	ctx context.Context,
+	heartbeats <-chan time.Time,
+	candidateChanges <-chan struct{},
+	write func(any) error,
+	sendCandidates func() error,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-heartbeats:
+			_ = write(controlprotocol.Message{Type: "heartbeat"})
+			_ = sendCandidates()
+		case _, ok := <-candidateChanges:
+			if !ok {
+				candidateChanges = nil
+				continue
+			}
+
+			_ = sendCandidates()
 		}
 	}
 }

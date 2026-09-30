@@ -79,19 +79,30 @@ func (a *App) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen relay HTTP: %w", err)
 	}
-	// Readiness means both public transports are bound. Binding TCP before UDP
-	// lets startup fail cleanly without advertising a relay that cannot accept
-	// its packet path, while the deferred close prevents a half-started process
-	// from leaking the HTTP socket.
-	defer func() { _ = tcpListener.Close() }()
 	udpAddress, err := net.ResolveUDPAddr("udp", a.udpListenAddr)
 	if err != nil {
+		_ = tcpListener.Close()
 		return err
 	}
 	udpConnection, err := net.ListenUDP("udp", udpAddress)
 	if err != nil {
+		_ = tcpListener.Close()
 		return err
 	}
+	return a.runWithListeners(ctx, tcpListener, udpConnection)
+}
+
+// runWithListeners owns both already-bound sockets. Keeping binding outside
+// this lifecycle helper lets tests hold exact ephemeral endpoints while still
+// exercising the same readiness, shutdown, and UDP relay path as production.
+func (a *App) runWithListeners(ctx context.Context, tcpListener net.Listener, udpConnection *net.UDPConn) error {
+	if tcpListener == nil || udpConnection == nil {
+		return errors.New("relay listeners are required")
+	}
+	// Readiness means both public transports are bound. Binding TCP before UDP
+	// lets startup fail cleanly without advertising a relay that cannot accept
+	// its packet path, while this helper owns both sockets until shutdown.
+	defer func() { _ = tcpListener.Close() }()
 	a.ready.Store(true)
 	defer a.ready.Store(false)
 	runContext, cancel := context.WithCancel(ctx)
@@ -109,7 +120,7 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		_ = udpConnection.Close()
 	}()
-	err = <-serverErr
+	err := <-serverErr
 	cancel()
 	if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
 		err = nil

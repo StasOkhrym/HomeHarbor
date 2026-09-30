@@ -1,0 +1,6 @@
+services:
+  postgres:
+    # The base Compose file keeps PostgreSQL private to the Compose network.
+    # This override exposes an ephemeral high port only for host-side tests.
+    ports:
+      - "127.0.0.1:${INTEGRATION_POSTGRES_PORT:-55432}:5432"

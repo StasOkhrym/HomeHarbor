@@ -42,6 +42,8 @@ ceremony_ttl = "5m"
 public_url = "https://relay.example.com"
 ticket_key_file = "` + relayKeyPath + `"
 ticket_ttl = "5m"
+[security]
+root_public_key_file = "/run/secrets/root_public_key"
 [observability]
 metrics_address = ":9090"
 `
@@ -86,7 +88,7 @@ password_file = "` + passwordPath + `"
 }
 
 func TestControlValidationRejectsUnsafeAuthenticationSettings(t *testing.T) {
-	valid := Control{Server: Server{ListenAddress: ":8080", PublicURL: "https://tunnel.example.com"}, Database: Database{URL: "postgres://db/tunnel"}, Auth: Auth{RPID: "tunnel.example.com", RPOrigin: "https://tunnel.example.com", SessionSigningKey: "01234567890123456789012345678901", CeremonyEncryptionKey: "abcdefghijklmnopqrstuvwxyzABCDEF", SessionTTL: "12h", CeremonyTTL: "5m"}, Relay: Relay{PublicURL: "wss://relay.example.com", TicketKey: "01234567890123456789012345678901", TicketTTL: "5m"}}
+	valid := Control{Server: Server{ListenAddress: ":8080", PublicURL: "https://tunnel.example.com"}, Database: Database{URL: "postgres://db/tunnel"}, Auth: Auth{RPID: "tunnel.example.com", RPOrigin: "https://tunnel.example.com", SessionSigningKey: "01234567890123456789012345678901", CeremonyEncryptionKey: "abcdefghijklmnopqrstuvwxyzABCDEF", SessionTTL: "12h", CeremonyTTL: "5m"}, Relay: Relay{PublicURL: "wss://relay.example.com", TicketKey: "01234567890123456789012345678901", TicketTTL: "5m"}, Security: ControlSecurity{RootPublicKeyFile: "/run/secrets/root_public_key"}}
 	tests := []struct {
 		name   string
 		mutate func(*Control)
@@ -106,6 +108,13 @@ func TestControlValidationRejectsUnsafeAuthenticationSettings(t *testing.T) {
 				t.Fatal("validate() error = nil")
 			}
 		})
+	}
+}
+
+func TestControlValidationRequiresTrustedRootPublicKey(t *testing.T) {
+	cfg := Control{Server: Server{ListenAddress: ":8080", PublicURL: "https://tunnel.example.com"}, Database: Database{URL: "postgres://db/tunnel"}, Auth: Auth{RPID: "tunnel.example.com", RPOrigin: "https://tunnel.example.com", SessionSigningKey: "01234567890123456789012345678901", CeremonyEncryptionKey: "abcdefghijklmnopqrstuvwxyzABCDEF", SessionTTL: "12h", CeremonyTTL: "5m"}, Relay: Relay{PublicURL: "wss://relay.example.com", TicketKey: "01234567890123456789012345678901", TicketTTL: "5m"}}
+	if err := cfg.validate(); err == nil {
+		t.Fatal("validate() accepted control configuration without trusted root public key")
 	}
 }
 

@@ -1,0 +1,18 @@
+package node
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/sokhrym/go-tunnels/internal/platform/lifecycle"
+)
+
+func TestAppRunsComponentsThroughSharedLifecycleContract(t *testing.T) {
+	boom := errors.New("node component failed")
+	app := New(lifecycle.Func(func(context.Context) error { return boom }))
+
+	if err := app.Run(context.Background()); !errors.Is(err, boom) {
+		t.Fatalf("App.Run() error=%v, want %v", err, boom)
+	}
+}

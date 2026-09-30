@@ -2,7 +2,8 @@ package node
 
 import (
 	"context"
-	"sync"
+
+	"github.com/sokhrym/go-tunnels/internal/platform/lifecycle"
 )
 
 // RunComponents runs independent node components under one cancellation tree.
@@ -10,28 +11,12 @@ import (
 // original error; this keeps a dead coordination stream from leaving a live
 // relay bridge behind with stale policy.
 func RunComponents(ctx context.Context, components ...func(context.Context) error) error {
-	if len(components) == 0 {
-		return nil
-	}
-	componentContext, cancel := context.WithCancel(ctx)
-	defer cancel()
-	results := make(chan error, len(components))
-	var waitGroup sync.WaitGroup
-	waitGroup.Add(len(components))
-	for _, component := range components {
-		go func(run func(context.Context) error) {
-			defer waitGroup.Done()
-			results <- run(componentContext)
-		}(component)
-	}
-	var first error
-	for range components {
-		err := <-results
-		if err != nil && first == nil {
-			first = err
-			cancel()
+	runners := make([]lifecycle.Component, len(components))
+	for index, component := range components {
+		if component == nil {
+			return lifecycle.ErrNilComponent
 		}
+		runners[index] = lifecycle.Func(component)
 	}
-	waitGroup.Wait()
-	return first
+	return lifecycle.Run(ctx, runners...)
 }

@@ -79,3 +79,20 @@ func TestLoadRejectsPartialEnrollment(t *testing.T) {
 		t.Fatal("Load() accepted partial enrollment")
 	}
 }
+
+func TestLoadRejectsWorldReadableState(t *testing.T) {
+	state, err := NewState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := state.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load() accepted a state file readable by other users")
+	}
+}

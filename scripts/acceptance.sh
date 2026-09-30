@@ -1,8 +1,10 @@
 #!/bin/sh
 set -eu
 
-# This part is portable and proves the relay-only node vertical slice. The
-# Linux-only checks below add kernel interfaces, nftables, and namespaces.
+# This part is portable and proves both the production relay composition and
+# the node bridge vertical slice. The Linux-only checks below add kernel
+# interfaces, nftables, and namespaces.
+go test ./internal/app/relay -run '^TestRelayAppBridgesTwoNodesThroughProductionListeners$' -count=1
 go test ./internal/node -run '^TestRelayOnlyNodeBridgesForwardOpaqueUDPInBothDirections$' -count=1
 
 run_lima_namespace_acceptance() {

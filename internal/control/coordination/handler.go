@@ -88,7 +88,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = connection.Close(websocket.StatusPolicyViolation, protocolErr.Code)
 		return
 	}
-	peer := &peer{id: device.ID, connection: connection}
+	peer := &peer{id: device.ID, connection: connection, negotiated: negotiated}
 	// One live connection per device makes candidate ownership unambiguous and
 	// prevents an old connection from continuing to publish endpoint changes.
 	if err = h.hub.add(peer); err != nil {
@@ -121,6 +121,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		switch message.Type {
 		case "candidate.update":
+			if !negotiated.Has(controlprotocol.CapabilityDirectUDP) {
+				// A relay-only peer must not publish endpoint candidates. Keeping
+				// this check at the authenticated protocol boundary prevents an
+				// older client from probing the direct-path feature by sending an
+				// otherwise well-formed message.
+				_ = connection.Close(websocket.StatusPolicyViolation, "direct UDP capability was not negotiated")
+				return
+			}
 			var update controlprotocol.CandidateUpdate
 			if err := json.Unmarshal(message.Payload, &update); err != nil || update.Validate() != nil {
 				_ = connection.Close(websocket.StatusInvalidFramePayloadData, "targeted candidate update required")
@@ -144,7 +152,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if marshalErr != nil {
 				continue
 			}
-			h.hub.send(r.Context(), destination.ID, controlprotocol.Message{Type: "candidate.update", Payload: payload})
+			h.hub.sendCandidate(r.Context(), destination.ID, controlprotocol.Message{Type: "candidate.update", Payload: payload})
 		case "heartbeat":
 			_ = writePayload(r.Context(), connection, "heartbeat.ack", map[string]any{"at": time.Now().UTC()})
 		}
@@ -169,6 +177,7 @@ func writeJSONWithTimeout(ctx context.Context, connection *websocket.Conn, value
 type peer struct {
 	id         string
 	connection *websocket.Conn
+	negotiated controlprotocol.Negotiated
 	mu         sync.Mutex
 }
 
@@ -197,11 +206,11 @@ func (h *hub) add(peer *peer) error {
 	return nil
 }
 func (h *hub) remove(id string) { h.mu.Lock(); delete(h.peers, id); h.mu.Unlock() }
-func (h *hub) send(ctx context.Context, destination string, message controlprotocol.Message) {
+func (h *hub) sendCandidate(ctx context.Context, destination string, message controlprotocol.Message) {
 	h.mu.RLock()
 	peer := h.peers[destination]
 	h.mu.RUnlock()
-	if peer != nil {
+	if peer != nil && peer.negotiated.Has(controlprotocol.CapabilityDirectUDP) {
 		_ = peer.write(ctx, message)
 	}
 }

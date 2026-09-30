@@ -1,8 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <application android:label="Go Tunnels" android:allowBackup="false">
+    <application android:label="Go Tunnels" android:allowBackup="false" android:supportsRtl="true">
         <service
             android:name=".GoTunnelsVpnService"
+            android:exported="false">
+        </service>
+        <service
+            android:name="com.wireguard.android.backend.GoBackend$VpnService"
             android:exported="false"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>

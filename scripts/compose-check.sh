@@ -16,6 +16,16 @@ CONTROL_CONFIG=../.local/control.toml \
 RELAY_CONFIG=../.local/relay.toml \
     docker compose -f deploy/compose.yaml config --format json >"$output"
 
+# Keep the host-side PostgreSQL test override parseable with the same local
+# config and secret boundaries. It is intentionally rendered only; the
+# integration runner owns startup and teardown of its isolated project.
+CONTROL_DOMAIN="${CONTROL_DOMAIN:-control.localhost}" \
+RELAY_DOMAIN="${RELAY_DOMAIN:-relay.localhost}" \
+CADDYFILE=Caddyfile.local \
+CONTROL_CONFIG=../.local/control.toml \
+RELAY_CONFIG=../.local/relay.toml \
+    docker compose -f deploy/compose.yaml -f deploy/compose.integration.yaml config >/dev/null
+
 python3 - "$output" <<'PY'
 import json
 import sys
@@ -38,5 +48,8 @@ if control != expected_control:
     raise SystemExit(f"control secrets = {sorted(control)}, want {sorted(expected_control)}")
 if migrate != expected_migrate:
     raise SystemExit(f"migrate secrets = {sorted(migrate)}, want {sorted(expected_migrate)}")
+caddy = services["caddy"]
+if set(caddy.get("cap_drop", [])) != {"ALL"} or set(caddy.get("cap_add", [])) != {"NET_BIND_SERVICE"}:
+    raise SystemExit("caddy must drop all capabilities and add only NET_BIND_SERVICE")
 print("Compose secret boundaries are valid")
 PY

@@ -1,10 +1,9 @@
 import Foundation
 import Security
 
-// KeychainStore is the only storage boundary for device credentials and
-// WireGuard private keys. The app and Packet Tunnel provider share the App
-// Group, while ThisDeviceOnly prevents an encrypted backup from exporting
-// tunnel identity to another phone.
+// KeychainStore is shared by the app and Packet Tunnel provider. Private
+// credentials never enter NETunnelProviderProtocol.providerConfiguration,
+// which is configuration transport rather than secret storage.
 public final class KeychainStore {
     private let service: String
     private let accessGroup: String
@@ -17,19 +16,13 @@ public final class KeychainStore {
     public func save(_ data: Data, account: String) throws {
         let query = baseQuery(account: account)
         let updateStatus = SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary)
-        if updateStatus == errSecSuccess {
-            return
-        }
-        guard updateStatus == errSecItemNotFound else {
-            throw KeychainStoreError.status(updateStatus)
-        }
+        if updateStatus == errSecSuccess { return }
+        guard updateStatus == errSecItemNotFound else { throw KeychainStoreError.status(updateStatus) }
         var item = query
         item[kSecValueData as String] = data
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let addStatus = SecItemAdd(item as CFDictionary, nil)
-        guard addStatus == errSecSuccess else {
-            throw KeychainStoreError.status(addStatus)
-        }
+        guard addStatus == errSecSuccess else { throw KeychainStoreError.status(addStatus) }
     }
 
     public func load(account: String) throws -> Data {

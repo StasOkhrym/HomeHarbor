@@ -128,30 +128,46 @@ func Sign(value NetworkSnapshot, privateKey ed25519.PrivateKey, keyID string) (E
 	return Envelope{Version: SchemaVersion, KeyID: keyID, Payload: payload, Hash: hash[:], Signature: ed25519.Sign(privateKey, signed)}, nil
 }
 
-func VerifyNext(envelope Envelope, publicKey ed25519.PublicKey, networkID string, currentRevision uint64, currentHash []byte) error {
+// Verify authenticates and canonicalizes one envelope without imposing a
+// revision-chain cursor. Consumers that read the current head from durable
+// storage use this function; they already have no predecessor to compare
+// against, but still need the trusted signature, hash, schema, and network
+// binding before using the snapshot for authorization.
+func Verify(envelope Envelope, publicKey ed25519.PublicKey, networkID string) (NetworkSnapshot, error) {
 	if envelope.Version != SchemaVersion || len(publicKey) != ed25519.PublicKeySize || envelope.KeyID == "" || len(envelope.Hash) != sha256.Size || len(envelope.Signature) != ed25519.SignatureSize {
-		return ErrInvalidSnapshot
+		return NetworkSnapshot{}, ErrInvalidSnapshot
 	}
 	hash := sha256.Sum256(envelope.Payload)
 	if !bytes.Equal(hash[:], envelope.Hash) {
-		return ErrInvalidHash
+		return NetworkSnapshot{}, ErrInvalidHash
 	}
 	if !ed25519.Verify(publicKey, append([]byte(signatureDomain), envelope.Payload...), envelope.Signature) {
-		return ErrInvalidSignature
+		return NetworkSnapshot{}, ErrInvalidSignature
 	}
 	var value NetworkSnapshot
 	if err := cbor.Unmarshal(envelope.Payload, &value); err != nil {
-		return fmt.Errorf("decode snapshot: %w", err)
+		return NetworkSnapshot{}, fmt.Errorf("decode snapshot: %w", err)
 	}
 	if err := validateAndNormalize(&value); err != nil {
-		return err
+		return NetworkSnapshot{}, err
 	}
 	canonical, err := canonicalMode.Marshal(value)
 	if err != nil || !bytes.Equal(canonical, envelope.Payload) {
-		return ErrInvalidSnapshot
+		return NetworkSnapshot{}, ErrInvalidSnapshot
 	}
 	if value.NetworkID != networkID {
-		return ErrInvalidSnapshot
+		return NetworkSnapshot{}, ErrInvalidSnapshot
+	}
+	return value, nil
+}
+
+// VerifyNext authenticates an envelope and requires it to be the next
+// contiguous revision after the caller's cursor. This is the anti-replay and
+// anti-gap check used while a node reconnects to control.
+func VerifyNext(envelope Envelope, publicKey ed25519.PublicKey, networkID string, currentRevision uint64, currentHash []byte) error {
+	value, err := Verify(envelope, publicKey, networkID)
+	if err != nil {
+		return err
 	}
 	if currentRevision == 0 {
 		if value.Revision == 0 || len(value.PreviousHash) != 0 {

@@ -21,6 +21,7 @@ import (
 	"github.com/sokhrym/go-tunnels/internal/control/audit"
 	"github.com/sokhrym/go-tunnels/internal/control/devices"
 	controlinvites "github.com/sokhrym/go-tunnels/internal/control/invites"
+	controlnetwork "github.com/sokhrym/go-tunnels/internal/control/network"
 	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
 	controlsnapshots "github.com/sokhrym/go-tunnels/internal/control/snapshots"
 	"github.com/sokhrym/go-tunnels/internal/invite"
@@ -226,7 +227,9 @@ func TestDecodeJSONRejectsTrailingValues(t *testing.T) {
 }
 
 func TestAdminPageUsesLocalAssets(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now, controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
+		return true, nil
+	}))
 	if _, err := catalog.Create(context.Background(), controlservices.Service{ID: "cloud", Name: "Nextcloud", Kind: controlservices.KindWeb, URL: "https://cloud.home.example.com", Description: "Family files"}); err != nil {
 		t.Fatal(err)
 	}
@@ -243,10 +246,20 @@ func TestAdminPageUsesLocalAssets(t *testing.T) {
 	if strings.Contains(body, "unpkg.com") || strings.Contains(body, "<style>") || !strings.Contains(body, "/assets/admin.css") || !strings.Contains(body, "Nextcloud") || !strings.Contains(body, "Family") {
 		t.Fatalf("admin page assets are not local: %s", body)
 	}
+	if strings.Contains(body, "Add LAN route") {
+		t.Fatal("admin page exposed a route action without the network module")
+	}
+	approve := httptest.NewRecorder()
+	handler.ServeHTTP(approve, httptest.NewRequest(http.MethodPost, "/admin/routes/route-1/approve", nil))
+	if approve.Code != http.StatusNotFound {
+		t.Fatalf("route approval without network module status=%d", approve.Code)
+	}
 }
 
 func TestAdminFormCreatesServiceThroughDomainCatalog(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now, controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
+		return true, nil
+	}))
 	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}, WithServiceCatalog(catalog)).Handler()
 	form := url.Values{
 		"id":          {"cloud"},
@@ -265,6 +278,65 @@ func TestAdminFormCreatesServiceThroughDomainCatalog(t *testing.T) {
 	items, err := catalog.List(context.Background())
 	if err != nil || len(items) != 1 || items[0].ID != "cloud" {
 		t.Fatalf("catalog items=%#v error=%v", items, err)
+	}
+}
+
+func TestAdminFormCreatesRouteThroughNetworkService(t *testing.T) {
+	networkService := controlnetwork.NewService(controlnetwork.NewMemoryStore(), time.Now)
+	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}, WithNetworkService(networkService)).Handler()
+	form := url.Values{
+		"id":                {"home-lan"},
+		"gateway_device_id": {"gateway-home"},
+		"prefix":            {"192.168.50.0/24"},
+		"resolver":          {"192.168.50.1"},
+		"domain_suffix":     {"home.arpa"},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/admin/routes", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusSeeOther || recorder.Header().Get("Location") != "/admin/?notice=route-created" {
+		t.Fatalf("form status=%d location=%q body=%s", recorder.Code, recorder.Header().Get("Location"), recorder.Body.String())
+	}
+	items, err := networkService.List(context.Background())
+	if err != nil || len(items) != 1 || items[0].ID != "home-lan" || items[0].Status != controlnetwork.StatusPending {
+		t.Fatalf("routes=%#v error=%v", items, err)
+	}
+}
+
+func TestAvailableServicesRequireDeviceCredentialAndProfileMembership(t *testing.T) {
+	deviceService := devices.NewService(devices.NewMemoryStore(), time.Now, nil)
+	token, err := deviceService.IssueEnrollmentToken(context.Background(), devices.RoleClient, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := deviceService.Enroll(context.Background(), validEnrollmentRequest(t, token.Token, "phone"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now, controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
+		return true, nil
+	}))
+	if _, err := catalog.Create(context.Background(), controlservices.Service{ID: "cloud", Name: "Cloud", Kind: controlservices.KindWeb, URL: "https://cloud.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.CreateProfile(context.Background(), controlservices.AccessProfile{ID: "family", Name: "Family", DeviceIDs: []string{device.ID}, ServiceIDs: []string{"cloud"}}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewServer(deviceService, allowAuthorizer{}, WithServiceCatalog(catalog)).Handler()
+
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/services/available", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status=%d", unauthorized.Code)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/services/available", nil)
+	request.Header.Set("Authorization", "Bearer "+device.Credential)
+	available := httptest.NewRecorder()
+	handler.ServeHTTP(available, request)
+	if available.Code != http.StatusOK || !strings.Contains(available.Body.String(), `"id":"cloud"`) {
+		t.Fatalf("available status=%d body=%s", available.Code, available.Body.String())
 	}
 }
 

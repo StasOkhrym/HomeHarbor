@@ -50,6 +50,7 @@ type AccessProfile struct {
 type Store interface {
 	CreateService(context.Context, Service) error
 	ListServices(context.Context) ([]Service, error)
+	ListServicesForDevice(context.Context, string) ([]Service, error)
 	CreateProfile(context.Context, AccessProfile) error
 	ListProfiles(context.Context) ([]AccessProfile, error)
 }
@@ -99,6 +100,18 @@ func (c *Catalog) Create(ctx context.Context, item Service) (Service, error) {
 }
 
 func (c *Catalog) List(ctx context.Context) ([]Service, error) { return c.store.ListServices(ctx) }
+
+// ListForDevice returns only services granted through an explicit profile
+// membership. An authenticated device with no profile receives an empty list;
+// callers must not interpret catalog visibility as a replacement for the
+// signed snapshot ACL enforced by the gateway.
+func (c *Catalog) ListForDevice(ctx context.Context, deviceID string) ([]Service, error) {
+	if strings.TrimSpace(deviceID) == "" {
+		return nil, errors.New("device ID is required")
+	}
+
+	return c.store.ListServicesForDevice(ctx, deviceID)
+}
 
 func (c *Catalog) CreateProfile(ctx context.Context, profile AccessProfile) (AccessProfile, error) {
 	profile.ID = strings.TrimSpace(profile.ID)
@@ -223,6 +236,27 @@ func (s *MemoryStore) ListServices(_ context.Context) ([]Service, error) {
 	out := make([]Service, 0, len(s.services))
 	for _, item := range s.services {
 		out = append(out, item)
+	}
+	slices.SortFunc(out, func(a, b Service) int { return strings.Compare(a.ID, b.ID) })
+	return out, nil
+}
+
+func (s *MemoryStore) ListServicesForDevice(_ context.Context, deviceID string) ([]Service, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	serviceIDs := make(map[string]struct{})
+	for _, profile := range s.profiles {
+		if slices.Contains(profile.DeviceIDs, deviceID) {
+			for _, serviceID := range profile.ServiceIDs {
+				serviceIDs[serviceID] = struct{}{}
+			}
+		}
+	}
+	out := make([]Service, 0, len(serviceIDs))
+	for serviceID := range serviceIDs {
+		if item, ok := s.services[serviceID]; ok {
+			out = append(out, item)
+		}
 	}
 	slices.SortFunc(out, func(a, b Service) int { return strings.Compare(a.ID, b.ID) })
 	return out, nil

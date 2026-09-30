@@ -231,6 +231,27 @@ func TestRunCoordinationPublishesCandidateUpdatesAfterWelcome(t *testing.T) {
 	}
 }
 
+func TestCandidatePublisherStopsWhenSessionContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	heartbeat := make(chan time.Time)
+	done := make(chan struct{})
+	go func() {
+		runCandidatePublisher(ctx, heartbeat, nil, func(any) error {
+			return nil
+		}, func() error {
+			return nil
+		})
+		close(done)
+	}()
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("candidate publisher did not stop with its session context")
+	}
+}
+
 func newCoordinationTestServer(t *testing.T, envelope snapshot.Envelope) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

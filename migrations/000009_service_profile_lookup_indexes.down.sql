@@ -1,0 +1,2 @@
+DROP INDEX access_profile_services_service_id_idx;
+DROP INDEX access_profile_devices_device_id_idx;

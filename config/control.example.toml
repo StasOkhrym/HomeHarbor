@@ -30,8 +30,9 @@ enabled = true
 
 [security]
 # The public half of the trusted Mac companion root key. The private key never
-# belongs on the control plane.
-# root_public_key_file = "/run/secrets/root_public_key"
+# belongs on the control plane. Control refuses to start without this trust
+# anchor; the local initializer mounts it from the generated secret file.
+root_public_key_file = "/run/secrets/root_public_key"
 trusted_proxy_cidrs = []
 
 [observability]

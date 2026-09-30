@@ -274,6 +274,10 @@ func (c Control) validate() error {
 		{"auth.session_ttl", c.Auth.SessionTTL},
 		{"auth.ceremony_ttl", c.Auth.CeremonyTTL},
 		{"relay.public_url", c.Relay.PublicURL},
+		// Without the companion's public key, control would fall back to the
+		// legacy role-only relay authorization path and could grant a tunnel
+		// without a trusted signed snapshot.
+		{"security.root_public_key_file", c.Security.RootPublicKeyFile},
 	}
 	for _, field := range values {
 		if strings.TrimSpace(field.value) == "" {

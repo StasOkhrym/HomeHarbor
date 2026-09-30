@@ -18,9 +18,14 @@ import (
 // relay path. The bridge itself does not know WireGuard keys or policy; those
 // concerns remain owned by the tunnel and gateway layers.
 type RelayBridgeConfig struct {
-	RelayURL            string
-	RelayUDPAddress     string
-	Ticket              string
+	RelayURL        string
+	RelayUDPAddress string
+	Ticket          string
+	// TicketLifetime is returned by control with a freshly issued ticket. When
+	// a provider is configured, the loop recreates the bridge before this
+	// lifetime expires, so a relay cannot silently drop packets after bearer
+	// expiry. Zero means the caller supplied no trustworthy expiry metadata.
+	TicketLifetime      time.Duration
 	SessionID           string
 	DeviceID            string
 	DestinationDeviceID string
@@ -64,9 +69,19 @@ func RunRelayBridgeLoop(ctx context.Context, cfg RelayBridgeConfig, ticketProvid
 			}
 			cfg.Ticket = ticket
 		}
-		err := RunRelayBridge(ctx, cfg)
+		attemptLifetime := time.Duration(0)
+		if ticketProvider != nil {
+			attemptLifetime = cfg.TicketLifetime
+		}
+		err, renewed := runTicketAttempt(ctx, attemptLifetime, func(attemptContext context.Context) error {
+			return RunRelayBridge(attemptContext, cfg)
+		})
 		if ctx.Err() != nil {
 			return nil
+		}
+		if renewed {
+			backoff = time.Second
+			continue
 		}
 		if err == nil {
 			return nil
@@ -75,6 +90,51 @@ func RunRelayBridgeLoop(ctx context.Context, cfg RelayBridgeConfig, ticketProvid
 			return nil
 		}
 		backoff = min(backoff*2, 30*time.Second)
+	}
+}
+
+const ticketRenewalSkew = 15 * time.Second
+
+// runTicketAttempt bounds one transport attempt by the ticket lifetime. The
+// renewal cancellation is deliberately indistinguishable from normal
+// transport shutdown to the bridge; the boolean lets the outer loop refresh
+// credentials instead of treating an intentional renewal as a failure.
+func runTicketAttempt(ctx context.Context, lifetime time.Duration, run func(context.Context) error) (error, bool) {
+	if lifetime <= 0 {
+		return run(ctx), false
+	}
+	refreshAfter := lifetime - ticketRenewalSkew
+	if refreshAfter <= 0 {
+		refreshAfter = lifetime / 2
+	}
+	if refreshAfter <= 0 {
+		refreshAfter = time.Millisecond
+	}
+	attemptContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	timer := time.NewTimer(refreshAfter)
+	defer timer.Stop()
+	renewal := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-timer.C:
+			renewal <- struct{}{}
+			cancel()
+		case <-ctx.Done():
+		case <-done:
+		}
+	}()
+	err := run(attemptContext)
+	close(done)
+	if ctx.Err() != nil {
+		return nil, false
+	}
+	select {
+	case <-renewal:
+		return err, true
+	default:
+		return err, false
 	}
 }
 
@@ -338,9 +398,19 @@ func RunKernelRelayLoop(ctx context.Context, cfg KernelRelayConfig, ticketProvid
 			}
 			cfg.Ticket = ticket
 		}
-		err := RunKernelRelay(ctx, cfg)
+		attemptLifetime := time.Duration(0)
+		if ticketProvider != nil {
+			attemptLifetime = cfg.TicketLifetime
+		}
+		err, renewed := runTicketAttempt(ctx, attemptLifetime, func(attemptContext context.Context) error {
+			return RunKernelRelay(attemptContext, cfg)
+		})
 		if ctx.Err() != nil {
 			return nil
+		}
+		if renewed {
+			backoff = time.Second
+			continue
 		}
 		if err == nil {
 			return nil

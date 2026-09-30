@@ -36,6 +36,23 @@ public final class ClientModel: ObservableObject {
         self.services = services
     }
 
+    public func refreshServices(using api: ControlAPI) async {
+        do {
+            let available = try await api.availableServices()
+            services = available.compactMap { item in
+                guard let nativeURL = item.nativeURL else {
+                    return ServiceTile(id: item.id, name: item.name, url: item.url)
+                }
+                return ServiceTile(id: item.id, name: item.name, url: item.url, nativeURL: nativeURL)
+            }
+        } catch {
+            // The tunnel remains a separate source of truth. A catalog outage
+            // must not tear down an already-connected VPN; it only asks the UI
+            // to retry loading its convenience tiles.
+            state = .failed("Services are temporarily unavailable")
+        }
+    }
+
     public func markConnecting() {
         state = .connecting
     }

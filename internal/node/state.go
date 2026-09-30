@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -87,7 +88,22 @@ func LoadOrCreate(path string) (State, error) {
 }
 
 func Load(path string) (State, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return State{}, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return State{}, err
+	}
+	// The state contains both device credentials and WireGuard private keys.
+	// Check the opened file before reading it so a copied or manually relaxed
+	// state file cannot silently reintroduce private material into the runtime.
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return State{}, errors.New("node state file must be a private regular file")
+	}
+	data, err := io.ReadAll(file)
 	if err != nil {
 		return State{}, err
 	}

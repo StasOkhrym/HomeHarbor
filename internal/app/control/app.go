@@ -105,7 +105,6 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	peerAuthorization := func(_ context.Context, source, destination devices.Device) bool {
 		return source.Status == devices.StatusActive && destination.Status == devices.StatusActive && source.Role != destination.Role
 	}
-	coordinationHandler := coordination.NewHandler(deviceService, nil, []string{cfg.Auth.RPOrigin}, peerAuthorization)
 	var signedSnapshots *controlsnapshots.Service
 	identityStore := identity.NewPostgresStore(pool)
 	identityService := identity.NewService(identityStore, time.Now, nil)
@@ -170,13 +169,23 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		serverOptions = append(serverOptions,
 			httpapi.WithInviteService(controlinvites.NewService(inviteStore, rootPublic, cfg.Networking.NetworkID, time.Now, controlinvites.WithActivator(inviteStore))),
 			httpapi.WithSnapshotService(signedSnapshots),
-			httpapi.WithSnapshotBroadcaster(coordinationHandler),
 			httpapi.WithCompanionRootKey(rootPublic),
-			httpapi.WithRelayPeerAuthorizer(func(ctx context.Context, source, destination devices.Device) bool {
-				return authorizeRelayPeer(ctx, signedSnapshots, source, destination)
-			}),
 		)
-		coordinationHandler = coordination.NewHandler(deviceService, signedSnapshots, []string{cfg.Auth.RPOrigin}, peerAuthorization)
+		// Candidate exchange must use the same signed topology as relay ticket
+		// issuance. A role-only check would disclose endpoint candidates for a
+		// client/gateway pair that has no approved route or ACL relationship.
+		peerAuthorization = func(ctx context.Context, source, destination devices.Device) bool {
+			return authorizeRelayPeer(ctx, signedSnapshots, rootPublic, cfg.Networking.NetworkID, source, destination)
+		}
+		serverOptions = append(serverOptions, httpapi.WithRelayPeerAuthorizer(peerAuthorization))
+	}
+	// Construct one coordination handler after all security dependencies are
+	// known. The same instance owns live snapshot broadcasts and WebSocket
+	// connections; creating a temporary handler earlier would silently strand
+	// broadcasts on a hub that serves no production clients.
+	coordinationHandler := coordination.NewHandler(deviceService, signedSnapshots, []string{cfg.Auth.RPOrigin}, peerAuthorization)
+	if signedSnapshots != nil {
+		serverOptions = append(serverOptions, httpapi.WithSnapshotBroadcaster(coordinationHandler))
 	}
 	serverOptions = append(serverOptions, httpapi.WithCoordinationHandler(coordinationHandler))
 	var metricsServer *http.Server
@@ -219,17 +228,22 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 // authorizeRelayPeer makes relay ticket issuance depend on the same signed
 // topology consumed by nodes. A role check alone would let an authenticated
 // device ask the relay to pair with every active gateway, even when no route
-// or ACL grants that relationship.
+// or ACL grants that relationship. Verifying the envelope again at this
+// boundary also prevents a corrupt or tampered metadata store from becoming a
+// source of relay authorization without the trusted companion signature.
 type signedSnapshotReader interface {
 	Latest(context.Context) (networksnapshot.Envelope, error)
 }
 
-func authorizeRelayPeer(ctx context.Context, snapshots signedSnapshotReader, source, destination devices.Device) bool {
+func authorizeRelayPeer(ctx context.Context, snapshots signedSnapshotReader, rootPublic ed25519.PublicKey, networkID string, source, destination devices.Device) bool {
 	if snapshots == nil {
 		return false
 	}
 	envelope, err := snapshots.Latest(ctx)
 	if err != nil {
+		return false
+	}
+	if _, err := networksnapshot.Verify(envelope, rootPublic, networkID); err != nil {
 		return false
 	}
 	value, err := networksnapshot.Decode(envelope)

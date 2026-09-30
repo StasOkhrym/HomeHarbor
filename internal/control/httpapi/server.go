@@ -161,6 +161,7 @@ func WithReadiness(check func(context.Context) error) ServerOption {
 type ServiceCatalog interface {
 	Create(context.Context, controlservices.Service) (controlservices.Service, error)
 	List(context.Context) ([]controlservices.Service, error)
+	ListForDevice(context.Context, string) ([]controlservices.Service, error)
 	CreateProfile(context.Context, controlservices.AccessProfile) (controlservices.AccessProfile, error)
 	Profiles(context.Context) ([]controlservices.AccessProfile, error)
 }
@@ -284,6 +285,7 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := adminTemplate.Execute(w, map[string]any{
 		"Devices":    list,
+		"HasNetwork": s.network != nil,
 		"Routes":     routes,
 		"Services":   services,
 		"Profiles":   profiles,
@@ -378,6 +380,43 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireDevice authenticates the short-lived bearer credential used by Linux
+// and native clients. It never accepts the browser session cookie, keeping
+// admin privileges and end-user device access on separate auth paths.
+func (s *Server) requireDevice(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		credential := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		device, err := s.devices.Authenticate(r.Context(), credential)
+		if err != nil || device.Status != devices.StatusActive {
+			writeError(w, http.StatusUnauthorized, "device authentication required")
+			return
+		}
+		ctx := context.WithValue(r.Context(), deviceContextKey{}, device)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+type deviceContextKey struct{}
+
+func deviceFromContext(ctx context.Context) (devices.Device, bool) {
+	device, ok := ctx.Value(deviceContextKey{}).(devices.Device)
+	return device, ok
+}
+
+func (s *Server) listAvailableServices(w http.ResponseWriter, r *http.Request) {
+	device, ok := deviceFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "device authentication required")
+		return
+	}
+	items, err := s.services.ListForDevice(r.Context(), device.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list available services")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"services": items})
 }
 
 func (s *Server) issueToken(w http.ResponseWriter, r *http.Request) {

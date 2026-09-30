@@ -31,6 +31,16 @@ create_secret() {
     chmod 0600 "$path"
 }
 
+require_secret_length() {
+    path=$1
+    expected=$2
+    actual=$(wc -c <"$path" | tr -d '[:space:]')
+    if [ "$actual" -ne "$expected" ]; then
+        echo "$path must contain exactly $expected bytes (found $actual); restore it or remove it to regenerate local state" >&2
+        exit 1
+    fi
+}
+
 command -v openssl >/dev/null 2>&1 || {
     echo "openssl is required to initialize local secrets" >&2
     exit 1
@@ -40,6 +50,14 @@ create_secret secrets/postgres_password 32
 create_secret secrets/relay_ticket_key 32
 create_secret secrets/session_signing_key 48
 create_secret secrets/ceremony_encryption_key 24
+
+# These files are base64 text generated above. Checking their encoded lengths
+# catches truncated mounts and accidental empty files before Compose starts a
+# control process that can never pass its authentication validation.
+require_secret_length secrets/postgres_password 44
+require_secret_length secrets/relay_ticket_key 44
+require_secret_length secrets/session_signing_key 64
+require_secret_length secrets/ceremony_encryption_key 32
 
 # The trusted companion owns the encrypted root key. Compose receives only its
 # public half, so the control plane can verify signed snapshots without gaining
@@ -61,6 +79,11 @@ if [ ! -f .local/root-key.age ] || [ ! -f .local/root-public.key ]; then
     echo "local companion root key is incomplete; restore both .local/root-key.age and .local/root-public.key" >&2
     exit 1
 fi
+if [ ! -s .local/root-passphrase ]; then
+    echo "local companion root passphrase is missing; restore .local/root-passphrase before using the existing root key" >&2
+    exit 1
+fi
+chmod 0600 .local/root-passphrase
 cp .local/root-public.key secrets/root_public_key
 chmod 0644 secrets/root_public_key
 

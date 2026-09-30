@@ -91,3 +91,32 @@ func TestProfileRequiresActiveDevicesWhenDeviceValidationIsConfigured(t *testing
 		t.Fatalf("profile=%#v", profile)
 	}
 }
+
+func TestListForDeviceIsDefaultDenyAndUnionsExplicitProfiles(t *testing.T) {
+	store := NewMemoryStore()
+	service := NewService(store, time.Now, WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
+		return true, nil
+	}))
+	for _, item := range []Service{
+		{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://cloud.example"},
+		{ID: "ssh", Name: "SSH", Kind: KindNative, URL: "https://ssh.example"},
+	} {
+		if _, err := service.Create(context.Background(), item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := service.CreateProfile(context.Background(), AccessProfile{ID: "family", Name: "Family", DeviceIDs: []string{"phone"}, ServiceIDs: []string{"cloud"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateProfile(context.Background(), AccessProfile{ID: "admins", Name: "Admins", DeviceIDs: []string{"laptop"}, ServiceIDs: []string{"ssh"}}); err != nil {
+		t.Fatal(err)
+	}
+	phone, err := service.ListForDevice(context.Background(), "phone")
+	if err != nil || len(phone) != 1 || phone[0].ID != "cloud" {
+		t.Fatalf("phone services=%#v err=%v", phone, err)
+	}
+	unknown, err := service.ListForDevice(context.Background(), "unknown")
+	if err != nil || len(unknown) != 0 {
+		t.Fatalf("unknown services=%#v err=%v", unknown, err)
+	}
+}

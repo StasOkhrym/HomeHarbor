@@ -24,8 +24,9 @@ Linux vertical slice remain higher priority than mobile UI.
   Such an interface couples unrelated modules and becomes harder to test and
   split when the monolith grows.
 - Keep composition in `internal/app/control.App` and `internal/app/relay.App`.
-  Each executable has a thin `cmd/*` entrypoint and implements the common
-  lifecycle contract `Component.Run(context.Context) error`.
+  Agent and client use `internal/app/node.App` for the same reason. Each
+  executable has a thin `cmd/*` entrypoint and implements the common lifecycle
+  contract `Component.Run(context.Context) error`.
 - Define small interfaces at the consumer boundary. For example,
   `DeviceReader`, `EnrollmentIssuer`, `PolicyProvider`, `PolicyEditor`,
   `RouteReader`, and `RouteApprover`.
@@ -74,9 +75,9 @@ contracts used by handlers, coordinators, jobs, and future extracted services.
 8. **Completed:** add an exact signed client-removal diff. It removes the
    device, its profile memberships, and source ACLs while rejecting gateway or
    route removal; `admin revoke-device` publishes the next contiguous revision.
-9. **In progress:** snapshot topology now compiles deterministic WireGuard
+9. **Completed for the Linux VM gate:** snapshot topology now compiles deterministic WireGuard
    peer allowed-prefixes with gateway route scoping. The provisioned Lima run
-   now covers real kernel WireGuard handshakes, isolated routes, nftables
+   covers real kernel WireGuard handshakes, isolated routes, nftables
    default-deny behavior, rollback-sensitive application paths, and allowed or
    forbidden HTTP/SSH-like service reachability. The agent now reverts
    systemd-resolved split-DNS state on component shutdown; remaining work is
@@ -84,22 +85,30 @@ contracts used by handlers, coordinators, jobs, and future extracted services.
 10. **In progress:** relay sessions, reconnect, live snapshot delivery,
    encrypted packet forwarding, versioned `udp_pair_v1` ingress, relay-observed
    server-reflexive candidate publication, authenticated candidate exchange, and
-   handshake-confirmed direct-to-relay switching exist. The Linux preview can
-   provide candidates with `-direct-candidates` or same-socket `-stun` discovery;
-   roaming and an external NAT traversal test are still required.
+   handshake-confirmed direct-to-relay switching exist. Candidate exchange and
+   relay ticket issuance now share the signed snapshot route/ACL authorization
+   boundary, the coordination broadcaster uses the live production hub, and
+   control-issued tickets renew before expiry during reconnect loops.
+   The Linux preview can provide candidates with `-direct-candidates` or
+   same-socket `-stun` discovery; roaming and an external NAT traversal test are
+   still required.
 11. **Completed for the current local gate:** the Linux namespace/kernel
    WireGuard acceptance pass covers allowed HTTP/SSH-like service reachability,
    forbidden ports, and policy application in the provisioned Lima VM.
    Compose now waits for real control/relay readiness through static
-   distroless healthcheck probes; the full image startup still requires a
-   successful registry-backed pull.
-   PostgreSQL integration still requires an explicit test database, while the
-   host Docker Compose runtime still needs startup verification.
-12. **Started:** Android now has a `VpnService` boundary that rejects implicit
-   default routes and requires an injected WireGuard engine. Build tooling,
-   official engine integration, Android Keystore storage, and physical-device
-   roaming tests remain. Finish the iOS Network Extension target and
-   physical-device Packet Tunnel verification in the same mobile gate.
+   distroless healthcheck probes; the registry-backed ARM64 image build and
+   full local Compose startup have been verified, including Caddy HTTPS
+   health/readiness.
+   PostgreSQL integration passes through the isolated `make integration-local`
+   path; `TEST_DATABASE_URL` remains the CI/external-database contract.
+12. **Started:** Android now has a controller boundary that rejects implicit
+   default routes, delegates WireGuard lifecycle to the official engine, and keeps private key
+   material behind an Android Keystore-wrapped storage boundary. Build tooling,
+   official engine integration, and physical-device roaming tests remain. The
+   pinned Gradle project now composes the official `GoBackend.VpnService`; the
+   Android build still needs to run on a host with SDK/Gradle tooling.
+   Finish the iOS Network Extension target and physical-device Packet Tunnel
+   verification in the same mobile gate.
 
 ## 4. Self-documenting code standard
 
@@ -116,20 +125,36 @@ contracts used by handlers, coordinators, jobs, and future extracted services.
 - During review, treat stale or misleading comments as correctness defects.
 
 The first actionable admin surface is now implemented with same-origin HTML
-forms. Mutations reuse the domain services directly, while the JSON API remains
+forms, including route advertisement and explicit approval. Mutations reuse the
+domain services directly, while the JSON API remains
 the stable integration surface for the companion and future native clients.
 The dashboard also exposes a bounded, read-only recent audit view; writes stay
 in authentication and durable domain-event consumers.
 
+Native clients use `GET /api/v1/services/available` with their short-lived
+device credential. The endpoint expands only explicit access-profile
+membership and returns an empty list by default; it is a convenience catalog,
+not an authorization source. The gateway still enforces the signed snapshot
+ACL, so a stale or compromised UI cannot grant network access.
+
 ## 5. Local development contract
 
-- `make doctor` checks Go, Docker Compose, Lima, and Xcode prerequisites.
+- `make doctor` checks all local prerequisites; `make doctor-compose` checks the
+  backend/Compose path without requiring Xcode, while `make doctor ios` checks
+  the iOS toolchain.
 - `make dev-init` creates ignored local config/secrets without overwriting them,
   including an age-encrypted trusted-companion root key whose public half is
-  mounted into control only.
+  mounted into control only. It validates local secret lengths and refuses an
+  incomplete companion key/passphrase set.
 - `make compose-check` renders the stack and verifies control receives its
   runtime secrets while the migration process receives only the DB password;
   `make dev-up` runs this preflight automatically.
+- `make deploy-check` validates that Ansible copies the repository deployment
+  bundle from inside the checkout and that all required rollout files exist.
+- `make integration-local` starts an isolated, uniquely named PostgreSQL
+  Compose project for host-side migration/store tests and removes its volume
+  on exit. `make integration` keeps the explicit `TEST_DATABASE_URL` contract
+  for CI and externally managed databases.
 - `make dev-up` starts PostgreSQL, the one-shot migration process, control,
   relay, and Caddy. `make dev-down` stops the stack.
 - Control metrics bind to the configured `observability.metrics_address`; they
@@ -139,9 +164,10 @@ in authentication and durable domain-event consumers.
 - `make vm-up` provisions the Ubuntu Lima VM with Docker, nftables, TUN tools,
   and `make vm-down` stops it.
 - `make verify` runs formatting, tests, vet, and command builds.
-- `make acceptance` runs the portable relay test and the privileged namespace
-  scenario directly on Linux or through the `go-tunnels-vm` Lima instance on
-  macOS. The VM must be started with `make vm-up` first.
+- `make acceptance` runs the production relay-app test, the node bridge test,
+  and the privileged namespace scenario directly on Linux or through the
+  `go-tunnels-vm` Lima instance on macOS. The VM must be started with
+  `make vm-up` first.
 
 ## 6. Maintainability gates
 

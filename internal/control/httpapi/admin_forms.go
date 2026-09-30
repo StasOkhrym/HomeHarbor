@@ -6,12 +6,14 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/sokhrym/go-tunnels/internal/control/devices"
+	controlnetwork "github.com/sokhrym/go-tunnels/internal/control/network"
 	"github.com/sokhrym/go-tunnels/internal/control/policy"
 	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
 )
@@ -77,6 +79,35 @@ func (s *Server) rejectRouteForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redirectAdmin(w, r, "route-rejected")
+}
+
+func (s *Server) createRouteForm(w http.ResponseWriter, r *http.Request) {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(r.FormValue("prefix")))
+	if err != nil {
+		http.Error(w, "route prefix must be a valid non-default CIDR", http.StatusBadRequest)
+		return
+	}
+	resolver, err := netip.ParseAddr(strings.TrimSpace(r.FormValue("resolver")))
+	if err != nil {
+		http.Error(w, "DNS resolver must be a valid IP address", http.StatusBadRequest)
+		return
+	}
+	item := controlnetwork.AdvertisementRequest{
+		ID:              strings.TrimSpace(r.FormValue("id")),
+		GatewayDeviceID: strings.TrimSpace(r.FormValue("gateway_device_id")),
+		Prefix:          prefix,
+		Resolver:        resolver,
+		DomainSuffix:    strings.TrimSpace(r.FormValue("domain_suffix")),
+	}
+	if _, err := s.network.Advertise(r.Context(), item); err != nil {
+		if errors.Is(err, controlnetwork.ErrInvalidAdvertisement) {
+			http.Error(w, "route values are invalid", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "could not create route advertisement", http.StatusInternalServerError)
+		return
+	}
+	redirectAdmin(w, r, "route-created")
 }
 
 func (s *Server) createServiceForm(w http.ResponseWriter, r *http.Request) {

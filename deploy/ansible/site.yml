@@ -30,7 +30,10 @@
       loop: ["{{ go_tunnels_dir }}", "{{ go_tunnels_dir }}/config", "{{ go_tunnels_dir }}/deploy", "{{ go_tunnels_dir }}/secrets"]
     - name: Copy repository deployment bundle
       ansible.builtin.copy:
-        src: "../../../{{ item }}"
+        # The playbook lives two directories below the repository root. Keep
+        # the source anchored there so Ansible never reads an unrelated parent
+        # directory when this playbook is run from a checkout.
+        src: "../../{{ item }}"
         dest: "{{ go_tunnels_dir }}/{{ item }}"
         owner: root
         group: root
