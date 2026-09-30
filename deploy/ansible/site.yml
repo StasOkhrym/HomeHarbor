@@ -63,7 +63,7 @@
   handlers:
     - name: Restart Go Tunnels
       ansible.builtin.command:
-        cmd: docker compose -f deploy/compose.yaml up -d --build --remove-orphans
+        cmd: docker compose -f deploy/compose.yaml up -d --build --remove-orphans --wait --wait-timeout 120
         chdir: "{{ go_tunnels_dir }}"
       environment:
         CONTROL_DOMAIN: "{{ control_domain }}"

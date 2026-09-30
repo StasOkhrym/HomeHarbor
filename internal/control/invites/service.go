@@ -21,11 +21,19 @@ type Status string
 const (
 	StatusPending  Status = "pending"
 	StatusApproved Status = "approved"
+	StatusBlocked  Status = "blocked"
 )
+
+// MaxInvalidCodeAttempts is deliberately small because the invite code is
+// only eight decimal digits and is entered through a separate channel. The
+// store increments this counter atomically so concurrent approval workers
+// cannot bypass the lockout.
+const MaxInvalidCodeAttempts = 5
 
 var (
 	ErrInviteNotFound = errors.New("invite not found")
 	ErrInviteConsumed = errors.New("invite already consumed")
+	ErrInviteBlocked  = errors.New("invite is blocked after invalid code attempts")
 	ErrInvalidCode    = errors.New("invalid invite code")
 	ErrDeviceConflict = errors.New("device already exists")
 )
@@ -41,12 +49,15 @@ type Record struct {
 	Status             Status              `json:"status"`
 	CreatedAt          time.Time           `json:"created_at"`
 	ApprovedAt         *time.Time          `json:"approved_at,omitempty"`
+	FailedCodeAttempts int                 `json:"failed_code_attempts"`
+	BlockedAt          *time.Time          `json:"blocked_at,omitempty"`
 }
 
 type Store interface {
 	Save(context.Context, Record) error
 	Get(context.Context, string) (Record, error)
 	Approve(context.Context, string, time.Time) (Record, error)
+	RecordInvalidCodeAttempt(context.Context, string, time.Time) error
 }
 
 // DeviceActivation contains public identity material and a newly issued
@@ -149,10 +160,16 @@ func (s *Service) Approve(ctx context.Context, inviteID, code string) (Record, e
 	if err != nil {
 		return Record{}, err
 	}
+	if record.Status == StatusBlocked {
+		return Record{}, ErrInviteBlocked
+	}
 	if record.Status != StatusPending {
 		return Record{}, ErrInviteConsumed
 	}
 	if err = invite.VerifyProofWithCode(record.Permit, record.Proof, record.ProfileID, code, s.now().UTC()); err != nil {
+		if recordErr := s.store.RecordInvalidCodeAttempt(ctx, inviteID, s.now().UTC()); recordErr != nil {
+			return Record{}, recordErr
+		}
 		return Record{}, ErrInvalidCode
 	}
 	return s.store.Approve(ctx, inviteID, s.now().UTC())
@@ -255,6 +272,30 @@ func (s *MemoryStore) Approve(_ context.Context, id string, at time.Time) (Recor
 	record.ApprovedAt = &at
 	s.records[id] = record
 	return record, nil
+}
+
+func (s *MemoryStore) RecordInvalidCodeAttempt(_ context.Context, id string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.records[id]
+	if !ok {
+		return ErrInviteNotFound
+	}
+	if record.Status == StatusBlocked {
+		return ErrInviteBlocked
+	}
+	if record.Status != StatusPending {
+		return ErrInviteConsumed
+	}
+	record.FailedCodeAttempts++
+	if record.FailedCodeAttempts >= MaxInvalidCodeAttempts {
+		record.Status = StatusBlocked
+		record.BlockedAt = &at
+		s.records[id] = record
+		return ErrInviteBlocked
+	}
+	s.records[id] = record
+	return nil
 }
 
 func (s *MemoryStore) Activate(_ context.Context, record Record, device DeviceActivation, at time.Time) (Record, error) {

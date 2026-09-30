@@ -2,6 +2,9 @@ package devices
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	"github.com/sokhrym/go-tunnels/migrations"
 )
@@ -23,11 +27,12 @@ func TestPostgresEnrollmentWritesDeviceAndOutboxAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	identityPublicKey, wireGuardPublicKey := validPostgresPublicKeys(t)
 	device, err := service.Enroll(context.Background(), EnrollRequest{
 		Token:              token.Token,
 		Name:               label,
-		IdentityPublicKey:  label + "-identity",
-		WireGuardPublicKey: label + "-wireguard",
+		IdentityPublicKey:  identityPublicKey,
+		WireGuardPublicKey: wireGuardPublicKey,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -62,11 +67,12 @@ func TestPostgresEnrollmentTokenIsConsumedOnceConcurrently(t *testing.T) {
 		group.Add(1)
 		go func(index int) {
 			defer group.Done()
+			identityPublicKey, wireGuardPublicKey := validPostgresPublicKeys(t)
 			_, enrollErr := service.Enroll(context.Background(), EnrollRequest{
 				Token:              token.Token,
 				Name:               label,
-				IdentityPublicKey:  fmt.Sprintf("%s-identity-%d", label, index),
-				WireGuardPublicKey: fmt.Sprintf("%s-wireguard-%d", label, index),
+				IdentityPublicKey:  identityPublicKey,
+				WireGuardPublicKey: wireGuardPublicKey,
 			})
 			results <- enrollErr
 		}(index)
@@ -108,4 +114,17 @@ func devicesTestPool(t *testing.T) *pgxpool.Pool {
 
 func uniqueIntegrationLabel() string {
 	return fmt.Sprintf("go-tunnels-integration-%d", time.Now().UnixNano())
+}
+
+func validPostgresPublicKeys(t *testing.T) (identity, wireGuard string) {
+	t.Helper()
+	_, identityPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wireGuardPrivate, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(identityPrivate.Public().(ed25519.PublicKey)), wireGuardPrivate.PublicKey().String()
 }

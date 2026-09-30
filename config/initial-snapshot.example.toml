@@ -1,0 +1,44 @@
+# The trusted companion signs this file locally to create revision one.
+# Replace the public keys with the already-enrolled gateway's public keys.
+network_id = "home"
+
+[[devices]]
+id = "gateway-home"
+role = "gateway"
+identity_public_key = "BASE64URL_IDENTITY_PUBLIC_KEY"
+wireguard_public_key = "BASE64URL_WIREGUARD_PUBLIC_KEY"
+overlay_address = "10.200.0.1/32"
+
+[[gateways]]
+device_id = "gateway-home"
+name = "Home gateway"
+
+[[routes]]
+id = "home-lan"
+gateway_id = "gateway-home"
+prefix = "192.168.50.0/24"
+resolver = "192.168.50.1"
+domain_suffix = "home.arpa"
+
+[[services]]
+id = "cloud"
+name = "Nextcloud"
+kind = "web"
+url = "https://cloud.home.arpa"
+health_url = "https://cloud.home.arpa/status.php"
+description = "Family files"
+
+[[profiles]]
+id = "family"
+name = "Family"
+device_ids = ["gateway-home"]
+service_ids = ["cloud"]
+acl_rule_ids = ["family-cloud"]
+
+[[acl]]
+id = "family-cloud"
+source_device_id = "gateway-home"
+destination = "192.168.50.0/24"
+protocol = "tcp"
+port_from = 443
+port_to = 443

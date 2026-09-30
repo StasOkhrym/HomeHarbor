@@ -4,6 +4,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -66,6 +67,7 @@ func New(cfg config.RelayServer, logger *slog.Logger) *App {
 			ReadTimeout:       30 * time.Second,
 			WriteTimeout:      30 * time.Second,
 			IdleTimeout:       60 * time.Second,
+			MaxHeaderBytes:    64 << 10,
 		},
 	}
 }
@@ -73,21 +75,30 @@ func New(cfg config.RelayServer, logger *slog.Logger) *App {
 // Run serves the relay until ctx is cancelled. Active WebSocket sessions are
 // closed by net/http shutdown and clients reconnect using their credentials.
 func (a *App) Run(ctx context.Context) error {
+	tcpListener, err := net.Listen("tcp", a.server.Addr)
+	if err != nil {
+		return fmt.Errorf("listen relay HTTP: %w", err)
+	}
+	// Readiness means both public transports are bound. Binding TCP before UDP
+	// lets startup fail cleanly without advertising a relay that cannot accept
+	// its packet path, while the deferred close prevents a half-started process
+	// from leaking the HTTP socket.
+	defer func() { _ = tcpListener.Close() }()
 	udpAddress, err := net.ResolveUDPAddr("udp", a.udpListenAddr)
+	if err != nil {
+		return err
+	}
+	udpConnection, err := net.ListenUDP("udp", udpAddress)
 	if err != nil {
 		return err
 	}
 	a.ready.Store(true)
 	defer a.ready.Store(false)
-	udpConnection, err := net.ListenUDP("udp", udpAddress)
-	if err != nil {
-		return err
-	}
 	runContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	udpRelay := relayruntime.NewUDPPairRelay(udpConnection, a.tickets)
 	serverErr := make(chan error, 2)
-	go func() { serverErr <- a.server.ListenAndServe() }()
+	go func() { serverErr <- a.server.Serve(tcpListener) }()
 	go func() { serverErr <- udpRelay.Run(runContext) }()
 	go func() {
 		<-runContext.Done()

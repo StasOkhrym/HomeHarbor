@@ -231,12 +231,15 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 			}
 		}
 	}
-	deviceIDs := make(map[string]struct{}, len(value.Devices))
+	deviceIDs := make(map[string]Device, len(value.Devices))
 	for _, device := range value.Devices {
 		if device.ID == "" {
 			return fmt.Errorf("%w: device ID is required", ErrInvalidSnapshot)
 		}
-		deviceIDs[device.ID] = struct{}{}
+		if device.Role != "client" && device.Role != "gateway" {
+			return fmt.Errorf("%w: device %s has an unsupported role", ErrInvalidSnapshot, device.ID)
+		}
+		deviceIDs[device.ID] = device
 		if device.OverlayAddress != "" {
 			prefix, err := netip.ParsePrefix(device.OverlayAddress)
 			if err != nil || !prefix.IsValid() || prefix.Bits() == 0 {
@@ -249,13 +252,22 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 		serviceIDs[service.ID] = struct{}{}
 	}
 	for _, gateway := range value.Gateways {
-		if _, ok := deviceIDs[gateway.DeviceID]; !ok {
+		device, ok := deviceIDs[gateway.DeviceID]
+		if !ok {
 			return fmt.Errorf("%w: gateway %s references an unknown device", ErrInvalidSnapshot, gateway.DeviceID)
 		}
+		if device.Role != "gateway" {
+			return fmt.Errorf("%w: gateway %s references a non-gateway device", ErrInvalidSnapshot, gateway.DeviceID)
+		}
 	}
-	for _, route := range value.Routes {
-		if _, ok := deviceIDs[route.GatewayID]; !ok {
+	for index := range value.Routes {
+		route := &value.Routes[index]
+		gateway, ok := deviceIDs[route.GatewayID]
+		if !ok {
 			return fmt.Errorf("%w: route %s references an unknown gateway", ErrInvalidSnapshot, route.ID)
+		}
+		if gateway.Role != "gateway" {
+			return fmt.Errorf("%w: route %s references a non-gateway device", ErrInvalidSnapshot, route.ID)
 		}
 		prefix, err := netip.ParsePrefix(route.Prefix)
 		if err != nil || !prefix.IsValid() {
@@ -264,9 +276,17 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 		if prefix.Bits() == 0 {
 			return fmt.Errorf("%w: route %s cannot advertise a default route", ErrInvalidSnapshot, route.ID)
 		}
-		if route.Resolver != "" {
+		if (route.DomainSuffix == "") != (route.Resolver == "") {
+			return fmt.Errorf("%w: route %s must provide both DNS suffix and resolver", ErrInvalidSnapshot, route.ID)
+		}
+		if route.DomainSuffix != "" {
+			canonicalSuffix, valid := canonicalDomainSuffix(route.DomainSuffix)
+			if !valid {
+				return fmt.Errorf("%w: route %s has invalid DNS suffix", ErrInvalidSnapshot, route.ID)
+			}
+			route.DomainSuffix = canonicalSuffix
 			resolver, resolverErr := netip.ParseAddr(route.Resolver)
-			if resolverErr != nil || !resolver.IsValid() {
+			if resolverErr != nil || !resolver.IsValid() || resolver.IsUnspecified() || !prefix.Contains(resolver) {
 				return fmt.Errorf("%w: route %s has invalid resolver", ErrInvalidSnapshot, route.ID)
 			}
 		}
@@ -316,6 +336,24 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 		}
 	}
 	return nil
+}
+
+func canonicalDomainSuffix(raw string) (string, bool) {
+	value := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(raw)), ".")
+	if value == "" || len(value) > 253 || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") {
+		return "", false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return "", false
+		}
+		for _, character := range label {
+			if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
+				return "", false
+			}
+		}
+	}
+	return value, true
 }
 
 func validateServiceURL(raw string, requireHTTPS bool) error {

@@ -12,6 +12,8 @@ type rateWindow struct {
 	count   int
 }
 
+const maxTrackedRateLimitClients = 10_000
+
 // RateLimiter is a deliberately small fixed-window limiter for unauthenticated
 // endpoints. It bounds credential guessing without pretending to be a global
 // distributed quota; multiple control replicas should add a shared edge limit.
@@ -41,19 +43,43 @@ func (l *RateLimiter) Allow(key string) bool {
 	if l == nil {
 		return true
 	}
+
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
 	current, ok := l.clients[key]
 	if !ok || !now.Before(current.started.Add(l.window)) {
+		if !ok && len(l.clients) >= maxTrackedRateLimitClients {
+			// The limiter is process-local, so an attacker can otherwise exhaust
+			// heap memory simply by rotating source addresses. Evict the oldest
+			// window before admitting a new key; the deployment-level proxy still
+			// provides the distributed quota for multi-instance control planes.
+			var oldestKey string
+			var oldest time.Time
+			for candidate, window := range l.clients {
+				if oldestKey == "" || window.started.Before(oldest) {
+					oldestKey = candidate
+					oldest = window.started
+				}
+			}
+
+			if oldestKey != "" {
+				delete(l.clients, oldestKey)
+			}
+		}
+
 		l.clients[key] = rateWindow{started: now, count: 1}
+
 		return true
 	}
 	if current.count >= l.limit {
 		return false
 	}
+
 	current.count++
 	l.clients[key] = current
+
 	return true
 }
 

@@ -30,3 +30,22 @@ func TestCompilerRejectsInvalidPortRange(t *testing.T) {
 		t.Fatal("Compile() error = nil, want invalid port range")
 	}
 }
+
+func TestCompilerRejectsDefaultDestination(t *testing.T) {
+	_, err := (Compiler{}).Compile(1, []Rule{{
+		ID: "internet", SourceDeviceID: "client-1", Destination: netip.MustParsePrefix("0.0.0.0/0"), Protocol: ProtocolTCP, PortFrom: 443, PortTo: 443,
+	}})
+	if err == nil {
+		t.Fatal("Compile() accepted a default destination")
+	}
+}
+
+func TestCompilerRejectsDuplicateRuleIDs(t *testing.T) {
+	_, err := (Compiler{}).Compile(1, []Rule{
+		{ID: "same", SourceDeviceID: "client-1", Destination: netip.MustParsePrefix("10.0.0.0/8"), Protocol: ProtocolTCP, PortFrom: 443, PortTo: 443},
+		{ID: "same", SourceDeviceID: "client-1", Destination: netip.MustParsePrefix("10.1.0.0/16"), Protocol: ProtocolTCP, PortFrom: 22, PortTo: 22},
+	})
+	if err == nil {
+		t.Fatal("Compile() accepted duplicate rule IDs")
+	}
+}

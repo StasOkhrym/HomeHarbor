@@ -15,8 +15,12 @@ class GoTunnelsVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         return try {
-            val configuration = TunnelConfiguration.from(intent ?: return START_NOT_STICKY)
+            // Android may restart a sticky service without its original Intent.
+            // Tear down the previous descriptor before treating that restart as
+            // an invalid configuration; otherwise stale routes could survive
+            // while the UI believes the tunnel is stopped.
             stopTunnel()
+            val configuration = TunnelConfiguration.from(intent ?: return START_NOT_STICKY)
             val builder = Builder()
                 .setSession("Go Tunnels")
                 .addAddress(configuration.overlayAddress, configuration.overlayPrefixLength)
@@ -28,10 +32,11 @@ class GoTunnelsVpnService : VpnService() {
                 builder.addRoute(route.address, route.prefixLength)
             }
             configuration.dnsServers.forEach(builder::addDnsServer)
-            tunnel = builder.establish()
+            val establishedTunnel = builder.establish()
                 ?: error("Android denied VPN interface creation")
+            tunnel = establishedTunnel
             engine.start(
-                tunnel!!,
+                establishedTunnel,
                 configuration.endpoint,
                 configuration.wireGuardPrivateKey,
                 configuration.peerPublicKey,

@@ -10,6 +10,9 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 type Role string
@@ -26,6 +29,8 @@ const (
 	StatusRevoked Status = "revoked"
 )
 
+const maxDeviceNameBytes = 128
+
 // CredentialTTL limits the useful lifetime of a bearer credential. Clients
 // rotate before expiry, so compromise has a bounded window without forcing a
 // user through enrollment again.
@@ -33,6 +38,8 @@ const CredentialTTL = 15 * time.Minute
 
 var (
 	ErrInvalidEnrollmentToken = errors.New("invalid or expired enrollment token")
+	ErrInvalidTokenRequest    = errors.New("invalid enrollment token request")
+	ErrInvalidEnrollment      = errors.New("invalid enrollment request")
 	ErrDeviceNotFound         = errors.New("device not found")
 )
 
@@ -126,10 +133,10 @@ func NewService(store Store, now func() time.Time, random io.Reader, options ...
 
 func (s *Service) IssueEnrollmentToken(ctx context.Context, role Role, ttl time.Duration) (IssuedToken, error) {
 	if role != RoleClient && role != RoleGateway {
-		return IssuedToken{}, fmt.Errorf("unsupported role %q", role)
+		return IssuedToken{}, fmt.Errorf("%w: unsupported role", ErrInvalidTokenRequest)
 	}
 	if ttl <= 0 {
-		return IssuedToken{}, errors.New("token TTL must be positive")
+		return IssuedToken{}, fmt.Errorf("%w: token TTL must be positive", ErrInvalidTokenRequest)
 	}
 	raw, err := s.randomString(32)
 	if err != nil {
@@ -144,8 +151,8 @@ func (s *Service) IssueEnrollmentToken(ctx context.Context, role Role, ttl time.
 }
 
 func (s *Service) Enroll(ctx context.Context, request EnrollRequest) (Device, error) {
-	if strings.TrimSpace(request.Name) == "" || request.IdentityPublicKey == "" || request.WireGuardPublicKey == "" {
-		return Device{}, errors.New("name and public keys are required")
+	if err := validateEnrollmentRequest(request); err != nil {
+		return Device{}, err
 	}
 	now := s.now().UTC()
 	id, err := s.randomString(16)
@@ -182,6 +189,34 @@ func (s *Service) Enroll(ctx context.Context, request EnrollRequest) (Device, er
 		_ = s.publisher.Publish(ctx, Event{Type: "device.enrolled", AggregateID: device.ID, OccurredAt: now})
 	}
 	return device, nil
+}
+
+// validateEnrollmentRequest is the last trust-boundary check before public
+// identity material is persisted and later copied into signed topology state.
+// Accepting an arbitrary string here would let a malformed device poison peer
+// reconciliation or make two textual encodings refer to the same key.
+func validateEnrollmentRequest(request EnrollRequest) error {
+	name := strings.TrimSpace(request.Name)
+	if name == "" || name != request.Name || len(name) > maxDeviceNameBytes || !utf8.ValidString(name) {
+		return fmt.Errorf("%w: device name must be 1-%d printable UTF-8 bytes without surrounding whitespace", ErrInvalidEnrollment, maxDeviceNameBytes)
+	}
+	for _, character := range name {
+		if character < 0x20 || character == 0x7f {
+			return fmt.Errorf("%w: device name contains a control character", ErrInvalidEnrollment)
+		}
+	}
+	identity, err := base64.RawURLEncoding.DecodeString(request.IdentityPublicKey)
+	if err != nil || len(identity) != 32 || base64.RawURLEncoding.EncodeToString(identity) != request.IdentityPublicKey {
+		return fmt.Errorf("%w: identity public key must be canonical base64url Ed25519 bytes", ErrInvalidEnrollment)
+	}
+	wireGuard, err := wgtypes.ParseKey(request.WireGuardPublicKey)
+	if err != nil || wireGuard == (wgtypes.Key{}) || wireGuard.String() != request.WireGuardPublicKey {
+		return fmt.Errorf("%w: WireGuard public key is invalid", ErrInvalidEnrollment)
+	}
+	if strings.TrimSpace(request.Token) == "" {
+		return fmt.Errorf("%w: enrollment token is required", ErrInvalidEnrollment)
+	}
+	return nil
 }
 
 func (s *Service) Revoke(ctx context.Context, id string) error {

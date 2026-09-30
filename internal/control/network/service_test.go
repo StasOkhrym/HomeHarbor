@@ -36,3 +36,27 @@ func TestAdvertisementRejectsResolverOutsidePrefix(t *testing.T) {
 		t.Fatal("Advertise() error=nil")
 	}
 }
+
+func TestAdvertisementRejectsDefaultRoute(t *testing.T) {
+	service := NewService(NewMemoryStore(), time.Now)
+	_, err := service.Advertise(context.Background(), AdvertisementRequest{
+		ID: "internet", GatewayDeviceID: "gateway", Prefix: netip.MustParsePrefix("0.0.0.0/0"),
+		Resolver: netip.MustParseAddr("10.0.0.53"), DomainSuffix: "home.arpa",
+	})
+	if err == nil {
+		t.Fatal("Advertise() accepted a default route")
+	}
+}
+
+func TestAdvertisementRejectsUnsafeDomainSuffix(t *testing.T) {
+	service := NewService(NewMemoryStore(), time.Now)
+	for _, suffix := range []string{".home.arpa", "home..arpa", "home.arpa;revert", "-home.arpa", "home-.arpa"} {
+		_, err := service.Advertise(context.Background(), AdvertisementRequest{
+			ID: suffix, GatewayDeviceID: "gateway", Prefix: netip.MustParsePrefix("10.20.0.0/16"),
+			Resolver: netip.MustParseAddr("10.20.0.53"), DomainSuffix: suffix,
+		})
+		if err == nil {
+			t.Fatalf("Advertise() accepted unsafe suffix %q", suffix)
+		}
+	}
+}

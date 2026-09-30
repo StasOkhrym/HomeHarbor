@@ -16,6 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+
+	"github.com/sokhrym/go-tunnels/internal/control/audit"
 	"github.com/sokhrym/go-tunnels/internal/control/devices"
 	controlinvites "github.com/sokhrym/go-tunnels/internal/control/invites"
 	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
@@ -48,7 +51,7 @@ func TestEnrollmentAPIRequiresAdminAndEnrollsDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body, _ := json.Marshal(devices.EnrollRequest{Token: token.Token, Name: "laptop", IdentityPublicKey: "identity", WireGuardPublicKey: "wireguard"})
+	body, _ := json.Marshal(validEnrollmentRequest(t, token.Token, "laptop"))
 	enrolled := httptest.NewRecorder()
 	handler.ServeHTTP(enrolled, httptest.NewRequest(http.MethodPost, "/api/v1/enroll", bytes.NewReader(body)))
 	if enrolled.Code != http.StatusCreated {
@@ -81,7 +84,7 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	deviceA, err := deviceService.Enroll(context.Background(), devices.EnrollRequest{Token: tokenA.Token, Name: "a", IdentityPublicKey: "a-identity", WireGuardPublicKey: "a-wireguard"})
+	deviceA, err := deviceService.Enroll(context.Background(), validEnrollmentRequest(t, tokenA.Token, "a"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +92,7 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	deviceB, err := deviceService.Enroll(context.Background(), devices.EnrollRequest{Token: tokenB.Token, Name: "b", IdentityPublicKey: "b-identity", WireGuardPublicKey: "b-wireguard"})
+	deviceB, err := deviceService.Enroll(context.Background(), validEnrollmentRequest(t, tokenB.Token, "b"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +134,7 @@ func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := deviceService.Enroll(context.Background(), devices.EnrollRequest{Token: firstToken.Token, Name: "first", IdentityPublicKey: "first-identity", WireGuardPublicKey: "first-wireguard"})
+	first, err := deviceService.Enroll(context.Background(), validEnrollmentRequest(t, firstToken.Token, "first"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +142,7 @@ func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := deviceService.Enroll(context.Background(), devices.EnrollRequest{Token: secondToken.Token, Name: "second", IdentityPublicKey: "second-identity", WireGuardPublicKey: "second-wireguard"})
+	second, err := deviceService.Enroll(context.Background(), validEnrollmentRequest(t, secondToken.Token, "second"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +163,7 @@ func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := deviceService.Enroll(context.Background(), devices.EnrollRequest{Token: clientToken.Token, Name: "client", IdentityPublicKey: "client-identity", WireGuardPublicKey: "client-wireguard"})
+	client, err := deviceService.Enroll(context.Background(), validEnrollmentRequest(t, clientToken.Token, "client"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +171,7 @@ func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := deviceService.Enroll(context.Background(), devices.EnrollRequest{Token: gatewayToken.Token, Name: "gateway", IdentityPublicKey: "gateway-identity", WireGuardPublicKey: "gateway-wireguard"})
+	gateway, err := deviceService.Enroll(context.Background(), validEnrollmentRequest(t, gatewayToken.Token, "gateway"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,6 +295,36 @@ func TestGroupedResourceRoutesKeepAdminBoundary(t *testing.T) {
 	}
 }
 
+func TestAuditAPIRequiresAdminAndBoundsResults(t *testing.T) {
+	reader := &auditReaderStub{events: []audit.Event{{
+		OccurredAt: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC),
+		ActorType:  "device",
+		ActorID:    "device-1",
+		Action:     "device.revoked",
+		TargetType: "device",
+		TargetID:   "device-1",
+		Metadata:   map[string]any{"reason": "test"},
+	}}}
+	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), headerAuthorizer{}, WithAuditReader(reader)).Handler()
+
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized audit status = %d", unauthorized.Code)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit?limit=999", nil)
+	request.Header.Set("X-Test-Admin", "true")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "device.revoked") {
+		t.Fatalf("audit status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if reader.limit != 200 {
+		t.Fatalf("audit reader limit = %d, want 200", reader.limit)
+	}
+}
+
 func TestServiceCatalogAPIUsesAdminBoundary(t *testing.T) {
 	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
 	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), headerAuthorizer{}, WithServiceCatalog(catalog)).Handler()
@@ -351,6 +384,12 @@ func TestClientKeyUsesForwardedAddressOnlyFromTrustedProxy(t *testing.T) {
 	trusted.Header.Set("X-Forwarded-For", "192.0.2.10, 10.1.2.3")
 	if got := server.clientKey(trusted); got != "192.0.2.10" {
 		t.Fatalf("trusted client key = %q", got)
+	}
+	spoofed := httptest.NewRequest(http.MethodGet, "/", nil)
+	spoofed.RemoteAddr = "10.1.2.3:443"
+	spoofed.Header.Set("X-Forwarded-For", "198.51.100.99, 192.0.2.10, 10.1.2.3")
+	if got := server.clientKey(spoofed); got != "192.0.2.10" {
+		t.Fatalf("trusted client key with prepended value = %q", got)
 	}
 	untrusted := httptest.NewRequest(http.MethodGet, "/", nil)
 	untrusted.RemoteAddr = "198.51.100.7:443"
@@ -432,4 +471,32 @@ type headerAuthorizer struct{}
 
 func (headerAuthorizer) IsAdmin(_ context.Context, request *http.Request) bool {
 	return request.Header.Get("X-Test-Admin") == "true"
+}
+
+type auditReaderStub struct {
+	events []audit.Event
+	limit  int
+}
+
+func (reader *auditReaderStub) List(_ context.Context, limit int) ([]audit.Event, error) {
+	reader.limit = limit
+	return reader.events, nil
+}
+
+func validEnrollmentRequest(t *testing.T, token, name string) devices.EnrollRequest {
+	t.Helper()
+	_, identityPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wireGuardPrivate, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return devices.EnrollRequest{
+		Token:              token,
+		Name:               name,
+		IdentityPublicKey:  base64.RawURLEncoding.EncodeToString(identityPrivate.Public().(ed25519.PublicKey)),
+		WireGuardPublicKey: wireGuardPrivate.PublicKey().String(),
+	}
 }

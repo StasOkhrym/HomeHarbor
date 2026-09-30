@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"strings"
 	"sync"
@@ -17,7 +18,10 @@ const (
 	StatusRejected Status = "rejected"
 )
 
-var ErrAdvertisementNotFound = errors.New("network advertisement not found")
+var (
+	ErrAdvertisementNotFound = errors.New("network advertisement not found")
+	ErrInvalidAdvertisement  = errors.New("invalid network advertisement")
+)
 
 type Advertisement struct {
 	ID              string       `json:"id"`
@@ -54,17 +58,38 @@ func NewService(store Store, now func() time.Time) *Service {
 
 func (s *Service) Advertise(ctx context.Context, request AdvertisementRequest) (Advertisement, error) {
 	suffix := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(request.DomainSuffix)), ".")
-	if request.ID == "" || request.GatewayDeviceID == "" || !request.Prefix.IsValid() || !request.Resolver.IsValid() || suffix == "" {
-		return Advertisement{}, errors.New("complete route, resolver, and DNS suffix are required")
+	if request.ID == "" || request.GatewayDeviceID == "" || !request.Prefix.IsValid() || request.Prefix.Bits() == 0 || !request.Resolver.IsValid() || request.Resolver.IsUnspecified() || !validDomainSuffix(suffix) {
+		return Advertisement{}, fmt.Errorf("%w: complete route, resolver, and DNS suffix are required", ErrInvalidAdvertisement)
 	}
 	if !request.Prefix.Contains(request.Resolver) {
-		return Advertisement{}, errors.New("DNS resolver must be inside the advertised prefix")
+		return Advertisement{}, fmt.Errorf("%w: DNS resolver must be inside the advertised prefix", ErrInvalidAdvertisement)
 	}
 	advertisement := Advertisement{ID: request.ID, GatewayDeviceID: request.GatewayDeviceID, Prefix: request.Prefix.Masked(), Resolver: request.Resolver, DomainSuffix: suffix, Status: StatusPending, CreatedAt: s.now().UTC()}
 	if err := s.store.Save(ctx, advertisement); err != nil {
 		return Advertisement{}, err
 	}
 	return advertisement, nil
+}
+
+// validDomainSuffix mirrors the route-only resolver contract: only a concrete
+// DNS suffix may be installed, never a wildcard, command fragment, or empty
+// label. Canonicalizing before this check makes equivalent trailing-dot input
+// persist as one stable value and keeps snapshot comparisons deterministic.
+func validDomainSuffix(value string) bool {
+	if value == "" || len(value) > 253 || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+		for _, character := range label {
+			if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (s *Service) Approve(ctx context.Context, id string) error {

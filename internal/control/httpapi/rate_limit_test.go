@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -23,5 +24,18 @@ func TestRateLimiterRejectsRequestsAfterLimit(t *testing.T) {
 		if recorder.Code != want {
 			t.Fatalf("attempt %d status = %d, want %d", attempt, recorder.Code, want)
 		}
+	}
+}
+
+func TestRateLimiterBoundsTrackedClients(t *testing.T) {
+	limiter := NewRateLimiter(1, time.Minute, func() time.Time { return time.Unix(0, 0) })
+	for attempt := 0; attempt < maxTrackedRateLimitClients+100; attempt++ {
+		if !limiter.Allow("client-" + strconv.Itoa(attempt)) {
+			t.Fatalf("new client %d was unexpectedly rejected", attempt)
+		}
+	}
+
+	if got := len(limiter.clients); got != maxTrackedRateLimitClients {
+		t.Fatalf("tracked clients = %d, want %d", got, maxTrackedRateLimitClients)
 	}
 }

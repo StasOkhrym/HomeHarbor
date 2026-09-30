@@ -1,0 +1,11 @@
+# Trusted companion defaults for the one-shot admin CLI. Secrets stay in files.
+endpoint = "https://control.example"
+key_id = "root-1"
+root_key_file = "state/root-key.age"
+# passphrase_file = "state/root-passphrase"
+network_id = "home"
+profile_id = "family"
+base_url = "https://control.example/invite"
+overlay_pool = "10.200.0.0/24"
+# snapshot_manifest_file = "config/initial-snapshot.toml"
+invite_attempts_file = "state/invite-attempts.json"

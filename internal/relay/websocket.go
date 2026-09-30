@@ -59,10 +59,21 @@ func (h WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = connection.Close(websocket.StatusInvalidFramePayloadData, decodeErr.Error())
 			return
 		}
+		if !destinationAllowedByTicket(claims, packet) {
+			// The ticket is issued for one exact peer pair. Closing on a
+			// destination mismatch prevents a client from turning a valid
+			// source credential into a general relay mesh probe.
+			_ = connection.Close(websocket.StatusPolicyViolation, "relay destination mismatch")
+			return
+		}
 		if forwardErr := h.Hub.Forward(r.Context(), claims.SessionID, claims.DeviceID, packet); forwardErr != nil {
 			continue
 		}
 	}
+}
+
+func destinationAllowedByTicket(claims TicketClaims, packet Packet) bool {
+	return claims.DestinationDeviceID == "" || packet.DestinationDeviceID == claims.DestinationDeviceID
 }
 
 func relayTicketFromRequest(r *http.Request) string {

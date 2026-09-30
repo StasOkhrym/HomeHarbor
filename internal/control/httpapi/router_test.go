@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,6 +32,17 @@ func TestRouterPreservesIncomingRequestID(t *testing.T) {
 	}
 }
 
+func TestRouterReplacesUnsafeRequestID(t *testing.T) {
+	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	request.Header.Set("X-Request-ID", "request\nwith-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if got := response.Header().Get("X-Request-ID"); got == "request\nwith-secret" || got == "" {
+		t.Fatalf("unsafe request ID was retained: %q", got)
+	}
+}
+
 func TestRouterRejectsOversizedAPIBody(t *testing.T) {
 	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/enroll", bytes.NewBufferString(`{"padding":"`+strings.Repeat("x", int(maxRequestBodyBytes)+1)+`"}`))
@@ -38,5 +50,19 @@ func TestRouterRejectsOversizedAPIBody(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d", response.Code)
+	}
+}
+
+func TestRecoverMiddlewareReturnsStableInternalError(t *testing.T) {
+	handler := recoverMiddleware(slog.Default())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("database password=secret")
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d", response.Code)
+	}
+	if strings.Contains(response.Body.String(), "database password") || strings.Contains(response.Body.String(), "secret") {
+		t.Fatalf("panic details leaked in response: %s", response.Body.String())
 	}
 }

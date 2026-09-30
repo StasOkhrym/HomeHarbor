@@ -30,7 +30,10 @@ const (
 	StatusRejected = network.StatusRejected
 )
 
-var ErrAdvertisementNotFound = network.ErrAdvertisementNotFound
+var (
+	ErrAdvertisementNotFound = network.ErrAdvertisementNotFound
+	ErrInvalidAdvertisement  = network.ErrInvalidAdvertisement
+)
 
 func NewService(store Store, now func() time.Time) *Service { return network.NewService(store, now) }
 func NewMemoryStore() *MemoryStore                          { return network.NewMemoryStore() }

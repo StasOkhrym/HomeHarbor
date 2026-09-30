@@ -22,9 +22,15 @@ services:
     configs:
       - source: control_config
         target: /etc/go-tunnels/control.toml
-    secrets: [postgres_password, session_signing_key, ceremony_encryption_key, relay_ticket_key]
+    secrets: [postgres_password, session_signing_key, ceremony_encryption_key, relay_ticket_key, root_public_key]
     depends_on:
       migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "/healthcheck", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
@@ -41,7 +47,9 @@ services:
     configs:
       - source: control_config
         target: /etc/go-tunnels/control.toml
-    secrets: [postgres_password, session_signing_key, ceremony_encryption_key, relay_ticket_key]
+    # Schema migration must not receive browser, WebAuthn, or relay secrets.
+    # Its dedicated config loader reads only the database section.
+    secrets: [postgres_password]
     depends_on:
       postgres: {condition: service_healthy}
     read_only: true
@@ -61,6 +69,12 @@ services:
         target: /etc/go-tunnels/relay.toml
     secrets: [relay_ticket_key]
     ports: ["51820:51820/udp"]
+    healthcheck:
+      test: ["CMD", "/healthcheck", "http://127.0.0.1:8081/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
@@ -71,13 +85,15 @@ services:
     image: caddy:2.10-alpine
     ports: ["80:80", "443:443", "443:443/udp"]
     environment:
-      CONTROL_DOMAIN: ${CONTROL_DOMAIN}
-      RELAY_DOMAIN: ${RELAY_DOMAIN}
+      CONTROL_DOMAIN: ${CONTROL_DOMAIN:-control.localhost}
+      RELAY_DOMAIN: ${RELAY_DOMAIN:-relay.localhost}
     volumes:
       - ./${CADDYFILE:-Caddyfile}:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on: [control, relay]
+    depends_on:
+      control: {condition: service_healthy}
+      relay: {condition: service_healthy}
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     init: true
@@ -92,6 +108,7 @@ secrets:
   relay_ticket_key: {file: ../secrets/relay_ticket_key}
   session_signing_key: {file: ../secrets/session_signing_key}
   ceremony_encryption_key: {file: ../secrets/ceremony_encryption_key}
+  root_public_key: {file: ../secrets/root_public_key}
 volumes:
   postgres-data:
   caddy-data:

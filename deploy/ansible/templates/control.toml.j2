@@ -23,6 +23,9 @@ network_id = "{{ network_id | default('home') }}"
 enabled = true
 
 [security]
+# Only the public half of the trusted companion root key is deployed here.
+# The matching private age-encrypted key remains on the operator's Mac.
+root_public_key_file = "/run/secrets/root_public_key"
 trusted_proxy_cidrs = {{ trusted_proxy_cidrs | default([]) | to_json }}
 
 [observability]

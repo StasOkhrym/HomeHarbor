@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +31,32 @@ func (r *snapshotRecorder) Apply(_ context.Context, value snapshot.NetworkSnapsh
 
 	r.cancel()
 	return nil
+}
+
+type cursorRecorder struct {
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	revision []uint64
+}
+
+func (r *cursorRecorder) Apply(_ context.Context, value snapshot.NetworkSnapshot) error {
+	r.mu.Lock()
+	r.revision = append(r.revision, value.Revision)
+	count := len(r.revision)
+
+	r.mu.Unlock()
+	if count == 2 {
+		r.cancel()
+	}
+
+	return nil
+}
+
+func (r *cursorRecorder) revisions() []uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]uint64(nil), r.revision...)
 }
 
 func TestRunCoordinationVerifiesAndAppliesSignedSnapshot(t *testing.T) {
@@ -72,6 +100,76 @@ func TestRunCoordinationLoopStopsOnCancellationDuringBackoff(t *testing.T) {
 	}, &snapshotRecorder{})
 	if err != nil {
 		t.Fatalf("RunCoordinationLoop() error = %v", err)
+	}
+}
+
+func TestRunCoordinationLoopRetainsCursorAcrossReconnect(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, privateKey, "root-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 2, PreviousHash: first.Hash}, privateKey, "root-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var connections atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, acceptErr := websocket.Accept(w, r, nil)
+		if acceptErr != nil {
+			t.Errorf("accept: %v", acceptErr)
+			return
+		}
+		defer func() { _ = connection.CloseNow() }()
+		var hello controlprotocol.Hello
+		if readErr := wsjson.Read(r.Context(), connection, &hello); readErr != nil {
+			t.Errorf("hello: %v", readErr)
+			return
+		}
+		if writeErr := wsjson.Write(r.Context(), connection, map[string]any{"type": "welcome", "protocol": controlprotocol.Negotiated{Version: controlprotocol.CurrentVersion, Capabilities: []string{controlprotocol.CapabilityRelay}}}); writeErr != nil {
+			t.Errorf("welcome: %v", writeErr)
+			return
+		}
+		envelope := first
+		if connections.Add(1) > 1 {
+			envelope = second
+		}
+		payload, marshalErr := json.Marshal(envelope)
+		if marshalErr != nil {
+			t.Errorf("marshal envelope: %v", marshalErr)
+			return
+		}
+		if writeErr := wsjson.Write(r.Context(), connection, controlprotocol.Message{Type: "network.snapshot", Payload: payload}); writeErr != nil {
+			t.Errorf("snapshot: %v", writeErr)
+			return
+		}
+		if connections.Load() == 1 {
+			_ = connection.Close(websocket.StatusServiceRestart, "test reconnect")
+			return
+		}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	recorder := &cursorRecorder{cancel: cancel}
+	err = RunCoordinationLoop(ctx, CoordinationConfig{
+		URL:              "ws" + server.URL[len("http"):],
+		Credential:       "credential",
+		DeviceID:         "device-1",
+		NetworkID:        "home",
+		RootPublicKey:    publicKey,
+		ReconnectInitial: 10 * time.Millisecond,
+		ReconnectMax:     20 * time.Millisecond,
+	}, recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recorder.revisions(); len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("applied revisions=%v, want [1 2]", got)
 	}
 }
 

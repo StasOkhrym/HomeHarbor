@@ -56,8 +56,12 @@ func (s *Server) createProfile(w http.ResponseWriter, r *http.Request) {
 
 func writeServiceError(w http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
+	code := "invalid_request"
+	message := "service or access profile request is invalid"
 	if errors.Is(err, controlservices.ErrDuplicateID) {
 		status = http.StatusConflict
+		code = "conflict"
+		message = "service or access profile already exists"
 	}
-	writeError(w, status, err.Error())
+	writeErrorCode(w, status, code, message)
 }

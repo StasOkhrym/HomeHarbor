@@ -3,7 +3,7 @@
     <application android:label="Go Tunnels" android:allowBackup="false">
         <service
             android:name=".GoTunnelsVpnService"
-            android:exported="true"
+            android:exported="false"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>
                 <action android:name="android.net.VpnService" />

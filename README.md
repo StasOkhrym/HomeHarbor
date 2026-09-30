@@ -21,6 +21,8 @@ direct UDP discovery, and an encrypted relay fallback.
   health endpoints, and metrics.
 - CSRF-protected admin forms for enrollment invites, device revoke, route
   approval, service/access-profile creation, and advanced policy replacement.
+- Read-only admin audit API (`/api/v1/admin/audit`) and recent-activity view;
+  audit writes remain owned by durable domain/auth event consumers.
 - Passkey bootstrap/login, signed server-side sessions, one-time recovery codes,
   strict Origin checks, CSRF protection, and identity audit events.
 - Docker Compose/Caddy and Ansible deployment scaffolding.
@@ -32,6 +34,9 @@ direct UDP discovery, and an encrypted relay fallback.
   WireGuard key; private keys remain on the enrolling node.
 - Short-lived device credentials with atomic rotation and explicit trusted
   proxy handling for rate limits.
+- Invite code approval is fail-closed after five invalid attempts. The CLI
+  stores only an invite-ID counter in a local `0600` state file; the plaintext
+  code and its digest never leave the trusted companion.
 - Relay-only encrypted packet bridge with reconnect/backoff, live signed
   snapshot broadcast, strict snapshot-chain verification, and targeted
   authorized candidate messages.
@@ -40,6 +45,9 @@ direct UDP discovery, and an encrypted relay fallback.
 - Signed snapshot profiles can declare explicit `ACLRuleIDs`; trusted
   companion activation copies only those declared templates to the new device,
   while profiles without templates remain default-deny.
+- Enrollment, route advertisements, invite proofs, signed snapshot routes, and
+  policy rules reject malformed keys, default routes, unsafe DNS suffixes, and
+  duplicate ACL identities at their respective trust boundaries.
 - Overlay identities can be allocated from bounded RFC1918/CGNAT pools with
   collision, default-route, public-range, and exhaustion checks.
 - Companion onboarding is explicitly two-step: `admin approve` activates the
@@ -108,6 +116,27 @@ The publish step is retryable and requires the trusted root key. The control
 plane accepts snapshot reads only after a nonce-bound companion signature; it
 does not expose the signed snapshot as a public endpoint.
 
+The one-shot companion commands also accept `-config .local/admin.toml`; use
+[`config/admin.example.toml`](config/admin.example.toml) as the starting point.
+The passphrase remains a separate `0600` file referenced by
+`passphrase_file`, never a TOML value or command-line argument.
+
+On a fresh network, enroll the Linux gateway with a gateway enrollment token,
+create the matching service and access profile in the admin UI, then copy its
+public keys and the approved route/profile data into
+[`config/initial-snapshot.example.toml`](config/initial-snapshot.example.toml).
+Publish revision one from the trusted Mac companion:
+
+```sh
+go run ./cmd/admin init-snapshot \
+  -config .local/admin.toml \
+  -manifest config/initial-snapshot.toml
+```
+
+The command signs locally and the control plane accepts it only when no signed
+snapshot exists. Later changes use the constrained invite/revoke commands, so
+this bootstrap command cannot reset an established revision chain.
+
 The repository pins the golangci-lint v2 configuration in
 [`.golangci.yml`](.golangci.yml). `gofumpt`, `gci`, and `goimports` are configured
 as formatters so editors, local checks, and CI agree on spacing and import
@@ -124,6 +153,11 @@ uses a Caddy internal CA selected only by the `dev-up` target. Use
 `make dev-trust-ca` only for Linux test devices. Production Compose uses the
 default Caddyfile, where certificates must come from the reverse proxy's real
 DNS-01 setup.
+
+`make dev-init` also creates the local age-encrypted companion root key and
+mounts only its public key into control. The migration container receives only
+the PostgreSQL password. `make compose-check` renders Compose and verifies
+these secret boundaries before a developer starts the stack.
 
 `make relay-acceptance` runs the portable authenticated relay-only vertical
 slice. `make acceptance` runs that test first and then executes the Linux
@@ -156,4 +190,8 @@ hashes, and each code is consumed atomically on first use.
 
 The control plane stores public keys, credential hashes, policies, and session
 metadata. Private identity/WireGuard keys remain in local `0600` state files.
-The relay forwards opaque WireGuard ciphertext. Default policy is deny.
+The relay forwards opaque WireGuard ciphertext. Control metrics use the
+configured private `observability.metrics_address` rather than the public admin
+listener. Docker builds exclude local state and secret directories from the
+build context as an additional defense against accidental cache exposure.
+Default policy is deny.

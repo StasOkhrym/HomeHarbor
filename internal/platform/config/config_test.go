@@ -62,6 +62,29 @@ metrics_address = ":9090"
 	}
 }
 
+func TestLoadDatabaseRequiresOnlyDatabaseConfig(t *testing.T) {
+	dir := t.TempDir()
+	passwordPath := filepath.Join(dir, "database-password")
+	if err := os.WriteFile(passwordPath, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "migration.toml")
+	content := `[database]
+url = "postgres://go_tunnels@db/go_tunnels"
+password_file = "` + passwordPath + `"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadDatabase(configPath)
+	if err != nil {
+		t.Fatalf("LoadDatabase() error = %v", err)
+	}
+	if cfg.URL != "postgres://go_tunnels@db/go_tunnels" || cfg.Password != "secret" {
+		t.Fatalf("database config = %#v", cfg)
+	}
+}
+
 func TestControlValidationRejectsUnsafeAuthenticationSettings(t *testing.T) {
 	valid := Control{Server: Server{ListenAddress: ":8080", PublicURL: "https://tunnel.example.com"}, Database: Database{URL: "postgres://db/tunnel"}, Auth: Auth{RPID: "tunnel.example.com", RPOrigin: "https://tunnel.example.com", SessionSigningKey: "01234567890123456789012345678901", CeremonyEncryptionKey: "abcdefghijklmnopqrstuvwxyzABCDEF", SessionTTL: "12h", CeremonyTTL: "5m"}, Relay: Relay{PublicURL: "wss://relay.example.com", TicketKey: "01234567890123456789012345678901", TicketTTL: "5m"}}
 	tests := []struct {
@@ -166,5 +189,33 @@ func TestLoadAgentAppliesSafeDefaults(t *testing.T) {
 	}
 	if cfg.Identity.Name != "linux-gateway" || cfg.Identity.StatePath != "state/agent.json" || cfg.Relay.ListenAddress != "127.0.0.1:51821" || cfg.Relay.WireGuardAddress != "127.0.0.1:51820" || cfg.WireGuard.ListenPort != 51820 || cfg.Coordination.NetworkID != "home" {
 		t.Fatalf("unexpected defaults: %#v", cfg)
+	}
+}
+
+func TestLoadAdminReadsDefaultsAndPassphraseFile(t *testing.T) {
+	dir := t.TempDir()
+	passphrasePath := filepath.Join(dir, "root-passphrase")
+	if err := os.WriteFile(passphrasePath, []byte("correct horse battery staple\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "admin.toml")
+	content := `endpoint = "https://control.example"
+key_id = "root-2026"
+root_key_file = "state/root-key.age"
+passphrase_file = "` + passphrasePath + `"
+network_id = "home"
+profile_id = "family"
+base_url = "https://control.example/invite"
+overlay_pool = "10.200.0.0/24"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadAdmin(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Endpoint != "https://control.example" || cfg.KeyID != "root-2026" || cfg.Passphrase != "correct horse battery staple" || cfg.OverlayPool != "10.200.0.0/24" {
+		t.Fatalf("unexpected admin config: %#v", cfg)
 	}
 }

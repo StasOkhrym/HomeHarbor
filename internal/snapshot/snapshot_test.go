@@ -87,6 +87,16 @@ func TestSignRejectsReferencesThatCouldBroadenGatewayAccess(t *testing.T) {
 	value = NetworkSnapshot{
 		NetworkID: "home",
 		Revision:  1,
+		Devices:   []Device{{ID: "client", Role: "client", OverlayAddress: "100.64.0.2/32"}},
+		Gateways:  []Gateway{{DeviceID: "client"}},
+	}
+	if _, err = Sign(value, privateKey, "root-1"); err == nil {
+		t.Fatal("client device was accepted as a gateway")
+	}
+
+	value = NetworkSnapshot{
+		NetworkID: "home",
+		Revision:  1,
 		Devices:   []Device{{ID: "client", OverlayAddress: "100.64.0.2/32"}},
 		ACL:       []ACLRule{{ID: "bad", SourceDeviceID: "client", Destination: "10.0.0.0/24", Protocol: "icmp", PortFrom: 1, PortTo: 1}},
 	}
@@ -144,6 +154,55 @@ func TestSignRejectsDefaultRouteAdvertisement(t *testing.T) {
 
 	if _, err := Sign(value, privateKey, "root-1"); err == nil {
 		t.Fatal("default route advertisement was accepted")
+	}
+}
+
+func TestSignRejectsUnsafeRouteDNSMetadata(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := NetworkSnapshot{
+		NetworkID: "home",
+		Revision:  1,
+		Devices:   []Device{{ID: "gateway", Role: "gateway", OverlayAddress: "100.64.0.1/32"}},
+		Gateways:  []Gateway{{DeviceID: "gateway"}},
+	}
+	for _, route := range []Route{
+		{ID: "outside", GatewayID: "gateway", Prefix: "10.0.0.0/24", Resolver: "192.168.1.1", DomainSuffix: "home.arpa"},
+		{ID: "injection", GatewayID: "gateway", Prefix: "10.0.0.0/24", Resolver: "10.0.0.53", DomainSuffix: "home.arpa;revert"},
+	} {
+		value := base
+		value.Routes = []Route{route}
+
+		if _, err := Sign(value, privateKey, "root-1"); err == nil {
+			t.Fatalf("unsafe route metadata accepted: %#v", route)
+		}
+	}
+}
+
+func TestSignCanonicalizesRouteDNSMetadata(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := Sign(NetworkSnapshot{
+		NetworkID: "home",
+		Revision:  1,
+		Devices:   []Device{{ID: "gateway", Role: "gateway", OverlayAddress: "100.64.0.1/32"}},
+		Gateways:  []Gateway{{DeviceID: "gateway"}},
+		Routes:    []Route{{ID: "lan", GatewayID: "gateway", Prefix: "10.20.0.0/16", Resolver: "10.20.0.53", DomainSuffix: "Home.ARPA."}},
+	}, privateKey, "root-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := Decode(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Routes[0].DomainSuffix != "home.arpa" {
+		t.Fatalf("canonical suffix = %q", value.Routes[0].DomainSuffix)
 	}
 }
 

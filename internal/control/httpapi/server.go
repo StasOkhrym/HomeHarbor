@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sokhrym/go-tunnels/internal/control/audit"
 	"github.com/sokhrym/go-tunnels/internal/control/devices"
 	controlinvites "github.com/sokhrym/go-tunnels/internal/control/invites"
 	"github.com/sokhrym/go-tunnels/internal/control/policy"
@@ -57,6 +59,7 @@ type Server struct {
 	authLimiter         *RateLimiter
 	deviceLimiter       *RateLimiter
 	services            ServiceCatalog
+	audit               AuditReader
 	invites             InviteService
 	snapshots           SnapshotService
 	snapshotBroadcaster SnapshotBroadcaster
@@ -77,6 +80,19 @@ type NetworkService interface {
 	List(context.Context) ([]controlnetwork.Advertisement, error)
 }
 type ServerOption func(*Server)
+
+// AuditReader is deliberately read-only at the HTTP boundary. Audit writes
+// remain owned by domain event consumers and authentication code, preventing
+// an admin request from rewriting its own history.
+type AuditReader interface {
+	List(context.Context, int) ([]audit.Event, error)
+}
+
+// WithAuditReader adds read-only audit visibility to the admin surface while
+// keeping the audit writer owned by the application composition root.
+func WithAuditReader(reader AuditReader) ServerOption {
+	return func(server *Server) { server.audit = reader }
+}
 
 // RelaySessionIssuer mints a short-lived ticket bound to one device, one peer,
 // and one session. The relay verifies the ticket locally and never calls
@@ -210,7 +226,7 @@ func NewServer(deviceService DeviceService, authorizer Authorizer, options ...Se
 }
 
 func (s *Server) Handler() http.Handler {
-	return recoverMiddleware(NewRouter(s), s.logger)
+	return NewRouter(s)
 }
 
 func (s *Server) latestPolicy(w http.ResponseWriter, r *http.Request) {
@@ -231,7 +247,7 @@ func (s *Server) replacePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshot, err := s.policy.Replace(r.Context(), input.Rules)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "invalid_policy", "policy rules are invalid")
 		return
 	}
 	writeJSON(w, http.StatusOK, snapshot)
@@ -254,6 +270,10 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 		services, _ = s.services.List(r.Context())
 		profiles, _ = s.services.Profiles(r.Context())
 	}
+	auditEvents := []audit.Event{}
+	if s.audit != nil {
+		auditEvents, _ = s.audit.List(r.Context(), defaultAuditLimit)
+	}
 	policyJSON := "[]"
 	if s.policy != nil {
 		if current, policyErr := s.policy.Latest(r.Context()); policyErr == nil {
@@ -267,6 +287,7 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 		"Routes":     routes,
 		"Services":   services,
 		"Profiles":   profiles,
+		"Audit":      auditEvents,
 		"PolicyJSON": policyJSON,
 		"CSRF":       csrfFormToken(r),
 		"Notice":     r.URL.Query().Get("notice"),
@@ -298,7 +319,11 @@ func (s *Server) advertiseRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.network.Advertise(r.Context(), controlnetwork.AdvertisementRequest{ID: input.ID, GatewayDeviceID: input.GatewayDeviceID, Prefix: prefix, Resolver: resolver, DomainSuffix: input.DomainSuffix})
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		if errors.Is(err, controlnetwork.ErrInvalidAdvertisement) {
+			writeErrorCode(w, http.StatusBadRequest, "invalid_route", "route advertisement is invalid")
+		} else {
+			writeErrorCode(w, http.StatusInternalServerError, "internal_error", "could not advertise route")
+		}
 		return
 	}
 	writeJSON(w, http.StatusCreated, item)
@@ -315,7 +340,11 @@ func (s *Server) listRoutes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) approveRoute(w http.ResponseWriter, r *http.Request) {
 	if err := s.network.Approve(r.Context(), r.PathValue("id")); err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		if errors.Is(err, controlnetwork.ErrAdvertisementNotFound) {
+			writeErrorCode(w, http.StatusNotFound, "route_not_found", "route advertisement not found")
+		} else {
+			writeErrorCode(w, http.StatusInternalServerError, "internal_error", "could not approve route")
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -323,7 +352,11 @@ func (s *Server) approveRoute(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) rejectRoute(w http.ResponseWriter, r *http.Request) {
 	if err := s.network.Reject(r.Context(), r.PathValue("id")); err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		if errors.Is(err, controlnetwork.ErrAdvertisementNotFound) {
+			writeErrorCode(w, http.StatusNotFound, "route_not_found", "route advertisement not found")
+		} else {
+			writeErrorCode(w, http.StatusInternalServerError, "internal_error", "could not reject route")
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -357,7 +390,11 @@ func (s *Server) issueToken(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := s.devices.IssueEnrollmentToken(r.Context(), input.Role, time.Duration(input.TTLSeconds)*time.Second)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		if errors.Is(err, devices.ErrInvalidTokenRequest) {
+			writeErrorCode(w, http.StatusBadRequest, "invalid_request", "enrollment token request is invalid")
+		} else {
+			writeErrorCode(w, http.StatusInternalServerError, "internal_error", "could not create enrollment token")
+		}
 		return
 	}
 	writeJSON(w, http.StatusCreated, token)
@@ -373,8 +410,12 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusBadRequest
 		if errors.Is(err, devices.ErrInvalidEnrollmentToken) {
 			status = http.StatusUnauthorized
+			writeErrorCode(w, status, "invalid_enrollment_token", "enrollment token is invalid or expired")
+		} else if errors.Is(err, devices.ErrInvalidEnrollment) {
+			writeErrorCode(w, status, "invalid_request", "enrollment request is invalid")
+		} else {
+			writeErrorCode(w, http.StatusInternalServerError, "internal_error", "could not enroll device")
 		}
-		writeError(w, status, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, device)
@@ -467,8 +508,10 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusInternalServerError
 		if errors.Is(err, devices.ErrDeviceNotFound) {
 			status = http.StatusNotFound
+			writeErrorCode(w, status, "device_not_found", "device not found")
+		} else {
+			writeErrorCode(w, status, "internal_error", "could not revoke device credentials")
 		}
-		writeError(w, status, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -603,7 +646,11 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"code": errorCode(status), "error": message})
+	writeErrorCode(w, status, errorCode(status), message)
+}
+
+func writeErrorCode(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]string{"code": code, "error": message})
 }
 
 func errorCode(status int) string {
@@ -629,16 +676,21 @@ func errorCode(status int) string {
 	}
 }
 
-func recoverMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if value := recover(); value != nil {
-				logger.Error("HTTP panic", "error", value)
-				writeError(w, http.StatusInternalServerError, "internal server error")
-			}
-		}()
-		next.ServeHTTP(w, r)
-	})
+func recoverMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if value := recover(); value != nil {
+					// Panic values can contain request-derived secrets or database
+					// details. Keep the log useful for alerting without turning it into
+					// a second credential or internal-error disclosure channel.
+					logger.Error("HTTP panic", "panic_type", fmt.Sprintf("%T", value))
+					writeError(w, http.StatusInternalServerError, "internal server error")
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 //go:embed templates/admin.html

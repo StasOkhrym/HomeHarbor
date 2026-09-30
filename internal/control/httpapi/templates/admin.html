@@ -65,6 +65,15 @@
     </tbody>
   </table>
 
+  <h2>Recent activity</h2>
+  <table>
+    <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th></tr></thead>
+    <tbody>
+      {{range .Audit}}<tr><td><time datetime="{{.OccurredAt}}">{{.OccurredAt}}</time></td><td>{{.ActorType}} / <code>{{.ActorID}}</code></td><td>{{.Action}}</td><td>{{.TargetType}} / <code>{{.TargetID}}</code></td></tr>
+      {{else}}<tr><td colspan="4">No audit events yet.</td></tr>{{end}}
+    </tbody>
+  </table>
+
   <section>
     <h2>Add service</h2>
     <form method="post" action="/admin/services">

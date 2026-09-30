@@ -16,19 +16,19 @@ func main() {
 	configPath := flag.String("config", "config/control.toml", "control configuration path")
 	flag.Parse()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	cfg, err := config.LoadControl(*configPath)
+	cfg, err := config.LoadDatabase(*configPath)
 	if err != nil {
 		logger.Error("load config", "error", err)
 		os.Exit(1)
 	}
 	ctx := context.Background()
-	poolConfig, err := pgxpool.ParseConfig(cfg.Database.URL)
+	poolConfig, err := pgxpool.ParseConfig(cfg.URL)
 	if err != nil {
 		logger.Error("parse database configuration", "error", err)
 		os.Exit(1)
 	}
-	if cfg.Database.Password != "" {
-		poolConfig.ConnConfig.Password = cfg.Database.Password
+	if cfg.Password != "" {
+		poolConfig.ConnConfig.Password = cfg.Password
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {

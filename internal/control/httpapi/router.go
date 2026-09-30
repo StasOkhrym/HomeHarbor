@@ -13,7 +13,10 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-const maxRequestBodyBytes int64 = 1 << 20
+const (
+	maxRequestBodyBytes int64 = 1 << 20
+	maxRequestIDLength        = 128
+)
 
 const companionSnapshotPath = "/api/v1/coordination/snapshot/companion"
 
@@ -22,6 +25,10 @@ func NewRouter(server *Server) http.Handler {
 	router.Use(requestIDMiddleware)
 	router.Use(securityHeadersMiddleware)
 	router.Use(accessLogMiddleware(server.logger))
+	// Recovery stays inside the access-log wrapper so a recovered panic is
+	// recorded as a 500 response instead of escaping before the log middleware
+	// can observe the completed request.
+	router.Use(recoverMiddleware(server.logger))
 	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -62,6 +69,9 @@ func NewRouter(server *Server) http.Handler {
 			admin.Use(server.requireAdmin)
 			admin.Post("/enrollment-tokens", http.HandlerFunc(server.issueToken).ServeHTTP)
 			admin.Get("/devices", http.HandlerFunc(server.listDevices).ServeHTTP)
+			if server.audit != nil {
+				admin.Get("/audit", http.HandlerFunc(server.listAudit).ServeHTTP)
+			}
 			if server.network != nil {
 				admin.Get("/routes", http.HandlerFunc(server.listRoutes).ServeHTTP)
 			}
@@ -188,12 +198,27 @@ func clientAddress(request *http.Request, trusted []netip.Prefix) string {
 		if !prefix.Contains(remoteAddr) {
 			continue
 		}
-		for _, candidate := range strings.Split(request.Header.Get("X-Forwarded-For"), ",") {
-			if forwarded, parseErr := netip.ParseAddr(strings.TrimSpace(candidate)); parseErr == nil {
-				return forwarded.String()
+		// Walk from the nearest proxy toward the original client. Trusted
+		// entries are skipped, and the first untrusted address becomes the
+		// limiter key; prepended spoofed values cannot displace a trusted chain.
+		forwarded := strings.Split(request.Header.Get("X-Forwarded-For"), ",")
+		for index := len(forwarded) - 1; index >= 0; index-- {
+			candidate, parseErr := netip.ParseAddr(strings.TrimSpace(forwarded[index]))
+			if parseErr != nil {
+				continue
+			}
+			isTrusted := false
+			for _, trustedPrefix := range trusted {
+				if trustedPrefix.Contains(candidate) {
+					isTrusted = true
+					break
+				}
+			}
+			if !isTrusted {
+				return candidate.String()
 			}
 		}
-		break
+		return remoteAddr.String()
 	}
 	return remoteAddr.String()
 }
@@ -269,15 +294,30 @@ func limitRequestBody(next http.Handler) http.Handler {
 func requestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		requestID := request.Header.Get("X-Request-ID")
-		if requestID == "" {
+		if !validRequestID(requestID) {
 			var value [16]byte
+
 			if _, err := rand.Read(value[:]); err == nil {
 				requestID = hex.EncodeToString(value[:])
 			}
 		}
+
 		if requestID != "" {
 			w.Header().Set("X-Request-ID", requestID)
 		}
+
 		next.ServeHTTP(w, request)
 	})
+}
+
+func validRequestID(value string) bool {
+	if value == "" || len(value) > maxRequestIDLength {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') && (character < '0' || character > '9') && character != '-' && character != '_' && character != '.' {
+			return false
+		}
+	}
+	return true
 }

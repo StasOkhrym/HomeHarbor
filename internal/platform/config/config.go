@@ -94,6 +94,58 @@ type RelayServer struct {
 	} `toml:"security"`
 }
 
+type databaseConfigFile struct {
+	Database Database `toml:"database"`
+}
+
+// Admin describes the one-shot trusted-companion CLI. It contains operator
+// defaults and paths only; the encrypted root key remains in RootKeyFile and
+// the passphrase is loaded from PassphraseFile into the returned value.
+type Admin struct {
+	Endpoint             string `toml:"endpoint"`
+	KeyID                string `toml:"key_id"`
+	RootKeyFile          string `toml:"root_key_file"`
+	PassphraseFile       string `toml:"passphrase_file"`
+	NetworkID            string `toml:"network_id"`
+	ProfileID            string `toml:"profile_id"`
+	BaseURL              string `toml:"base_url"`
+	OverlayPool          string `toml:"overlay_pool"`
+	SnapshotManifestFile string `toml:"snapshot_manifest_file"`
+	InviteAttemptsFile   string `toml:"invite_attempts_file"`
+
+	Passphrase string `toml:"-"`
+}
+
+// LoadAdmin reads trusted-companion defaults and resolves only the explicitly
+// referenced passphrase file. It does not require an endpoint because init-root
+// is a local operation, while each command validates the fields it needs.
+func LoadAdmin(path string) (Admin, error) {
+	var cfg Admin
+	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+		return Admin{}, fmt.Errorf("decode admin config: %w", err)
+	}
+	if cfg.Endpoint == "" {
+		cfg.Endpoint = "https://control.example"
+	}
+	if cfg.KeyID == "" {
+		cfg.KeyID = "root-1"
+	}
+	if cfg.RootKeyFile == "" {
+		cfg.RootKeyFile = "state/root-key.age"
+	}
+	if cfg.PassphraseFile != "" {
+		value, err := readSecret(cfg.PassphraseFile, "admin root-key passphrase")
+		if err != nil {
+			return Admin{}, err
+		}
+		cfg.Passphrase = value
+	}
+	if cfg.InviteAttemptsFile == "" {
+		cfg.InviteAttemptsFile = "state/invite-attempts.json"
+	}
+	return cfg, nil
+}
+
 func LoadRelayServer(path string) (RelayServer, error) {
 	var cfg RelayServer
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
@@ -127,6 +179,26 @@ func LoadRelayServer(path string) (RelayServer, error) {
 	return cfg, nil
 }
 
+// LoadDatabase reads only the database section required by the migration
+// process. Keeping this loader separate prevents a one-shot schema job from
+// receiving browser-signing, WebAuthn, or relay credentials through its config.
+func LoadDatabase(path string) (Database, error) {
+	var file databaseConfigFile
+	if _, err := toml.DecodeFile(path, &file); err != nil {
+		return Database{}, fmt.Errorf("decode database config: %w", err)
+	}
+	if value := os.Getenv("GO_TUNNELS_DATABASE_URL"); value != "" {
+		file.Database.URL = value
+	}
+	if err := resolveDatabaseSecret(&file.Database); err != nil {
+		return Database{}, err
+	}
+	if strings.TrimSpace(file.Database.URL) == "" {
+		return Database{}, errors.New("database.url is required")
+	}
+	return file.Database, nil
+}
+
 func LoadControl(path string) (Control, error) {
 	var cfg Control
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
@@ -147,12 +219,8 @@ func LoadControl(path string) (Control, error) {
 	if value := os.Getenv("GO_TUNNELS_RELAY_TICKET_KEY"); value != "" {
 		cfg.Relay.TicketKey = value
 	}
-	if cfg.Database.PasswordFile != "" {
-		value, err := os.ReadFile(cfg.Database.PasswordFile)
-		if err != nil {
-			return Control{}, fmt.Errorf("read database password file: %w", err)
-		}
-		cfg.Database.Password = strings.TrimSpace(string(value))
+	if err := resolveDatabaseSecret(&cfg.Database); err != nil {
+		return Control{}, err
 	}
 	if cfg.Auth.SessionSigningKey == "" && cfg.Auth.SessionSigningKeyFile != "" {
 		value, err := readSecret(cfg.Auth.SessionSigningKeyFile, "session signing key")
@@ -179,6 +247,18 @@ func LoadControl(path string) (Control, error) {
 		return Control{}, err
 	}
 	return cfg, nil
+}
+
+func resolveDatabaseSecret(database *Database) error {
+	if database.PasswordFile == "" {
+		return nil
+	}
+	value, err := os.ReadFile(database.PasswordFile)
+	if err != nil {
+		return fmt.Errorf("read database password file: %w", err)
+	}
+	database.Password = strings.TrimSpace(string(value))
+	return nil
 }
 
 func (c Control) validate() error {

@@ -197,7 +197,7 @@ func PermitNetworkID(signed SignedPermit) (string, error) {
 }
 
 func (i Invite) Proof(deviceID string, devicePrivateKey ed25519.PrivateKey, code string, wireGuardPublicKey []byte) (Proof, error) {
-	if len(i.privateKey) != ed25519.PrivateKeySize || deviceID == "" || len(devicePrivateKey) != ed25519.PrivateKeySize || len(wireGuardPublicKey) != 32 || code != i.Code {
+	if len(i.privateKey) != ed25519.PrivateKeySize || deviceID == "" || len(devicePrivateKey) != ed25519.PrivateKeySize || !validWireGuardPublicKey(wireGuardPublicKey) || code != i.Code {
 		return Proof{}, ErrInvalidProof
 	}
 	devicePublicKey := devicePrivateKey.Public().(ed25519.PublicKey)
@@ -221,7 +221,7 @@ func (i Invite) Proof(deviceID string, devicePrivateKey ed25519.PrivateKey, code
 
 func VerifyProof(signed SignedPermit, proof Proof, profileID string, now time.Time) error {
 	var permit Permit
-	if err := cbor.Unmarshal(signed.Payload, &permit); err != nil || proof.Version != Version || proof.InviteID != permit.InviteID || proof.DeviceID == "" || permit.ProfileID != profileID || now.Unix() >= permit.ExpiresAt || len(proof.Signature) != ed25519.SignatureSize || len(proof.DeviceSignature) != ed25519.SignatureSize || len(proof.DevicePublicKey) != ed25519.PublicKeySize || len(proof.WireGuardPublicKey) != 32 || len(proof.CodeDigest) != sha256.Size {
+	if err := cbor.Unmarshal(signed.Payload, &permit); err != nil || proof.Version != Version || proof.InviteID != permit.InviteID || proof.DeviceID == "" || permit.ProfileID != profileID || now.Unix() >= permit.ExpiresAt || len(proof.Signature) != ed25519.SignatureSize || len(proof.DeviceSignature) != ed25519.SignatureSize || len(proof.DevicePublicKey) != ed25519.PublicKeySize || !validWireGuardPublicKey(proof.WireGuardPublicKey) || len(proof.CodeDigest) != sha256.Size {
 		return ErrInvalidProof
 	}
 	payload, err := canonicalMode.Marshal(struct {
@@ -236,6 +236,14 @@ func VerifyProof(signed SignedPermit, proof Proof, profileID string, now time.Ti
 		return ErrInvalidProof
 	}
 	return nil
+}
+
+// validWireGuardPublicKey rejects the all-zero X25519 public value before it
+// can enter a signed approval or a device row. The remaining curve/key
+// validation is performed by WireGuard when the key is installed; the invite
+// protocol only carries the raw 32-byte public half.
+func validWireGuardPublicKey(value []byte) bool {
+	return len(value) == 32 && !bytes.Equal(value, make([]byte, 32))
 }
 
 // VerifyProofWithCode is intended for the trusted companion. The control

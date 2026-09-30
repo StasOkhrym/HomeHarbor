@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sokhrym/go-tunnels/internal/companion"
+	platformconfig "github.com/sokhrym/go-tunnels/internal/platform/config"
 )
 
 func main() {
@@ -32,6 +33,8 @@ func main() {
 		err = approveInvite(os.Args[2:])
 	case "publish-snapshot":
 		err = publishInviteSnapshot(os.Args[2:])
+	case "init-snapshot":
+		err = initSnapshot(os.Args[2:])
 	case "revoke-device":
 		err = revokeDeviceSnapshot(os.Args[2:])
 	default:
@@ -44,14 +47,67 @@ func main() {
 	}
 }
 
+func initSnapshot(args []string) error {
+	flags := flag.NewFlagSet("init-snapshot", flag.ContinueOnError)
+	configPath := flags.String("config", "", "admin TOML configuration path")
+	manifestPath := flags.String("manifest", "", "initial snapshot TOML manifest")
+	keyPath := flags.String("key", "state/root-key.age", "encrypted root key path")
+	passphraseFile := flags.String("passphrase-file", "", "file containing the passphrase")
+	endpoint := flags.String("endpoint", "https://control.example", "control plane URL")
+	keyID := flags.String("key-id", "root-1", "root key identifier")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := loadAdminConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	applyAdminString(flags, "manifest", manifestPath, cfg.SnapshotManifestFile)
+	applyAdminString(flags, "key", keyPath, cfg.RootKeyFile)
+	applyAdminString(flags, "passphrase-file", passphraseFile, cfg.PassphraseFile)
+	applyAdminString(flags, "endpoint", endpoint, cfg.Endpoint)
+	applyAdminString(flags, "key-id", keyID, cfg.KeyID)
+	if strings.TrimSpace(*manifestPath) == "" {
+		return errors.New("manifest is required")
+	}
+	manifest, err := companion.LoadSnapshotManifest(*manifestPath)
+	if err != nil {
+		return err
+	}
+	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile, cfg.Passphrase)
+	if err != nil {
+		return err
+	}
+	root, err := session.PrivateKey()
+	if err != nil {
+		return err
+	}
+	envelope, err := manifest.SignInitialSnapshot(root, *keyID)
+	if err != nil {
+		return err
+	}
+	if err := (companion.RemoteApprover{Endpoint: *endpoint}).PublishInitialSnapshot(context.Background(), envelope); err != nil {
+		return err
+	}
+	fmt.Printf("initial snapshot published: network=%s revision=1 hash=%s\n", manifest.NetworkID, base64.RawURLEncoding.EncodeToString(envelope.Hash))
+	return nil
+}
+
 func initRoot(args []string) error {
 	flags := flag.NewFlagSet("init-root", flag.ContinueOnError)
+	configPath := flags.String("config", "", "admin TOML configuration path")
 	path := flags.String("key", "state/root-key.age", "encrypted root key path")
 	passphraseFile := flags.String("passphrase-file", "", "file containing the passphrase")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	passphrase, err := readPassphrase(*passphraseFile)
+	cfg, err := loadAdminConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	applyAdminString(flags, "key", path, cfg.RootKeyFile)
+	applyAdminString(flags, "passphrase-file", passphraseFile, cfg.PassphraseFile)
+	passphrase, err := configuredPassphrase(*passphraseFile, cfg.Passphrase)
 	if err != nil {
 		return err
 	}
@@ -69,6 +125,7 @@ func initRoot(args []string) error {
 
 func issueInvite(args []string) error {
 	flags := flag.NewFlagSet("invite", flag.ContinueOnError)
+	configPath := flags.String("config", "", "admin TOML configuration path")
 	keyPath := flags.String("key", "state/root-key.age", "encrypted root key path")
 	passphraseFile := flags.String("passphrase-file", "", "file containing the passphrase")
 	networkID := flags.String("network", "home", "network ID")
@@ -79,7 +136,17 @@ func issueInvite(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	session, err := unlockSession(*keyPath, *passphraseFile)
+	cfg, err := loadAdminConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	applyAdminString(flags, "key", keyPath, cfg.RootKeyFile)
+	applyAdminString(flags, "passphrase-file", passphraseFile, cfg.PassphraseFile)
+	applyAdminString(flags, "network", networkID, cfg.NetworkID)
+	applyAdminString(flags, "profile", profileID, cfg.ProfileID)
+	applyAdminString(flags, "base-url", baseURL, cfg.BaseURL)
+	applyAdminString(flags, "key-id", keyID, cfg.KeyID)
+	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile, cfg.Passphrase)
 	if err != nil {
 		return err
 	}
@@ -94,6 +161,7 @@ func issueInvite(args []string) error {
 
 func approveInvite(args []string) error {
 	flags := flag.NewFlagSet("approve", flag.ContinueOnError)
+	configPath := flags.String("config", "", "admin TOML configuration path")
 	keyPath := flags.String("key", "state/root-key.age", "encrypted root key path")
 	passphraseFile := flags.String("passphrase-file", "", "file containing the passphrase")
 	endpoint := flags.String("endpoint", "https://control.example", "control plane URL")
@@ -102,10 +170,21 @@ func approveInvite(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	cfg, err := loadAdminConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	applyAdminString(flags, "key", keyPath, cfg.RootKeyFile)
+	applyAdminString(flags, "passphrase-file", passphraseFile, cfg.PassphraseFile)
+	applyAdminString(flags, "endpoint", endpoint, cfg.Endpoint)
 	if *inviteID == "" || *code == "" {
 		return errors.New("invite and code are required")
 	}
-	session, err := unlockSession(*keyPath, *passphraseFile)
+	attempts, err := companion.NewFileInviteAttemptStore(cfg.InviteAttemptsFile)
+	if err != nil {
+		return err
+	}
+	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile, cfg.Passphrase)
 	if err != nil {
 		return err
 	}
@@ -113,11 +192,12 @@ func approveInvite(args []string) error {
 	if err != nil {
 		return err
 	}
-	return (companion.RemoteApprover{Endpoint: *endpoint}).Approve(context.Background(), *inviteID, strings.TrimSpace(*code), root)
+	return (companion.RemoteApprover{Endpoint: *endpoint, Attempts: attempts}).Approve(context.Background(), *inviteID, strings.TrimSpace(*code), root)
 }
 
 func publishInviteSnapshot(args []string) error {
 	flags := flag.NewFlagSet("publish-snapshot", flag.ContinueOnError)
+	configPath := flags.String("config", "", "admin TOML configuration path")
 	keyPath := flags.String("key", "state/root-key.age", "encrypted root key path")
 	passphraseFile := flags.String("passphrase-file", "", "file containing the passphrase")
 	endpoint := flags.String("endpoint", "https://control.example", "control plane URL")
@@ -127,6 +207,15 @@ func publishInviteSnapshot(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	cfg, err := loadAdminConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	applyAdminString(flags, "key", keyPath, cfg.RootKeyFile)
+	applyAdminString(flags, "passphrase-file", passphraseFile, cfg.PassphraseFile)
+	applyAdminString(flags, "endpoint", endpoint, cfg.Endpoint)
+	applyAdminString(flags, "key-id", keyID, cfg.KeyID)
+	applyAdminString(flags, "overlay-pool", overlayPool, cfg.OverlayPool)
 	if *inviteID == "" || *overlayPool == "" {
 		return errors.New("invite and overlay-pool are required")
 	}
@@ -134,7 +223,7 @@ func publishInviteSnapshot(args []string) error {
 	if err != nil {
 		return fmt.Errorf("parse overlay-pool: %w", err)
 	}
-	session, err := unlockSession(*keyPath, *passphraseFile)
+	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile, cfg.Passphrase)
 	if err != nil {
 		return err
 	}
@@ -147,6 +236,7 @@ func publishInviteSnapshot(args []string) error {
 
 func revokeDeviceSnapshot(args []string) error {
 	flags := flag.NewFlagSet("revoke-device", flag.ContinueOnError)
+	configPath := flags.String("config", "", "admin TOML configuration path")
 	keyPath := flags.String("key", "state/root-key.age", "encrypted root key path")
 	passphraseFile := flags.String("passphrase-file", "", "file containing the passphrase")
 	endpoint := flags.String("endpoint", "https://control.example", "control plane URL")
@@ -155,10 +245,18 @@ func revokeDeviceSnapshot(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	cfg, err := loadAdminConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	applyAdminString(flags, "key", keyPath, cfg.RootKeyFile)
+	applyAdminString(flags, "passphrase-file", passphraseFile, cfg.PassphraseFile)
+	applyAdminString(flags, "endpoint", endpoint, cfg.Endpoint)
+	applyAdminString(flags, "key-id", keyID, cfg.KeyID)
 	if strings.TrimSpace(*deviceID) == "" {
 		return errors.New("device is required")
 	}
-	session, err := unlockSession(*keyPath, *passphraseFile)
+	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile, cfg.Passphrase)
 	if err != nil {
 		return err
 	}
@@ -169,8 +267,41 @@ func revokeDeviceSnapshot(args []string) error {
 	return (companion.RemoteApprover{Endpoint: *endpoint, KeyID: *keyID}).PublishDeviceRemoval(context.Background(), strings.TrimSpace(*deviceID), root)
 }
 
-func unlockSession(path, passphraseFile string) (*companion.Session, error) {
-	passphrase, err := readPassphrase(passphraseFile)
+func loadAdminConfig(path string) (platformconfig.Admin, error) {
+	if strings.TrimSpace(path) == "" {
+		return platformconfig.Admin{}, nil
+	}
+	return platformconfig.LoadAdmin(path)
+}
+
+func applyAdminString(flags *flag.FlagSet, name string, target *string, configured string) {
+	if configured != "" && !flagWasProvided(flags, name) {
+		*target = configured
+	}
+}
+
+func flagWasProvided(flags *flag.FlagSet, name string) bool {
+	provided := false
+	flags.Visit(func(item *flag.Flag) {
+		if item.Name == name {
+			provided = true
+		}
+	})
+	return provided
+}
+
+func configuredPassphrase(passphraseFile, configured string) (string, error) {
+	if passphraseFile != "" {
+		return readPassphrase(passphraseFile)
+	}
+	if configured != "" {
+		return configured, nil
+	}
+	return "", errors.New("passphrase-file is required; do not pass secrets as command-line arguments")
+}
+
+func unlockSessionWithPassphrase(path, passphraseFile, configuredSecret string) (*companion.Session, error) {
+	passphrase, err := configuredPassphrase(passphraseFile, configuredSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -202,5 +333,5 @@ func readPassphrase(path string) (string, error) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: admin init-root|invite|approve|publish-snapshot|revoke-device [flags]")
+	fmt.Fprintln(os.Stderr, "usage: admin init-root|init-snapshot|invite|approve|publish-snapshot|revoke-device [flags]")
 }

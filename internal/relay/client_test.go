@@ -100,3 +100,13 @@ func TestBridgeRejectsInvalidRelayURL(t *testing.T) {
 		t.Fatal("NewBridge() error=nil")
 	}
 }
+
+func TestTicketBoundDestinationCannotBeChangedByPacket(t *testing.T) {
+	claims := TicketClaims{SessionID: "session", DeviceID: "client", DestinationDeviceID: "gateway"}
+	if destinationAllowedByTicket(claims, Packet{SessionID: "session", SourceDeviceID: "client", DestinationDeviceID: "other-device", Payload: []byte("ciphertext")}) {
+		t.Fatal("ticket-bound packet was allowed to target a different device")
+	}
+	if !destinationAllowedByTicket(claims, Packet{SessionID: "session", SourceDeviceID: "client", DestinationDeviceID: "gateway", Payload: []byte("ciphertext")}) {
+		t.Fatal("ticket-bound packet for its authorized peer was rejected")
+	}
+}

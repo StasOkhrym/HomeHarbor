@@ -1,0 +1,16 @@
+.git
+.gitignore
+.local
+secrets
+state
+.worktrees
+.superpowers
+.codex
+.agents
+coverage.out
+dist
+tmp
+*.age
+*.key
+*.pem
+*.test

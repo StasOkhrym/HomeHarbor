@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -41,10 +42,11 @@ import (
 // App owns the control-plane process and its shutdown order. Dependencies are
 // closed in reverse ownership order so consumers stop before their stores.
 type App struct {
-	server *http.Server
-	pool   *pgxpool.Pool
-	bus    *gochannel.GoChannel
-	logger *slog.Logger
+	server        *http.Server
+	metricsServer *http.Server
+	pool          *pgxpool.Pool
+	bus           *gochannel.GoChannel
+	logger        *slog.Logger
 }
 
 var _ lifecycle.Component = (*App)(nil)
@@ -80,7 +82,8 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		pool.Close()
 		return nil, err
 	}
-	if err := events.ConsumeDeviceAudit(ctx, bus, audit.NewPostgresSink(pool), logger, "device.enrolled", "device.revoked"); err != nil {
+	auditSink := audit.NewPostgresSink(pool)
+	if err := events.ConsumeDeviceAudit(ctx, bus, auditSink, logger, "device.enrolled", "device.revoked"); err != nil {
 		return closeBusAndPool(errors.Join(errors.New("start audit consumer"), err))
 	}
 	go func() {
@@ -119,7 +122,7 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		Origin:     cfg.Auth.RPOrigin,
 		SigningKey: []byte(cfg.Auth.SessionSigningKey),
 		SessionTTL: cfg.Auth.SessionDuration(),
-		Auditor:    events.NewIdentityAuditor(audit.NewPostgresSink(pool), time.Now),
+		Auditor:    events.NewIdentityAuditor(auditSink, time.Now),
 	}, passkeyService, identityService)
 	if err != nil {
 		return closeBusAndPool(errors.Join(errors.New("configure browser authentication"), err))
@@ -129,7 +132,7 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		httpapi.WithNetworkService(networkService),
 		httpapi.WithPolicyService(policyService),
 		httpapi.WithServiceCatalog(serviceCatalog),
-		httpapi.WithMetricsHandler(promhttp.Handler()),
+		httpapi.WithAuditReader(auditSink),
 		httpapi.WithReadiness(func(readinessCtx context.Context) error {
 			if err := pool.Ping(readinessCtx); err != nil {
 				return err
@@ -176,6 +179,20 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		coordinationHandler = coordination.NewHandler(deviceService, signedSnapshots, []string{cfg.Auth.RPOrigin}, peerAuthorization)
 	}
 	serverOptions = append(serverOptions, httpapi.WithCoordinationHandler(coordinationHandler))
+	var metricsServer *http.Server
+	if address := strings.TrimSpace(cfg.Observability.MetricsAddress); address != "" {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("GET /metrics", promhttp.Handler())
+		metricsServer = &http.Server{
+			Addr:              address,
+			Handler:           metricsMux,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       30 * time.Second,
+			MaxHeaderBytes:    64 << 10,
+		}
+	}
 	handler := httpapi.NewServer(
 		deviceService,
 		auth,
@@ -183,9 +200,10 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	).Handler()
 
 	return &App{
-		pool:   pool,
-		bus:    bus,
-		logger: logger,
+		pool:          pool,
+		bus:           bus,
+		logger:        logger,
+		metricsServer: metricsServer,
 		server: &http.Server{
 			Addr:              cfg.Server.ListenAddress,
 			Handler:           handler,
@@ -193,6 +211,7 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 			ReadTimeout:       15 * time.Second,
 			WriteTimeout:      30 * time.Second,
 			IdleTimeout:       60 * time.Second,
+			MaxHeaderBytes:    64 << 10,
 		},
 	}, nil
 }
@@ -283,20 +302,46 @@ func loadRootPublicKey(path string) (ed25519.PublicKey, error) {
 // Run serves HTTP until the context is cancelled. Shutdown has a bounded
 // deadline so a stuck client cannot prevent the process from exiting.
 func (a *App) Run(ctx context.Context) error {
-	serverErr := make(chan error, 1)
+	listener, err := net.Listen("tcp", a.server.Addr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = listener.Close() }()
+	var metricsListener net.Listener
+	if a.metricsServer != nil {
+		metricsListener, err = net.Listen("tcp", a.metricsServer.Addr)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = metricsListener.Close() }()
+	}
+	runContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	serverErr := make(chan error, 2)
 	go func() {
-		serverErr <- a.server.ListenAndServe()
+		serverErr <- a.server.Serve(listener)
 	}()
+	if a.metricsServer != nil {
+		go func() {
+			serverErr <- a.metricsServer.Serve(metricsListener)
+		}()
+	}
 	go func() {
-		<-ctx.Done()
+		<-runContext.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := a.server.Shutdown(shutdownCtx); err != nil {
 			a.logger.Error("shutdown control server", "error", err)
 		}
+		if a.metricsServer != nil {
+			if err := a.metricsServer.Shutdown(shutdownCtx); err != nil {
+				a.logger.Error("shutdown control metrics server", "error", err)
+			}
+		}
 	}()
 
-	err := <-serverErr
+	err = <-serverErr
+	cancel()
 	if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
 		err = nil
 	}

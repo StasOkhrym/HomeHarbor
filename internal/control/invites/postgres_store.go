@@ -39,12 +39,12 @@ func (s *PostgresStore) Get(ctx context.Context, id string) (Record, error) {
 		SELECT invite_id, profile_id, device_id, device_public_key, wireguard_public_key,
 		       permit_version, permit_key_id, permit_payload, permit_signature,
 		       proof_version, proof_device_public_key, proof_code_digest, proof_signature, proof_device_signature,
-		       status, created_at, approved_at
+		       status, created_at, approved_at, failed_code_attempts, blocked_at
 		FROM invite_records WHERE invite_id=$1`, id).Scan(
 		&record.InviteID, &record.ProfileID, &record.DeviceID, &record.DevicePublic, &record.WireGuardPublicKey,
 		&permitVersion, &record.Permit.KeyID, &record.Permit.Payload, &record.Permit.Signature,
 		&proofVersion, &record.Proof.DevicePublicKey, &record.Proof.CodeDigest, &record.Proof.Signature, &record.Proof.DeviceSignature,
-		&record.Status, &record.CreatedAt, &record.ApprovedAt)
+		&record.Status, &record.CreatedAt, &record.ApprovedAt, &record.FailedCodeAttempts, &record.BlockedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Record{}, ErrInviteNotFound
 	}
@@ -75,6 +75,37 @@ func (s *PostgresStore) Approve(ctx context.Context, id string, at time.Time) (R
 		return Record{}, err
 	}
 	return s.Get(ctx, record.InviteID)
+}
+
+// RecordInvalidCodeAttempt updates the lockout state in one SQL statement.
+// The predicate excludes approved/blocked records and the returned status
+// makes the fifth failure durable even when several companion workers race.
+func (s *PostgresStore) RecordInvalidCodeAttempt(ctx context.Context, id string, at time.Time) error {
+	var status Status
+	err := s.pool.QueryRow(ctx, `
+		UPDATE invite_records
+		SET failed_code_attempts = failed_code_attempts + 1,
+		    status = CASE WHEN failed_code_attempts + 1 >= $2 THEN 'blocked' ELSE status END,
+		    blocked_at = CASE WHEN failed_code_attempts + 1 >= $2 THEN $3 ELSE blocked_at END
+		WHERE invite_id=$1 AND status='pending' AND failed_code_attempts < $2
+		RETURNING status`, id, MaxInvalidCodeAttempts, at).Scan(&status)
+	if err == nil {
+		if status == StatusBlocked {
+			return ErrInviteBlocked
+		}
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	record, getErr := s.Get(ctx, id)
+	if getErr != nil {
+		return getErr
+	}
+	if record.Status == StatusBlocked {
+		return ErrInviteBlocked
+	}
+	return ErrInviteConsumed
 }
 
 var (

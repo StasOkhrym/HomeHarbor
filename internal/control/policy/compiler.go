@@ -39,10 +39,17 @@ type Compiler struct{}
 
 func (Compiler) Compile(revision uint64, rules []Rule) (Snapshot, error) {
 	compiled := slices.Clone(rules)
-	for _, rule := range compiled {
-		if rule.ID == "" || rule.SourceDeviceID == "" || !rule.Destination.IsValid() {
+	seenIDs := make(map[string]struct{}, len(compiled))
+	for index := range compiled {
+		rule := &compiled[index]
+		if rule.ID == "" || rule.SourceDeviceID == "" || !rule.Destination.IsValid() || rule.Destination.Bits() == 0 {
 			return Snapshot{}, fmt.Errorf("rule identity, source, and destination are required")
 		}
+		if _, exists := seenIDs[rule.ID]; exists {
+			return Snapshot{}, fmt.Errorf("rule %s is duplicated", rule.ID)
+		}
+		seenIDs[rule.ID] = struct{}{}
+		rule.Destination = rule.Destination.Masked()
 		if rule.Protocol != ProtocolTCP && rule.Protocol != ProtocolUDP {
 			return Snapshot{}, fmt.Errorf("rule %s has unsupported protocol %q", rule.ID, rule.Protocol)
 		}

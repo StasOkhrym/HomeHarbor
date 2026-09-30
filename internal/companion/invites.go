@@ -72,6 +72,7 @@ type RemoteApprover struct {
 	KeyID       string
 	OverlayPool netip.Prefix
 	Now         func() time.Time
+	Attempts    InviteAttemptStore
 }
 
 func (a RemoteApprover) Approve(ctx context.Context, inviteID, code string, root ed25519.PrivateKey) error {
@@ -87,6 +88,11 @@ func (a RemoteApprover) Approve(ctx context.Context, inviteID, code string, root
 	}
 	if base == "" || inviteID == "" || code == "" || len(root) != ed25519.PrivateKeySize {
 		return errors.New("invalid companion approval request")
+	}
+	if a.Attempts != nil {
+		if err := a.Attempts.Check(inviteID); err != nil {
+			return err
+		}
 	}
 	getURL := fmt.Sprintf("%s/api/v1/invites/%s", base, url.PathEscape(inviteID))
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, getURL, nil)
@@ -106,6 +112,17 @@ func (a RemoteApprover) Approve(ctx context.Context, inviteID, code string, root
 		return err
 	}
 	if err := invite.VerifyProofWithCode(pending.Permit, pending.Proof, pending.ProfileID, code, a.Now().UTC()); err != nil {
+		// Only a structurally valid proof can consume a local code attempt. The
+		// plaintext code and its digest remain inside the companion process.
+		if proofErr := invite.VerifyProof(pending.Permit, pending.Proof, pending.ProfileID, a.Now().UTC()); proofErr != nil {
+			return proofErr
+		}
+		if a.Attempts == nil {
+			return ErrInviteAttemptsUnavailable
+		}
+		if attemptErr := a.Attempts.RecordFailure(inviteID); attemptErr != nil {
+			return attemptErr
+		}
 		return err
 	}
 	signed, err := invite.SignApproval(invite.Approval{Version: invite.Version, InviteID: pending.InviteID, ProfileID: pending.ProfileID, DeviceID: pending.DeviceID, DevicePublicKey: pending.DevicePublic, WireGuardPublicKey: pending.Proof.WireGuardPublicKey}, root)
@@ -200,6 +217,30 @@ func (a RemoteApprover) PublishSnapshot(ctx context.Context, inviteID string, ro
 		return fmt.Errorf("sign snapshot for invite %s: %w", inviteID, err)
 	}
 	return a.publishSignedSnapshot(ctx, base, next)
+}
+
+// PublishInitialSnapshot sends revision one after the local companion has
+// signed an operator-authored manifest. The control service performs the
+// authoritative root-signature and empty-store checks.
+func (a RemoteApprover) PublishInitialSnapshot(ctx context.Context, envelope snapshot.Envelope) error {
+	if a.Client == nil {
+		a.Client = http.DefaultClient
+	}
+	if strings.TrimSpace(a.Endpoint) == "" {
+		return errors.New("control endpoint is required")
+	}
+	base := strings.TrimRight(a.Endpoint, "/")
+	if err := validateControlEndpoint(base); err != nil {
+		return err
+	}
+	value, err := snapshot.Decode(envelope)
+	if err != nil {
+		return fmt.Errorf("validate initial snapshot: %w", err)
+	}
+	if value.Revision != 1 || len(value.PreviousHash) != 0 {
+		return errors.New("initial snapshot must be revision one without a previous hash")
+	}
+	return a.publishSignedSnapshot(ctx, base, envelope)
 }
 
 // PublishDeviceRemoval publishes the signed snapshot that revokes one client
