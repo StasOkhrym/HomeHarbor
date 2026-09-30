@@ -89,6 +89,7 @@ type RelaySession struct {
 	DeviceID            string `json:"device_id"`
 	DestinationDeviceID string `json:"destination_device_id"`
 	RelayURL            string `json:"relay_url"`
+	RelayUDPAddress     string `json:"relay_udp_address,omitempty"`
 	Ticket              string `json:"ticket"`
 	ExpiresInSeconds    int64  `json:"expires_in_seconds"`
 }

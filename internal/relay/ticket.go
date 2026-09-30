@@ -23,11 +23,12 @@ const (
 )
 
 type TicketClaims struct {
-	Version   int    `json:"v"`
-	Audience  string `json:"aud"`
-	SessionID string `json:"sid"`
-	DeviceID  string `json:"did"`
-	ExpiresAt int64  `json:"exp"`
+	Version             int    `json:"v"`
+	Audience            string `json:"aud"`
+	SessionID           string `json:"sid"`
+	DeviceID            string `json:"did"`
+	DestinationDeviceID string `json:"dst,omitempty"`
+	ExpiresAt           int64  `json:"exp"`
 }
 type TicketIssuer struct {
 	Key []byte
@@ -35,17 +36,31 @@ type TicketIssuer struct {
 }
 
 func (i TicketIssuer) Issue(sessionID, deviceID string, ttl time.Duration) (string, error) {
+	return i.issue(sessionID, deviceID, "", ttl)
+}
+
+// IssueForPeer binds a relay credential to the exact peer it may reach. The
+// WebSocket transport still accepts legacy unbound tickets, while the UDP
+// pair transport requires this stronger claim before it can bind an address.
+func (i TicketIssuer) IssueForPeer(sessionID, deviceID, destinationDeviceID string, ttl time.Duration) (string, error) {
+	return i.issue(sessionID, deviceID, destinationDeviceID, ttl)
+}
+
+func (i TicketIssuer) issue(sessionID, deviceID, destinationDeviceID string, ttl time.Duration) (string, error) {
 	if len(i.Key) < 32 {
 		return "", errors.New("relay ticket key must be at least 32 bytes")
 	}
 	if sessionID == "" || deviceID == "" || ttl <= 0 {
 		return "", errors.New("session, device, and positive TTL are required")
 	}
+	if destinationDeviceID == deviceID {
+		return "", errors.New("relay destination must be a different device")
+	}
 	now := time.Now
 	if i.Now != nil {
 		now = i.Now
 	}
-	payload, err := json.Marshal(TicketClaims{Version: TicketVersion, Audience: RelayAudience, SessionID: sessionID, DeviceID: deviceID, ExpiresAt: now().Add(ttl).Unix()})
+	payload, err := json.Marshal(TicketClaims{Version: TicketVersion, Audience: RelayAudience, SessionID: sessionID, DeviceID: deviceID, DestinationDeviceID: destinationDeviceID, ExpiresAt: now().Add(ttl).Unix()})
 	if err != nil {
 		return "", err
 	}
@@ -92,6 +107,18 @@ func (i TicketIssuer) sign(value string) string {
 func (c TicketClaims) Validate(sessionID, deviceID string) error {
 	if c.SessionID != sessionID || c.DeviceID != deviceID {
 		return fmt.Errorf("ticket subject mismatch")
+	}
+
+	return nil
+}
+
+func (c TicketClaims) ValidatePeer(sessionID, deviceID, destinationDeviceID string) error {
+	if err := c.Validate(sessionID, deviceID); err != nil {
+		return err
+	}
+
+	if c.DestinationDeviceID != destinationDeviceID {
+		return fmt.Errorf("ticket destination mismatch")
 	}
 
 	return nil

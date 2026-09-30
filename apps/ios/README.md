@@ -17,6 +17,16 @@ Network Extension entitlement, signing, and a physical-device test.
    application/provider hand-off. Store device and WireGuard private keys in
    Keychain with `ThisDeviceOnly` accessibility.
 
-The source files are a deliberately small UX and lifecycle skeleton. They are
-not a signed VPN binary until the target is configured in Xcode and exercised
-on a physical iPhone. Simulator software-key fallback must remain debug-only.
+The source files are a deliberately small UX and lifecycle skeleton. The
+Packet Tunnel provider now requires `serverAddress`, an `overlayAddress`, and
+at least one explicit non-default `includedRoutes` entry in its provider
+configuration. Optional `dnsServers` and `dnsMatchDomains` are validated as
+route-only settings; the provider never installs a default route implicitly.
+They are not a signed VPN binary until the target is configured in Xcode,
+WireGuardKit is linked, and the result is exercised on a physical iPhone.
+Simulator software-key fallback must remain debug-only.
+
+`KeychainStore.swift` is the shared App Group storage boundary for device
+credentials and WireGuard private keys. It uses
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; do not replace it with
+`UserDefaults`, logs, or exported backup data.

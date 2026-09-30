@@ -76,6 +76,46 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 	}
 }
 
+func TestRemoteApproverPublishesSignedDeviceRemoval(t *testing.T) {
+	rootPublic, rootPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotService := controlsnapshots.NewService(controlsnapshots.NewMemoryStore(), rootPublic, "home")
+	initial, err := snapshot.Sign(snapshot.NetworkSnapshot{
+		NetworkID: "home", Revision: 1,
+		Devices: []snapshot.Device{
+			{ID: "phone", Role: "client", IdentityPublicKey: "phone-id", WireGuardPublicKey: "phone-wg", OverlayAddress: "10.200.0.2/32"},
+		},
+		Profiles: []snapshot.AccessProfile{{ID: "family", Name: "Family", DeviceIDs: []string{"phone"}}},
+	}, rootPrivate, "root-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshotService.Publish(context.Background(), initial); err != nil {
+		t.Fatal(err)
+	}
+	handler := httpapi.NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAllAuthorizer{}, httpapi.WithSnapshotService(snapshotService), httpapi.WithCompanionRootKey(rootPublic)).Handler()
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	approver := RemoteApprover{Endpoint: server.URL, KeyID: "root-1"}
+	if err := approver.PublishDeviceRemoval(context.Background(), "phone", rootPrivate); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := snapshotService.Latest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := snapshot.Decode(latest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(value.Devices) != 0 || len(value.Profiles) != 1 || len(value.Profiles[0].DeviceIDs) != 0 {
+		t.Fatalf("device removal was not published: %#v", value)
+	}
+}
+
 func TestValidateControlEndpointRejectsUnsafeDestinations(t *testing.T) {
 	for _, endpoint := range []string{"https://control.example", "http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]:8080"} {
 		if err := validateControlEndpoint(endpoint); err != nil {

@@ -151,7 +151,16 @@ func NewRouter(server *Server) http.Handler {
 	})
 
 	router.Route("/admin", func(admin chi.Router) {
+		admin.Use(limitRequestBody)
+		admin.Use(server.apiLimiter.Middleware(server.clientKey))
 		admin.Get("/", server.requireAdmin(http.HandlerFunc(server.adminDashboard)).ServeHTTP)
+		admin.Post("/enrollment-tokens", server.requireAdmin(http.HandlerFunc(server.issueEnrollmentTokenForm)).ServeHTTP)
+		admin.Post("/devices/{id}/revoke", server.requireAdmin(http.HandlerFunc(server.revokeDeviceForm)).ServeHTTP)
+		admin.Post("/routes/{id}/approve", server.requireAdmin(http.HandlerFunc(server.approveRouteForm)).ServeHTTP)
+		admin.Post("/routes/{id}/reject", server.requireAdmin(http.HandlerFunc(server.rejectRouteForm)).ServeHTTP)
+		admin.Post("/services", server.requireAdmin(http.HandlerFunc(server.createServiceForm)).ServeHTTP)
+		admin.Post("/access-profiles", server.requireAdmin(http.HandlerFunc(server.createProfileForm)).ServeHTTP)
+		admin.Post("/policy", server.requireAdmin(http.HandlerFunc(server.replacePolicyForm)).ServeHTTP)
 		if login, ok := server.authorizer.(interface{ LoginHandler() http.Handler }); ok {
 			admin.Handle("/login", login.LoginHandler())
 		}

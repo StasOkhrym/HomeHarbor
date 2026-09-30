@@ -57,6 +57,28 @@ func TestTicketRejectsMalformedClaims(t *testing.T) {
 	}
 }
 
+func TestPeerTicketBindsDestination(t *testing.T) {
+	issuer := TicketIssuer{Key: []byte("01234567890123456789012345678901")}
+
+	token, err := issuer.IssueForPeer("session-1", "device-1", "device-2", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	claims, err := issuer.Verify(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := claims.ValidatePeer("session-1", "device-1", "device-2"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := claims.ValidatePeer("session-1", "device-1", "device-3"); err == nil {
+		t.Fatal("ticket was accepted for a different destination")
+	}
+}
+
 func TestPacketRoundTrip(t *testing.T) {
 	encoded, err := EncodePacket(Packet{SessionID: "session-1", SourceDeviceID: "a", DestinationDeviceID: "b", Payload: []byte{1, 2, 3}})
 	if err != nil {

@@ -64,6 +64,7 @@ type Server struct {
 	companionChallenges *companionChallengeStore
 	relayIssuer         RelaySessionIssuer
 	relayURL            string
+	relayUDPAddress     string
 	relayTTL            time.Duration
 	relayPeerAuthorizer RelayPeerAuthorizer
 	trustedProxy        []netip.Prefix
@@ -77,10 +78,11 @@ type NetworkService interface {
 }
 type ServerOption func(*Server)
 
-// RelaySessionIssuer mints a short-lived ticket bound to one device and one
-// session. The relay verifies the ticket locally and never calls control.
+// RelaySessionIssuer mints a short-lived ticket bound to one device, one peer,
+// and one session. The relay verifies the ticket locally and never calls
+// control.
 type RelaySessionIssuer interface {
-	Issue(sessionID, deviceID string, ttl time.Duration) (string, error)
+	IssueForPeer(sessionID, deviceID, destinationDeviceID string, ttl time.Duration) (string, error)
 }
 
 // RelayPeerAuthorizer is evaluated after both device credentials are checked.
@@ -94,6 +96,13 @@ func WithRelaySessionIssuer(issuer RelaySessionIssuer, relayURL string, ttl time
 		server.relayURL = strings.TrimRight(relayURL, "/")
 		server.relayTTL = ttl
 	}
+}
+
+// WithRelayUDPAddress exposes the separate raw UDP ingress returned to nodes
+// that support the versioned udp_pair_v1 transport. It is intentionally
+// optional so older deployments can continue using the WebSocket bridge.
+func WithRelayUDPAddress(address string) ServerOption {
+	return func(server *Server) { server.relayUDPAddress = strings.TrimSpace(address) }
 }
 
 // WithRelayPeerAuthorizer adds a policy/topology check for relay tickets.
@@ -245,11 +254,22 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 		services, _ = s.services.List(r.Context())
 		profiles, _ = s.services.Profiles(r.Context())
 	}
+	policyJSON := "[]"
+	if s.policy != nil {
+		if current, policyErr := s.policy.Latest(r.Context()); policyErr == nil {
+			if encoded, marshalErr := json.MarshalIndent(current.Rules, "", "  "); marshalErr == nil {
+				policyJSON = string(encoded)
+			}
+		}
+	}
 	if err := adminTemplate.Execute(w, map[string]any{
-		"Devices":  list,
-		"Routes":   routes,
-		"Services": services,
-		"Profiles": profiles,
+		"Devices":    list,
+		"Routes":     routes,
+		"Services":   services,
+		"Profiles":   profiles,
+		"PolicyJSON": policyJSON,
+		"CSRF":       csrfFormToken(r),
+		"Notice":     r.URL.Query().Get("notice"),
 	}); err != nil {
 		s.logger.Error("render admin", "error", err)
 	}
@@ -413,7 +433,7 @@ func (s *Server) issueRelaySession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "relay sessions are unavailable")
 		return
 	}
-	ticket, err := s.relayIssuer.Issue(input.SessionID, source.ID, s.relayTTL)
+	ticket, err := s.relayIssuer.IssueForPeer(input.SessionID, source.ID, destination.ID, s.relayTTL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "issue relay session")
 		return
@@ -423,9 +443,10 @@ func (s *Server) issueRelaySession(w http.ResponseWriter, r *http.Request) {
 		DeviceID            string `json:"device_id"`
 		DestinationDeviceID string `json:"destination_device_id"`
 		RelayURL            string `json:"relay_url"`
+		RelayUDPAddress     string `json:"relay_udp_address,omitempty"`
 		Ticket              string `json:"ticket"`
 		ExpiresInSeconds    int64  `json:"expires_in_seconds"`
-	}{input.SessionID, source.ID, destination.ID, s.relayURL, ticket, int64(s.relayTTL / time.Second)})
+	}{input.SessionID, source.ID, destination.ID, s.relayURL, s.relayUDPAddress, ticket, int64(s.relayTTL / time.Second)})
 }
 
 func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
@@ -438,6 +459,10 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
+	// This mutation revokes control-plane credentials only. The signed snapshot
+	// is owned by the trusted companion, so the companion must publish a
+	// separate exact removal for an already-connected node to lose data-plane
+	// access during a later control-plane outage.
 	if err := s.devices.Revoke(r.Context(), r.PathValue("id")); err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, devices.ErrDeviceNotFound) {

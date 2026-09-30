@@ -1,0 +1,33 @@
+# Linux client runtime. Secrets are referenced by file and never embedded in
+# this configuration; command-line flags can override any non-secret value.
+[node]
+state_path = "state/client.json"
+control_url = "https://control.example"
+# enrollment_token_file = "state/enrollment-token"
+name = "linux-client"
+
+[relay]
+websocket_url = "wss://relay.example/relay/v1"
+udp_address = "relay.example:51820"
+# ticket_file = "state/relay-ticket"
+session_id = ""
+destination_device_id = "gateway"
+listen_address = "127.0.0.1:51822"
+wireguard_address = "127.0.0.1:51820"
+# stun_server = "stun:stun.example:3478"
+
+[wireguard]
+interface = "wg0"
+listen_port = 51820
+peer_public_key = ""
+overlay_address = "10.200.0.2/32"
+allowed_prefixes = "192.168.50.0/24"
+routes = "192.168.50.0/24"
+
+[coordination]
+url = "wss://control.example/api/v1/coordination"
+root_public_key_file = "state/root.pub"
+network_id = "home"
+
+[direct]
+# candidates = "203.0.113.10:51820"

@@ -19,6 +19,8 @@ direct UDP discovery, and an encrypted relay fallback.
   packet framing, and an in-memory live relay hub.
 - Go-template device/route dashboard with self-hosted assets, structured logs,
   health endpoints, and metrics.
+- CSRF-protected admin forms for enrollment invites, device revoke, route
+  approval, service/access-profile creation, and advanced policy replacement.
 - Passkey bootstrap/login, signed server-side sessions, one-time recovery codes,
   strict Origin checks, CSRF protection, and identity audit events.
 - Docker Compose/Caddy and Ansible deployment scaffolding.
@@ -33,6 +35,8 @@ direct UDP discovery, and an encrypted relay fallback.
 - Relay-only encrypted packet bridge with reconnect/backoff, live signed
   snapshot broadcast, strict snapshot-chain verification, and targeted
   authorized candidate messages.
+- Versioned `udp_pair_v1` relay ingress with peer-bound tickets, bounded
+  sessions, NAT rebinding, opaque forwarding, and WebSocket compatibility.
 - Signed snapshot profiles can declare explicit `ACLRuleIDs`; trusted
   companion activation copies only those declared templates to the new device,
   while profiles without templates remain default-deny.
@@ -41,6 +45,10 @@ direct UDP discovery, and an encrypted relay fallback.
 - Companion onboarding is explicitly two-step: `admin approve` activates the
   device, then repeatable `admin publish-snapshot` signs and publishes its
   profile diff through a single-use challenge-bound endpoint.
+- Data-plane revoke is a separate trusted-companion operation: `admin
+  revoke-device` signs an exact client removal and publishes it as the next
+  snapshot revision. The web/API device revoke still disables credentials;
+  run both operations when removing an already-connected client.
 - Snapshot topology compilation now produces deterministic WireGuard peer
   allowed-prefixes while keeping relay/direct endpoint ownership separate.
 - Local developer workflow: `make doctor`, `make dev-init`, `make dev-up`,
@@ -48,14 +56,11 @@ direct UDP discovery, and an encrypted relay fallback.
 
 ## Not yet complete
 
-- Privileged Linux network-namespace acceptance of the interface/route and
-  nftables policy is wired in `internal/acceptance`; it still requires the
-  Lima Linux VM (and root/CAP_NET_ADMIN) to execute.
-- End-to-end LAN-service acceptance through the kernel WireGuard path; the
-  current relay bridge is a transport slice, not yet the complete VPN product.
-- Direct UDP handshake/path switching and STUN-driven roaming.
-- PostgreSQL integration tests and the Linux network-namespace acceptance
-  harness are present; they require an explicit database URL and Linux VM.
+- External NAT traversal and roaming acceptance across two independent
+  networks.
+- PostgreSQL integration tests still require an explicit database URL; the
+  Linux namespace acceptance now covers kernel WireGuard plus allowed HTTP/SSH
+  service reachability and forbidden-port default-deny behavior.
 - Signed iOS target configuration, WireGuardKit integration, and physical-device
   Packet Tunnel verification. A native source scaffold is in `apps/ios/`.
 
@@ -83,6 +88,22 @@ go run ./cmd/admin publish-snapshot \
   -passphrase-file state/root-passphrase
 ```
 
+To remove a client from the signed data-plane policy, use the trusted
+companion while the control plane is reachable:
+
+```sh
+go run ./cmd/admin revoke-device \
+  -endpoint https://control.example \
+  -device DEVICE_ID \
+  -key state/root-key.age \
+  -passphrase-file state/root-passphrase
+```
+
+This command rejects gateway IDs and does not alter routes. It must be paired
+with the normal admin/API device revoke so future credential authentication is
+also stopped. A gateway applies the signed removal even if control later goes
+offline, which closes the old-snapshot access window for that client.
+
 The publish step is retryable and requires the trusted root key. The control
 plane accepts snapshot reads only after a nonce-bound companion signature; it
 does not expose the signed snapshot as a public endpoint.
@@ -98,15 +119,33 @@ chi, while module consumers continue to depend on narrow interfaces rather than
 a framework or a single god-service interface.
 
 For a local deployment, run `make dev-init` and `make dev-up`. The Compose
-stack runs migrations as a separate one-shot service before control starts.
-Use `make dev-trust-ca` only for Linux test devices. Production certificates
-must come from the reverse proxy's real DNS-01 setup.
+stack runs migrations as a separate one-shot service before control starts and
+uses a Caddy internal CA selected only by the `dev-up` target. Use
+`make dev-trust-ca` only for Linux test devices. Production Compose uses the
+default Caddyfile, where certificates must come from the reverse proxy's real
+DNS-01 setup.
 
 `make relay-acceptance` runs the portable authenticated relay-only vertical
 slice. `make acceptance` runs that test first and then executes the Linux
 namespace scenario directly on Linux or through the `go-tunnels-vm` Lima
 instance on macOS. Start that VM with `make vm-up`; set `LIMA_INSTANCE` when
 using a different instance name.
+
+The current direct-path preview accepts a validated, comma-separated candidate
+list with `-direct-candidates`. Set `-stun stun:host:port` to run STUN on the
+same UDP socket as `udp_pair_v1`; the relay also reports its observed source
+endpoint as a `server_reflexive` candidate and republishes it over authenticated
+coordination. A node installs one candidate at a time and marks the direct path
+usable only after the WireGuard kernel reports a newer handshake than the
+baseline captured before the change. If every candidate fails, the relay
+endpoint is restored. External NAT traversal, roaming, and a two-network
+acceptance test are still required.
+
+When a control response contains `relay_udp_address`, agent/client prefer the
+raw UDP pair transport when started with `-relay-udp` (or when the session was
+issued by control). The UDP port is exposed directly by the relay container;
+Caddy continues to terminate HTTPS/WebSocket traffic and does not proxy this
+raw datagram protocol.
 
 Both authentication key files must contain random values: at least 32 bytes for
 the session signing key and exactly 32 bytes for the ceremony encryption key.

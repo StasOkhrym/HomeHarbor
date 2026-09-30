@@ -176,82 +176,147 @@ func (a RemoteApprover) PublishSnapshot(ctx context.Context, inviteID string, ro
 	if record.Status != controlinvites.StatusApproved {
 		return errors.New("invite is not approved")
 	}
-	networkID, err := invite.PermitNetworkID(record.Permit)
+	permitNetworkID, err := invite.PermitNetworkID(record.Permit)
 	if err != nil {
 		return err
 	}
 
-	const snapshotPath = "/api/v1/coordination/snapshot/companion"
-	challengeURL := base + "/api/v1/coordination/snapshot/companion-challenge"
-	request, err = http.NewRequestWithContext(ctx, http.MethodGet, challengeURL, nil)
+	previous, snapshotNetwork, err := a.loadSignedSnapshot(ctx, root)
 	if err != nil {
 		return err
 	}
-	response, err = a.Client.Do(request)
-	if err != nil {
-		return err
+	if snapshotNetwork != permitNetworkID {
+		return errors.New("invite and signed snapshot belong to different networks")
 	}
-	if response.StatusCode != http.StatusOK {
-		_ = response.Body.Close()
-		return fmt.Errorf("load companion challenge: status %d", response.StatusCode)
-	}
-	var challenge struct {
-		Nonce string `json:"nonce"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&challenge); err != nil {
-		_ = response.Body.Close()
-		return err
-	}
-	_ = response.Body.Close()
-	if challenge.Nonce == "" {
-		return errors.New("companion challenge is empty")
-	}
-	signature, err := protocol.SignCompanionRequest(http.MethodGet, snapshotPath, challenge.Nonce, a.KeyID, root)
-	if err != nil {
-		return err
-	}
-	request, err = http.NewRequestWithContext(ctx, http.MethodGet, base+snapshotPath, nil)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("X-Go-Tunnels-Companion-Nonce", challenge.Nonce)
-	request.Header.Set("X-Go-Tunnels-Companion-Key-ID", a.KeyID)
-	request.Header.Set("X-Go-Tunnels-Companion-Signature", base64.RawURLEncoding.EncodeToString(signature))
-	response, err = a.Client.Do(request)
-	if err != nil {
-		return err
-	}
-	if response.StatusCode != http.StatusOK {
-		_ = response.Body.Close()
-		return fmt.Errorf("load signed snapshot: status %d", response.StatusCode)
-	}
-	var previous snapshot.Envelope
-	if err := json.NewDecoder(response.Body).Decode(&previous); err != nil {
-		_ = response.Body.Close()
-		return err
-	}
-	_ = response.Body.Close()
 	session := NewSession(a.Now)
 	if err := session.Unlock(root); err != nil {
 		return err
 	}
-	next, err := NewSnapshotSigner(session, networkID, a.KeyID).SignDeviceAdditionFromPool(previous, DeviceAddition{ProfileID: record.ProfileID, Device: snapshot.Device{
+	next, err := NewSnapshotSigner(session, snapshotNetwork, a.KeyID).SignDeviceAdditionFromPool(previous, DeviceAddition{ProfileID: record.ProfileID, Device: snapshot.Device{
 		ID: record.DeviceID, Role: "client", IdentityPublicKey: base64.RawURLEncoding.EncodeToString(record.DevicePublic), WireGuardPublicKey: base64.RawURLEncoding.EncodeToString(record.WireGuardPublicKey),
 	}}, a.OverlayPool)
 	session.Close()
 	if err != nil {
 		return fmt.Errorf("sign snapshot for invite %s: %w", inviteID, err)
 	}
+	return a.publishSignedSnapshot(ctx, base, next)
+}
+
+// PublishDeviceRemoval publishes the signed snapshot that revokes one client
+// from the node data plane. The control plane only transports this envelope;
+// it cannot manufacture the removal or broaden it to a gateway/route change.
+func (a RemoteApprover) PublishDeviceRemoval(ctx context.Context, deviceID string, root ed25519.PrivateKey) error {
+	if a.Client == nil {
+		a.Client = http.DefaultClient
+	}
+	if a.Now == nil {
+		a.Now = time.Now
+	}
+	if a.KeyID == "" {
+		a.KeyID = "root-1"
+	}
+	if strings.TrimSpace(a.Endpoint) == "" || strings.TrimSpace(deviceID) == "" || len(root) != ed25519.PrivateKeySize {
+		return errors.New("invalid companion device-removal request")
+	}
+	base := strings.TrimRight(a.Endpoint, "/")
+	if err := validateControlEndpoint(base); err != nil {
+		return err
+	}
+	previous, networkID, err := a.loadSignedSnapshot(ctx, root)
+	if err != nil {
+		return err
+	}
+	session := NewSession(a.Now)
+	if err := session.Unlock(root); err != nil {
+		return err
+	}
+	next, err := NewSnapshotSigner(session, networkID, a.KeyID).SignDeviceRemoval(previous, DeviceRemoval{DeviceID: deviceID})
+	session.Close()
+	if err != nil {
+		return fmt.Errorf("sign device removal for %s: %w", deviceID, err)
+	}
+	return a.publishSignedSnapshot(ctx, base, next)
+}
+
+func (a RemoteApprover) loadSignedSnapshot(ctx context.Context, root ed25519.PrivateKey) (snapshot.Envelope, string, error) {
+	base := strings.TrimRight(a.Endpoint, "/")
+	const snapshotPath = "/api/v1/coordination/snapshot/companion"
+	challengeURL := base + "/api/v1/coordination/snapshot/companion-challenge"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, challengeURL, nil)
+	if err != nil {
+		return snapshot.Envelope{}, "", err
+	}
+	response, err := a.Client.Do(request)
+	if err != nil {
+		return snapshot.Envelope{}, "", err
+	}
+	if response.StatusCode != http.StatusOK {
+		_ = response.Body.Close()
+		return snapshot.Envelope{}, "", fmt.Errorf("load companion challenge: status %d", response.StatusCode)
+	}
+	var challenge struct {
+		Nonce string `json:"nonce"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&challenge); err != nil {
+		_ = response.Body.Close()
+		return snapshot.Envelope{}, "", err
+	}
+	_ = response.Body.Close()
+	if challenge.Nonce == "" {
+		return snapshot.Envelope{}, "", errors.New("companion challenge is empty")
+	}
+	signature, err := protocol.SignCompanionRequest(http.MethodGet, snapshotPath, challenge.Nonce, a.KeyID, root)
+	if err != nil {
+		return snapshot.Envelope{}, "", err
+	}
+	request, err = http.NewRequestWithContext(ctx, http.MethodGet, base+snapshotPath, nil)
+	if err != nil {
+		return snapshot.Envelope{}, "", err
+	}
+	request.Header.Set("X-Go-Tunnels-Companion-Nonce", challenge.Nonce)
+	request.Header.Set("X-Go-Tunnels-Companion-Key-ID", a.KeyID)
+	request.Header.Set("X-Go-Tunnels-Companion-Signature", base64.RawURLEncoding.EncodeToString(signature))
+	response, err = a.Client.Do(request)
+	if err != nil {
+		return snapshot.Envelope{}, "", err
+	}
+	if response.StatusCode != http.StatusOK {
+		_ = response.Body.Close()
+		return snapshot.Envelope{}, "", fmt.Errorf("load signed snapshot: status %d", response.StatusCode)
+	}
+	var previous snapshot.Envelope
+	if err := json.NewDecoder(response.Body).Decode(&previous); err != nil {
+		_ = response.Body.Close()
+		return snapshot.Envelope{}, "", err
+	}
+	_ = response.Body.Close()
+	networkID, err := snapshotNetworkID(previous)
+	if err != nil {
+		return snapshot.Envelope{}, "", err
+	}
+	return previous, networkID, nil
+}
+
+func snapshotNetworkID(envelope snapshot.Envelope) (string, error) {
+	value, err := snapshot.Decode(envelope)
+	if err != nil {
+		return "", fmt.Errorf("decode current snapshot: %w", err)
+	}
+
+	return value.NetworkID, nil
+}
+
+func (a RemoteApprover) publishSignedSnapshot(ctx context.Context, base string, next snapshot.Envelope) error {
 	body, err := json.Marshal(next)
 	if err != nil {
 		return err
 	}
-	request, err = http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/v1/coordination/snapshots", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/v1/coordination/snapshots", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	response, err = a.Client.Do(request)
+	response, err := a.Client.Do(request)
 	if err != nil {
 		return err
 	}

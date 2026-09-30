@@ -28,7 +28,17 @@ type Applier struct {
 }
 
 func NewApplier(interfaceName string, peers map[string]netip.Prefix) *Applier {
-	return &Applier{interfaceName: interfaceName, peers: clonePeers(peers), run: applyScript}
+	return NewApplierWithRunner(interfaceName, peers, applyScript)
+}
+
+// NewApplierWithRunner creates an applier with an explicit nft execution
+// boundary. Production uses the real command runner; tests and future
+// platform adapters can verify revision semantics without requiring CAP_NET_ADMIN.
+func NewApplierWithRunner(interfaceName string, peers map[string]netip.Prefix, runner func(context.Context, string) error) *Applier {
+	if runner == nil {
+		runner = applyScript
+	}
+	return &Applier{interfaceName: interfaceName, peers: clonePeers(peers), run: runner}
 }
 
 // Apply compiles and atomically installs a newer default-deny policy. The

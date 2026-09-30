@@ -75,6 +75,64 @@ func TestRunCoordinationLoopStopsOnCancellationDuringBackoff(t *testing.T) {
 	}
 }
 
+func TestRunCoordinationPublishesCandidateUpdatesAfterWelcome(t *testing.T) {
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var received controlprotocol.CandidateUpdate
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, acceptErr := websocket.Accept(w, r, nil)
+		if acceptErr != nil {
+			t.Errorf("accept: %v", acceptErr)
+			return
+		}
+		defer func() { _ = connection.CloseNow() }()
+		var hello controlprotocol.Hello
+		if readErr := wsjson.Read(r.Context(), connection, &hello); readErr != nil {
+			t.Errorf("hello: %v", readErr)
+			return
+		}
+		if writeErr := wsjson.Write(r.Context(), connection, map[string]any{"type": "welcome", "protocol": controlprotocol.Negotiated{Version: controlprotocol.CurrentVersion, Capabilities: []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityDirectUDP}}}); writeErr != nil {
+			t.Errorf("welcome: %v", writeErr)
+			return
+		}
+		var message controlprotocol.Message
+		if readErr := wsjson.Read(r.Context(), connection, &message); readErr != nil {
+			t.Errorf("candidate message: %v", readErr)
+			return
+		}
+		if message.Type != "candidate.update" {
+			t.Errorf("message type=%q, want candidate.update", message.Type)
+			return
+		}
+		if unmarshalErr := json.Unmarshal(message.Payload, &received); unmarshalErr != nil {
+			t.Errorf("candidate payload: %v", unmarshalErr)
+			return
+		}
+		cancel()
+	}))
+	defer server.Close()
+	err = RunCoordination(ctx, CoordinationConfig{
+		URL:           "ws" + server.URL[len("http"):],
+		Credential:    "credential",
+		DeviceID:      "client",
+		NetworkID:     "home",
+		RootPublicKey: publicKey,
+		CandidateProvider: func(context.Context) ([]controlprotocol.CandidateUpdate, error) {
+			return []controlprotocol.CandidateUpdate{{DestinationDeviceID: "gateway", Candidates: []controlprotocol.Candidate{{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100}}}}, nil
+		},
+	}, &snapshotRecorder{cancel: cancel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received.DestinationDeviceID != "gateway" || len(received.Candidates) != 1 {
+		t.Fatalf("received candidate update=%#v", received)
+	}
+}
+
 func newCoordinationTestServer(t *testing.T, envelope snapshot.Envelope) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

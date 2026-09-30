@@ -49,6 +49,9 @@ func TestLinuxNamespaceDefaultDenyLANAccess(t *testing.T) {
 
 	waitForHTTP(t, clientNS, "http://192.168.50.2:8080")
 	waitForHTTP(t, clientNS, "http://192.168.50.2:8081")
+	servers = append(servers, startTCPBannerServers(t, lanNS, 2222, 2223)...)
+	waitForTCPBanner(t, clientNS, "192.168.50.2", 2222)
+	waitForTCPBanner(t, clientNS, "192.168.50.2", 2223)
 
 	peers := map[string]netip.Prefix{"client": netip.MustParsePrefix("100.64.0.2/32")}
 	rules := policy.Snapshot{Revision: 1, DefaultAction: policy.ActionDeny, Rules: []policy.Rule{{
@@ -58,12 +61,22 @@ func TestLinuxNamespaceDefaultDenyLANAccess(t *testing.T) {
 		Protocol:       policy.ProtocolTCP,
 		PortFrom:       8080,
 		PortTo:         8080,
+	}, {
+		ID:             "allow-ssh",
+		SourceDeviceID: "client",
+		Destination:    netip.MustParsePrefix("192.168.50.2/32"),
+		Protocol:       policy.ProtocolTCP,
+		PortFrom:       2222,
+		PortTo:         2222,
 	}}}
 	applyDefaultDenyPolicy(t, gatewayNS, "gt0", peers, rules)
 
 	waitForHTTP(t, clientNS, "http://192.168.50.2:8080")
 	if err := curl(clientNS, "http://192.168.50.2:8081"); err == nil {
 		t.Fatal("default-deny policy allowed a forbidden port")
+	}
+	if err := tcpBanner(clientNS, "192.168.50.2", 2223); err == nil {
+		t.Fatal("default-deny policy allowed a forbidden SSH port")
 	}
 }
 
@@ -95,6 +108,7 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	servers := startHTTPServers(t, lanNS)
+	servers = append(servers, startTCPBannerServers(t, lanNS, 2222, 2223)...)
 	t.Cleanup(func() {
 		for _, server := range servers {
 			_ = server.Process.Kill()
@@ -106,6 +120,7 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 	// gateway firewall is installed; the policy assertion below then proves
 	// that the source identity is the WireGuard overlay address, not the veth.
 	waitForHTTP(t, clientNS, "http://192.168.50.2:8080")
+	waitForTCPBanner(t, clientNS, "192.168.50.2", 2222)
 	peers := map[string]netip.Prefix{"client": netip.MustParsePrefix("10.200.0.2/32")}
 	rules := policy.Snapshot{Revision: 1, DefaultAction: policy.ActionDeny, Rules: []policy.Rule{{
 		ID:             "allow-http",
@@ -114,12 +129,22 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 		Protocol:       policy.ProtocolTCP,
 		PortFrom:       8080,
 		PortTo:         8080,
+	}, {
+		ID:             "allow-ssh",
+		SourceDeviceID: "client",
+		Destination:    netip.MustParsePrefix("192.168.50.2/32"),
+		Protocol:       policy.ProtocolTCP,
+		PortFrom:       2222,
+		PortTo:         2222,
 	}}}
 	applyDefaultDenyPolicy(t, gatewayNS, "wg0", peers, rules)
 
 	waitForHTTP(t, clientNS, "http://192.168.50.2:8080")
 	if err := curl(clientNS, "http://192.168.50.2:8081"); err == nil {
 		t.Fatal("default-deny policy allowed a forbidden WireGuard port")
+	}
+	if err := tcpBanner(clientNS, "192.168.50.2", 2223); err == nil {
+		t.Fatal("default-deny policy allowed a forbidden WireGuard SSH port")
 	}
 }
 
@@ -253,6 +278,30 @@ func startHTTPServers(t *testing.T, namespace string) []*exec.Cmd {
 	return servers
 }
 
+func startTCPBannerServers(t *testing.T, namespace string, ports ...int) []*exec.Cmd {
+	t.Helper()
+	const serverScript = `import socket,sys
+s=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+s.bind((sys.argv[1],int(sys.argv[2])))
+s.listen(16)
+while True:
+ c,_=s.accept()
+ try: c.sendall(b"SSH-2.0-GoTunnels-Test\\r\\n")
+ finally: c.close()`
+	servers := make([]*exec.Cmd, 0, len(ports))
+	for _, port := range ports {
+		server := exec.Command("ip", "netns", "exec", namespace, "python3", "-c", serverScript, "192.168.50.2", fmt.Sprint(port))
+		server.Stdout = io.Discard
+		server.Stderr = io.Discard
+		if err := server.Start(); err != nil {
+			t.Fatal(err)
+		}
+		servers = append(servers, server)
+	}
+	return servers
+}
+
 func waitForHTTP(t *testing.T, namespace, address string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -271,6 +320,30 @@ func waitForHTTP(t *testing.T, namespace, address string) {
 
 func curl(namespace, address string) error {
 	return runInNamespace(namespace, "curl", "--fail", "--silent", "--show-error", "--connect-timeout", "1", "--max-time", "1", address)
+}
+
+func waitForTCPBanner(t *testing.T, namespace, address string, port int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var lastError error
+	for time.Now().Before(deadline) {
+		lastError = tcpBanner(namespace, address, port)
+		if lastError == nil {
+			return
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	t.Fatalf("SSH-like service %s:%d was not reachable: %v", address, port, lastError)
+}
+
+func tcpBanner(namespace, address string, port int) error {
+	const clientScript = `import socket,sys
+with socket.create_connection((sys.argv[1],int(sys.argv[2])),timeout=1) as s:
+ data=s.recv(64)
+if not data.startswith(b"SSH-2.0-"): raise SystemExit(1)`
+	return runInNamespace(namespace, "python3", "-c", clientScript, address, fmt.Sprint(port))
 }
 
 func runWithInput(namespace, input string, command ...string) error {

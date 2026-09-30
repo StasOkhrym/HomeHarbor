@@ -19,8 +19,16 @@ type GatewayReconciler struct {
 	interfaceName string
 	deviceID      string
 	policies      *nft.Applier
-	dns           *DNSReconciler
+	dns           DNSApplier
 	forwarding    bool
+	ensure        func(context.Context, string, string, []netip.Prefix) error
+}
+
+// DNSApplier is the small consumer-side contract needed by the gateway. It
+// keeps the policy reconciler testable and prevents it from depending on the
+// concrete systemd-resolved implementation.
+type DNSApplier interface {
+	Apply(context.Context, snapshot.NetworkSnapshot) error
 }
 
 // ClientReconciler owns only the local WireGuard link address and routes. It
@@ -78,8 +86,8 @@ func (r *ClientReconciler) Apply(ctx context.Context, value snapshot.NetworkSnap
 }
 
 // NewGatewayReconciler composes firewall and optional split-DNS ownership.
-// DNS is applied first so a failed nft transaction leaves the node retryable;
-// the next snapshot attempt can repeat the same DNS state and policy revision.
+// The firewall is applied before DNS so a failed policy transaction never
+// leaves a new resolver route active without its matching access controls.
 func NewGatewayReconciler(interfaceName, deviceID string, dnsReconcilers ...*DNSReconciler) *GatewayReconciler {
 	var dnsReconciler *DNSReconciler
 	if len(dnsReconcilers) > 0 {
@@ -92,11 +100,19 @@ func NewGatewayReconciler(interfaceName, deviceID string, dnsReconcilers ...*DNS
 // deployment choice. The default constructor remains fail-safe for developers
 // and hosts where another network manager owns sysctl state.
 func NewGatewayReconcilerWithOptions(interfaceName, deviceID string, dnsReconciler *DNSReconciler, enableForwarding bool) *GatewayReconciler {
-	return &GatewayReconciler{interfaceName: interfaceName, deviceID: deviceID, policies: nft.NewApplier(interfaceName, nil), dns: dnsReconciler, forwarding: enableForwarding}
+	return NewGatewayReconcilerWithEnsurer(interfaceName, deviceID, dnsReconciler, enableForwarding, tunnel.EnsureLinuxInterface)
+}
+
+// NewGatewayReconcilerWithEnsurer exposes the host-interface boundary for
+// platform tests. The production constructor above always uses the Linux
+// implementation, while tests can verify policy/DNS transaction ordering
+// without creating a real tunnel device.
+func NewGatewayReconcilerWithEnsurer(interfaceName, deviceID string, dnsReconciler DNSApplier, enableForwarding bool, ensure func(context.Context, string, string, []netip.Prefix) error) *GatewayReconciler {
+	return &GatewayReconciler{interfaceName: interfaceName, deviceID: deviceID, policies: nft.NewApplier(interfaceName, nil), dns: dnsReconciler, forwarding: enableForwarding, ensure: ensure}
 }
 
 func (r *GatewayReconciler) Apply(ctx context.Context, value snapshot.NetworkSnapshot) error {
-	if r == nil || r.policies == nil || r.interfaceName == "" || r.deviceID == "" {
+	if r == nil || r.policies == nil || r.interfaceName == "" || r.deviceID == "" || r.ensure == nil {
 		return errors.New("gateway reconciler is not configured")
 	}
 	var local snapshot.Device
@@ -139,7 +155,7 @@ func (r *GatewayReconciler) Apply(ctx context.Context, value snapshot.NetworkSna
 		}
 		routes = append(routes, prefix)
 	}
-	if err := tunnel.EnsureLinuxInterface(ctx, r.interfaceName, overlay.String(), routes); err != nil {
+	if err := r.ensure(ctx, r.interfaceName, overlay.String(), routes); err != nil {
 		return err
 	}
 	if r.forwarding {
@@ -156,11 +172,20 @@ func (r *GatewayReconciler) Apply(ctx context.Context, value snapshot.NetworkSna
 		protocol := policy.Protocol(acl.Protocol)
 		rules = append(rules, policy.Rule{ID: acl.ID, SourceDeviceID: acl.SourceDeviceID, Destination: destination, Protocol: protocol, PortFrom: acl.PortFrom, PortTo: acl.PortTo})
 	}
+	r.policies.UpdatePeers(peers)
+	if r.policies.Revision() != value.Revision {
+		if err := r.policies.Apply(ctx, policy.Snapshot{Revision: value.Revision, DefaultAction: policy.ActionDeny, Rules: rules}); err != nil {
+			return err
+		}
+	}
 	if r.dns != nil {
+		// A DNS command can fail after the firewall has committed. The next
+		// retry sees the same signed revision, skips the already-installed
+		// policy, and gets another chance to reconcile DNS without weakening
+		// nftables' monotonic revision invariant.
 		if err := r.dns.Apply(ctx, value); err != nil {
 			return fmt.Errorf("apply split DNS snapshot revision %d: %w", value.Revision, err)
 		}
 	}
-	r.policies.UpdatePeers(peers)
-	return r.policies.Apply(ctx, policy.Snapshot{Revision: value.Revision, DefaultAction: policy.ActionDeny, Rules: rules})
+	return nil
 }

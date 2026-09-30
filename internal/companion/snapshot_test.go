@@ -96,6 +96,105 @@ func TestSnapshotSignerCopiesOnlyExplicitProfileACLTemplates(t *testing.T) {
 	}
 }
 
+func TestSnapshotSignerRemovesClientAndItsAccessExactly(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := NewSession(time.Now)
+	if err := session.Unlock(privateKey); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := snapshot.Sign(snapshot.NetworkSnapshot{
+		NetworkID: "home", Revision: 1,
+		Devices: []snapshot.Device{
+			{ID: "gateway", Role: "gateway", IdentityPublicKey: "gateway-id", WireGuardPublicKey: "gateway-wg", OverlayAddress: "10.200.0.1/32"},
+			{ID: "phone", Role: "client", IdentityPublicKey: "phone-id", WireGuardPublicKey: "phone-wg", OverlayAddress: "10.200.0.2/32"},
+			{ID: "laptop", Role: "client", IdentityPublicKey: "laptop-id", WireGuardPublicKey: "laptop-wg", OverlayAddress: "10.200.0.3/32"},
+		},
+		Gateways: []snapshot.Gateway{{DeviceID: "gateway", Name: "Home"}},
+		Routes:   []snapshot.Route{{ID: "lan", GatewayID: "gateway", Prefix: "192.168.1.0/24"}},
+		Profiles: []snapshot.AccessProfile{
+			{ID: "family", Name: "Family", DeviceIDs: []string{"phone", "laptop"}, ACLRuleIDs: []string{"phone-web", "laptop-web"}},
+			{ID: "admins", Name: "Admins", DeviceIDs: []string{"laptop"}, ACLRuleIDs: []string{"laptop-web"}},
+		},
+		ACL: []snapshot.ACLRule{
+			{ID: "phone-web", SourceDeviceID: "phone", Destination: "192.168.1.10/32", Protocol: "tcp", PortFrom: 443, PortTo: 443},
+			{ID: "laptop-web", SourceDeviceID: "laptop", Destination: "192.168.1.10/32", Protocol: "tcp", PortFrom: 443, PortTo: 443},
+		},
+	}, privateKey, "root-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	next, err := NewSnapshotSigner(session, "home", "root-1").SignDeviceRemoval(previous, DeviceRemoval{DeviceID: "phone"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.VerifyNext(next, publicKey, "home", 1, previous.Hash); err != nil {
+		t.Fatal(err)
+	}
+	value, err := snapshot.Decode(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(value.Devices) != 2 {
+		t.Fatalf("devices after removal=%#v", value.Devices)
+	}
+	for _, device := range value.Devices {
+		if device.ID == "phone" {
+			t.Fatal("revoked device remained in snapshot")
+		}
+	}
+	if len(value.ACL) != 1 || value.ACL[0].ID != "laptop-web" {
+		t.Fatalf("ACL after removal=%#v", value.ACL)
+	}
+	if len(value.Profiles[0].DeviceIDs) != 1 || value.Profiles[0].DeviceIDs[0] != "laptop" || len(value.Profiles[0].ACLRuleIDs) != 1 || value.Profiles[0].ACLRuleIDs[0] != "laptop-web" {
+		t.Fatalf("family profile after removal=%#v", value.Profiles[0])
+	}
+	if len(value.Profiles[1].DeviceIDs) != 1 || len(value.Profiles[1].ACLRuleIDs) != 1 {
+		t.Fatalf("unrelated profile changed=%#v", value.Profiles[1])
+	}
+	if len(value.Routes) != 1 || value.Routes[0].GatewayID != "gateway" {
+		t.Fatalf("unrelated routes changed=%#v", value.Routes)
+	}
+}
+
+func TestSnapshotSignerRejectsUnsafeDeviceRemoval(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := NewSession(time.Now)
+	if err := session.Unlock(privateKey); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := snapshot.Sign(snapshot.NetworkSnapshot{
+		NetworkID: "home", Revision: 1,
+		Devices: []snapshot.Device{
+			{ID: "gateway", Role: "gateway", IdentityPublicKey: "gateway-id", WireGuardPublicKey: "gateway-wg", OverlayAddress: "10.200.0.1/32"},
+			{ID: "phone", Role: "client", IdentityPublicKey: "phone-id", WireGuardPublicKey: "phone-wg", OverlayAddress: "10.200.0.2/32"},
+		},
+		Gateways: []snapshot.Gateway{{DeviceID: "gateway", Name: "Home"}},
+		Routes:   []snapshot.Route{{ID: "lan", GatewayID: "gateway", Prefix: "192.168.1.0/24"}},
+	}, privateKey, "root-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := NewSnapshotSigner(session, "home", "root-1")
+	for _, deviceID := range []string{"missing", "gateway"} {
+		if _, err := signer.SignDeviceRemoval(previous, DeviceRemoval{DeviceID: deviceID}); !errors.Is(err, ErrInvalidSnapshotDiff) {
+			t.Fatalf("device %q removal error=%v", deviceID, err)
+		}
+	}
+	tampered := previous
+	tampered.Payload = append([]byte(nil), previous.Payload...)
+	tampered.Payload[0] ^= 1
+	if _, err := signer.SignDeviceRemoval(tampered, DeviceRemoval{DeviceID: "phone"}); err == nil {
+		t.Fatal("tampered head accepted")
+	}
+}
+
 func TestSnapshotSignerAllocatesOverlayFromPool(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

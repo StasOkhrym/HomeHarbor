@@ -67,6 +67,14 @@ type CoordinationConfig struct {
 	ReconnectInitial time.Duration
 	ReconnectMax     time.Duration
 	CandidateHandler func(context.Context, controlprotocol.CandidateUpdate) error
+	// CandidateProvider supplies local endpoint candidates after each
+	// coordination reconnect and heartbeat. The authenticated server enriches
+	// each update with the sender identity before forwarding it to the peer.
+	CandidateProvider func(context.Context) ([]controlprotocol.CandidateUpdate, error)
+	// CandidateChanges lets a transport wake coordination as soon as a new
+	// relay-observed endpoint is available. Heartbeats remain the fallback for
+	// providers that do not have an event source.
+	CandidateChanges <-chan struct{}
 }
 
 // RunCoordinationLoop keeps the last verified gateway state active while the
@@ -162,7 +170,14 @@ func runCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 		defer cancel()
 		return wsjson.Write(writeContext, connection, value)
 	}
-	hello := controlprotocol.Hello{Versions: []uint16{controlprotocol.CurrentVersion}, Capabilities: []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilitySplitDNS}, DeviceID: cfg.DeviceID}
+	capabilities := []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilitySplitDNS}
+	if cfg.CandidateProvider != nil || cfg.CandidateHandler != nil {
+		// Candidate exchange is opt-in. Advertising it only when both the
+		// caller and its peer understand the feature keeps older nodes on the
+		// relay path instead of silently sending them unsupported messages.
+		capabilities = append(capabilities, controlprotocol.CapabilityDirectUDP)
+	}
+	hello := controlprotocol.Hello{Versions: []uint16{controlprotocol.CurrentVersion}, Capabilities: capabilities, DeviceID: cfg.DeviceID}
 	if err := write(hello); err != nil {
 		return fmt.Errorf("send coordination hello: %w", err)
 	}
@@ -179,6 +194,34 @@ func runCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 	if welcome.Type != "welcome" || welcome.Protocol.Version != controlprotocol.CurrentVersion || !welcome.Protocol.Has(controlprotocol.CapabilityRelay) {
 		return errors.New("coordination protocol negotiation failed")
 	}
+	if (cfg.CandidateProvider != nil || cfg.CandidateHandler != nil) && !welcome.Protocol.Has(controlprotocol.CapabilityDirectUDP) {
+		return errors.New("direct UDP capability was not negotiated")
+	}
+	sendCandidates := func() error {
+		if cfg.CandidateProvider == nil {
+			return nil
+		}
+		updates, err := cfg.CandidateProvider(sessionContext)
+		if err != nil {
+			return fmt.Errorf("build candidate updates: %w", err)
+		}
+		for _, update := range updates {
+			if err := update.Validate(); err != nil {
+				return fmt.Errorf("validate local candidate update: %w", err)
+			}
+			payload, err := json.Marshal(update)
+			if err != nil {
+				return fmt.Errorf("encode candidate update: %w", err)
+			}
+			if err := write(controlprotocol.Message{Type: "candidate.update", Payload: payload}); err != nil {
+				return fmt.Errorf("send candidate update: %w", err)
+			}
+		}
+		return nil
+	}
+	if err := sendCandidates(); err != nil {
+		return err
+	}
 
 	heartbeatEvery := cfg.HeartbeatEvery
 	if heartbeatEvery <= 0 {
@@ -186,6 +229,7 @@ func runCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 	}
 	heartbeat := time.NewTicker(heartbeatEvery)
 	defer heartbeat.Stop()
+	candidateChanges := cfg.CandidateChanges
 	go func() {
 		for {
 			select {
@@ -193,6 +237,13 @@ func runCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 				return
 			case <-heartbeat.C:
 				_ = write(controlprotocol.Message{Type: "heartbeat"})
+				_ = sendCandidates()
+			case _, ok := <-candidateChanges:
+				if !ok {
+					candidateChanges = nil
+					continue
+				}
+				_ = sendCandidates()
 			}
 		}
 	}()

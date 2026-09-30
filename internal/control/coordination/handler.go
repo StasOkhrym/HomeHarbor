@@ -136,7 +136,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if destinationErr != nil || h.AuthorizePeer == nil || !h.AuthorizePeer(r.Context(), device, destination) {
 				continue
 			}
-			h.hub.send(r.Context(), destination.ID, message)
+			// The sender identity comes from the authenticated WebSocket, never
+			// from the candidate payload. The receiver uses it to bind the
+			// endpoint update to the peer whose key it is reconciling.
+			update.SourceDeviceID = device.ID
+			payload, marshalErr := json.Marshal(update)
+			if marshalErr != nil {
+				continue
+			}
+			h.hub.send(r.Context(), destination.ID, controlprotocol.Message{Type: "candidate.update", Payload: payload})
 		case "heartbeat":
 			_ = writePayload(r.Context(), connection, "heartbeat.ack", map[string]any{"at": time.Now().UTC()})
 		}

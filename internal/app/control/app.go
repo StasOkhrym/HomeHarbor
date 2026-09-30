@@ -141,7 +141,10 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	if err != nil {
 		return closeBusAndPool(errors.Join(errors.New("configure relay sessions"), err))
 	}
-	serverOptions = append(serverOptions, httpapi.WithRelaySessionIssuer(relay.TicketIssuer{Key: []byte(cfg.Relay.TicketKey)}, cfg.Relay.PublicURL, relayTTL))
+	serverOptions = append(serverOptions,
+		httpapi.WithRelaySessionIssuer(relay.TicketIssuer{Key: []byte(cfg.Relay.TicketKey)}, cfg.Relay.PublicURL, relayTTL),
+		httpapi.WithRelayUDPAddress(cfg.Relay.PublicUDPAddress),
+	)
 	trustedProxyCIDRs := make([]netip.Prefix, 0, len(cfg.Security.TrustedProxyCIDRs))
 	for _, value := range cfg.Security.TrustedProxyCIDRs {
 		prefix, err := netip.ParsePrefix(value)

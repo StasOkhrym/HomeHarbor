@@ -65,21 +65,33 @@ contracts used by handlers, coordinators, jobs, and future extracted services.
    network/broadcast addresses and deterministic collision handling.
 6. **Completed:** add a challenge-bound, single-use companion snapshot read and
    an explicit retryable `publish-snapshot` flow after device activation.
-7. **In progress:** snapshot topology now compiles deterministic WireGuard
-   peer allowed-prefixes with gateway route scoping. Complete privileged Linux
-   interface, route, nftables, and
-   systemd-resolved lifecycle acceptance with rollback to the last valid
-   snapshot. The Linux namespace harness now exercises the isolated route and
-   default-deny LAN policy path; it still needs to run in the provisioned Lima
-   VM and be extended through the real kernel WireGuard interface.
-8. **In progress:** relay sessions, reconnect, live snapshot delivery, and
-   encrypted packet forwarding exist. Complete kernel WireGuard service
-   reachability, STUN direct handshake, and direct-to-relay path switching.
-9. **Partially completed:** PostgreSQL integration tests and the Linux
-   namespace acceptance harness exist. Run them with `TEST_DATABASE_URL` and
-   the provisioned Linux VM before calling the local E2E gate green.
-10. Build the rough Android `VpnService` client, then finish the iOS Network Extension
-   target and physical-device Packet Tunnel verification.
+7. **Completed:** add an exact signed client-removal diff. It removes the
+   device, its profile memberships, and source ACLs while rejecting gateway or
+   route removal; `admin revoke-device` publishes the next contiguous revision.
+8. **In progress:** snapshot topology now compiles deterministic WireGuard
+   peer allowed-prefixes with gateway route scoping. The provisioned Lima run
+   now covers real kernel WireGuard handshakes, isolated routes, nftables
+   default-deny behavior, rollback-sensitive application paths, and allowed or
+   forbidden HTTP/SSH-like service reachability. The agent now reverts
+   systemd-resolved split-DNS state on component shutdown; remaining work is
+   host-level lifecycle acceptance on a real systemd-resolved machine.
+9. **In progress:** relay sessions, reconnect, live snapshot delivery,
+   encrypted packet forwarding, versioned `udp_pair_v1` ingress, relay-observed
+   server-reflexive candidate publication, authenticated candidate exchange, and
+   handshake-confirmed direct-to-relay switching exist. The Linux preview can
+   provide candidates with `-direct-candidates` or same-socket `-stun` discovery;
+   roaming and an external NAT traversal test are still required.
+10. **Completed for the current local gate:** the Linux namespace/kernel
+   WireGuard acceptance pass covers allowed HTTP/SSH-like service reachability,
+   forbidden ports, and policy application in the provisioned Lima VM.
+   PostgreSQL integration still requires an explicit test database, while the
+   host Docker Compose runtime still needs a successful registry-backed image
+   pull and startup verification.
+11. **Started:** Android now has a `VpnService` boundary that rejects implicit
+   default routes and requires an injected WireGuard engine. Build tooling,
+   official engine integration, Android Keystore storage, and physical-device
+   roaming tests remain. Finish the iOS Network Extension target and
+   physical-device Packet Tunnel verification in the same mobile gate.
 
 ## 4. Self-documenting code standard
 
@@ -94,6 +106,10 @@ contracts used by handlers, coordinators, jobs, and future extracted services.
 - Add package documentation for modules whose boundaries are not obvious:
   identity, devices, network, policy, coordination, relay, tunnel, and audit.
 - During review, treat stale or misleading comments as correctness defects.
+
+The first actionable admin surface is now implemented with same-origin HTML
+forms. Mutations reuse the domain services directly, while the JSON API remains
+the stable integration surface for the companion and future native clients.
 
 ## 5. Local development contract
 

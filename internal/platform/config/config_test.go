@@ -95,3 +95,76 @@ func TestLoadControlRejectsMissingRequiredValues(t *testing.T) {
 		t.Fatal("LoadControl() error = nil, want validation error")
 	}
 }
+
+func TestLoadRelayServerEnvironmentSecretOverridesMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relay.toml")
+	if err := os.WriteFile(path, []byte("[server]\nlisten_address = \"127.0.0.1:0\"\n[security]\nticket_key_file = \"/missing/relay-ticket\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_TUNNELS_RELAY_TICKET_KEY", "01234567890123456789012345678901")
+	t.Setenv("GO_TUNNELS_RELAY_UDP_LISTEN_ADDRESS", "127.0.0.1:0")
+	cfg, err := LoadRelayServer(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Security.TicketKey != "01234567890123456789012345678901" || cfg.Server.UDPListenAddress != "127.0.0.1:0" {
+		t.Fatalf("config=%#v", cfg)
+	}
+}
+
+func TestLoadClientReadsTOMLAndFileReferences(t *testing.T) {
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "enrollment-token")
+	ticketPath := filepath.Join(dir, "relay-ticket")
+	if err := os.WriteFile(tokenPath, []byte("invite-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ticketPath, []byte("relay-ticket\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "client.toml")
+	content := `[node]
+state_path = "state/custom-client.json"
+control_url = "https://control.example"
+enrollment_token_file = "` + tokenPath + `"
+name = "travel-client"
+[relay]
+websocket_url = "wss://relay.example/relay/v1"
+udp_address = "relay.example:51820"
+ticket_file = "` + ticketPath + `"
+destination_device_id = "gateway"
+stun_server = "stun:stun.example:3478"
+[wireguard]
+interface = "wg0"
+listen_port = 51830
+[coordination]
+url = "wss://control.example/api/v1/coordination"
+root_public_key_file = "state/root.pub"
+[direct]
+candidates = "203.0.113.2:51820"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadClient(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Identity.StatePath != "state/custom-client.json" || cfg.Identity.Token != "invite-token" || cfg.Relay.Ticket != "relay-ticket" || cfg.WireGuard.ListenPort != 51830 || cfg.Direct.Candidates != "203.0.113.2:51820" {
+		t.Fatalf("unexpected client config: %#v", cfg)
+	}
+}
+
+func TestLoadAgentAppliesSafeDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	if err := os.WriteFile(path, []byte("[node]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadAgent(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Identity.Name != "linux-gateway" || cfg.Identity.StatePath != "state/agent.json" || cfg.Relay.ListenAddress != "127.0.0.1:51821" || cfg.Relay.WireGuardAddress != "127.0.0.1:51820" || cfg.WireGuard.ListenPort != 51820 || cfg.Coordination.NetworkID != "home" {
+		t.Fatalf("unexpected defaults: %#v", cfg)
+	}
+}

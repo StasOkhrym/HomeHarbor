@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -93,7 +94,7 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 		t.Fatal(err)
 	}
 	issuer := relay.TicketIssuer{Key: []byte("01234567890123456789012345678901")}
-	handler := NewServer(deviceService, allowAuthorizer{}, WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/v1", time.Minute)).Handler()
+	handler := NewServer(deviceService, allowAuthorizer{}, WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/v1", time.Minute), WithRelayUDPAddress("relay.example.com:51820")).Handler()
 
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/relay-sessions", bytes.NewBufferString(`{"session_id":"session-1","destination_device_id":"`+deviceB.ID+`"}`))
 	request.Header.Set("Authorization", "Bearer "+deviceA.Credential)
@@ -103,13 +104,14 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	var response struct {
-		RelayURL string `json:"relay_url"`
-		Ticket   string `json:"ticket"`
+		RelayURL        string `json:"relay_url"`
+		RelayUDPAddress string `json:"relay_udp_address"`
+		Ticket          string `json:"ticket"`
 	}
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 		t.Fatal(err)
 	}
-	if response.RelayURL == "" || response.Ticket == "" {
+	if response.RelayURL == "" || response.RelayUDPAddress != "relay.example.com:51820" || response.Ticket == "" {
 		t.Fatalf("incomplete relay response=%#v", response)
 	}
 	if claims, err := issuer.Verify(response.Ticket); err != nil || claims.DeviceID != deviceA.ID {
@@ -237,6 +239,29 @@ func TestAdminPageUsesLocalAssets(t *testing.T) {
 	body := recorder.Body.String()
 	if strings.Contains(body, "unpkg.com") || strings.Contains(body, "<style>") || !strings.Contains(body, "/assets/admin.css") || !strings.Contains(body, "Nextcloud") || !strings.Contains(body, "Family") {
 		t.Fatalf("admin page assets are not local: %s", body)
+	}
+}
+
+func TestAdminFormCreatesServiceThroughDomainCatalog(t *testing.T) {
+	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}, WithServiceCatalog(catalog)).Handler()
+	form := url.Values{
+		"id":          {"cloud"},
+		"name":        {"Nextcloud"},
+		"kind":        {"web"},
+		"url":         {"https://cloud.home.example.com"},
+		"description": {"Family files"},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/admin/services", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusSeeOther || recorder.Header().Get("Location") != "/admin/?notice=service-created" {
+		t.Fatalf("form status=%d location=%q body=%s", recorder.Code, recorder.Header().Get("Location"), recorder.Body.String())
+	}
+	items, err := catalog.List(context.Background())
+	if err != nil || len(items) != 1 || items[0].ID != "cloud" {
+		t.Fatalf("catalog items=%#v error=%v", items, err)
 	}
 }
 

@@ -3,8 +3,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,10 +59,11 @@ func (a Auth) CeremonyDuration() time.Duration {
 }
 
 type Relay struct {
-	PublicURL     string `toml:"public_url"`
-	TicketKey     string `toml:"ticket_key"`
-	TicketKeyFile string `toml:"ticket_key_file"`
-	TicketTTL     string `toml:"ticket_ttl"`
+	PublicURL        string `toml:"public_url"`
+	PublicUDPAddress string `toml:"public_udp_address"`
+	TicketKey        string `toml:"ticket_key"`
+	TicketKeyFile    string `toml:"ticket_key_file"`
+	TicketTTL        string `toml:"ticket_ttl"`
 }
 
 type Networking struct {
@@ -82,7 +85,8 @@ type Observability struct {
 
 type RelayServer struct {
 	Server struct {
-		ListenAddress string `toml:"listen_address"`
+		ListenAddress    string `toml:"listen_address"`
+		UDPListenAddress string `toml:"udp_listen_address"`
 	} `toml:"server"`
 	Security struct {
 		TicketKey     string `toml:"ticket_key"`
@@ -98,15 +102,24 @@ func LoadRelayServer(path string) (RelayServer, error) {
 	if value := os.Getenv("GO_TUNNELS_RELAY_LISTEN_ADDRESS"); value != "" {
 		cfg.Server.ListenAddress = value
 	}
+	if value := os.Getenv("GO_TUNNELS_RELAY_UDP_LISTEN_ADDRESS"); value != "" {
+		cfg.Server.UDPListenAddress = value
+	}
 	if value := os.Getenv("GO_TUNNELS_RELAY_TICKET_KEY"); value != "" {
 		cfg.Security.TicketKey = value
 	}
-	if cfg.Security.TicketKeyFile != "" {
+	if cfg.Security.TicketKey == "" && cfg.Security.TicketKeyFile != "" {
 		value, err := os.ReadFile(cfg.Security.TicketKeyFile)
 		if err != nil {
 			return cfg, fmt.Errorf("read relay ticket key: %w", err)
 		}
 		cfg.Security.TicketKey = strings.TrimSpace(string(value))
+	}
+	if cfg.Server.UDPListenAddress == "" {
+		cfg.Server.UDPListenAddress = ":51820"
+	}
+	if _, err := net.ResolveUDPAddr("udp", cfg.Server.UDPListenAddress); err != nil {
+		return cfg, fmt.Errorf("invalid relay udp_listen_address: %w", err)
 	}
 	if cfg.Server.ListenAddress == "" || len(cfg.Security.TicketKey) < 32 {
 		return cfg, errors.New("relay listen_address and a ticket key of at least 32 bytes are required")
@@ -198,6 +211,13 @@ func (c Control) validate() error {
 	}
 	if len(c.Relay.TicketKey) < 32 {
 		return errors.New("relay.ticket_key must be at least 32 bytes")
+	}
+	if address := strings.TrimSpace(c.Relay.PublicUDPAddress); address != "" {
+		host, port, splitErr := net.SplitHostPort(address)
+		portNumber, portErr := strconv.Atoi(port)
+		if splitErr != nil || strings.TrimSpace(host) == "" || portErr != nil || portNumber < 1 || portNumber > 65535 {
+			return errors.New("relay.public_udp_address must be a host:port with a valid port")
+		}
 	}
 	if _, err := c.RelayDuration(); err != nil {
 		return err

@@ -9,20 +9,43 @@
 <body>
   <h1>Go Tunnels</h1>
   <p>Homelab control plane</p>
+  {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
+
+  <section>
+    <h2>Create enrollment invite</h2>
+    <p>Give the one-time token to the device owner through a separate channel.</p>
+    <form method="post" action="/admin/enrollment-tokens">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <label>Role
+        <select name="role">
+          <option value="client">Client</option>
+          <option value="gateway">Gateway</option>
+        </select>
+      </label>
+      <label>Expires in seconds
+        <input name="ttl_seconds" type="number" min="60" max="86400" value="600" required>
+      </label>
+      <button type="submit">Create invite</button>
+    </form>
+  </section>
+
   <h2>Devices</h2>
+  <p>“Revoke credentials” blocks new device authentication. To remove an
+    already-issued tunnel policy during a control outage, also run the trusted
+    companion’s <code>admin revoke-device</code> command.</p>
   <table>
-    <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Device ID</th></tr></thead>
+    <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Device ID</th><th>Action</th></tr></thead>
     <tbody>
-      {{range .Devices}}<tr><td>{{.Name}}</td><td>{{.Role}}</td><td class="{{.Status}}">{{.Status}}</td><td><code>{{.ID}}</code></td></tr>
-      {{else}}<tr><td colspan="4">No enrolled devices.</td></tr>{{end}}
+      {{range .Devices}}<tr><td>{{.Name}}</td><td>{{.Role}}</td><td class="{{.Status}}">{{.Status}}</td><td><code>{{.ID}}</code></td><td><form method="post" action="/admin/devices/{{.ID}}/revoke"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button type="submit">Revoke credentials</button></form></td></tr>
+      {{else}}<tr><td colspan="5">No enrolled devices.</td></tr>{{end}}
     </tbody>
   </table>
   <h2>Routes and split DNS</h2>
   <table>
-    <thead><tr><th>Prefix</th><th>Resolver</th><th>Domain</th><th>Status</th></tr></thead>
+    <thead><tr><th>Prefix</th><th>Resolver</th><th>Domain</th><th>Status</th><th>Action</th></tr></thead>
     <tbody>
-      {{range .Routes}}<tr><td><code>{{.Prefix}}</code></td><td><code>{{.Resolver}}</code></td><td>{{.DomainSuffix}}</td><td class="{{.Status}}">{{.Status}}</td></tr>
-      {{else}}<tr><td colspan="4">No advertised routes.</td></tr>{{end}}
+      {{range .Routes}}<tr><td><code>{{.Prefix}}</code></td><td><code>{{.Resolver}}</code></td><td>{{.DomainSuffix}}</td><td class="{{.Status}}">{{.Status}}</td><td>{{if eq .Status "pending"}}<form class="inline" method="post" action="/admin/routes/{{.ID}}/approve"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button type="submit">Approve</button></form><form class="inline" method="post" action="/admin/routes/{{.ID}}/reject"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button type="submit">Reject</button></form>{{end}}</td></tr>
+      {{else}}<tr><td colspan="5">No advertised routes.</td></tr>{{end}}
     </tbody>
   </table>
   <h2>Services</h2>
@@ -41,5 +64,45 @@
       {{else}}<tr><td colspan="3">No access profiles.</td></tr>{{end}}
     </tbody>
   </table>
+
+  <section>
+    <h2>Add service</h2>
+    <form method="post" action="/admin/services">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <label>ID <input name="id" required></label>
+      <label>Name <input name="name" required></label>
+      <label>Type
+        <select name="kind"><option value="web">Web</option><option value="native">Native</option></select>
+      </label>
+      <label>HTTPS URL <input name="url" type="url" placeholder="https://cloud.example" required></label>
+      <label>Native app URL <input name="native_url" type="url"></label>
+      <label>Health URL <input name="health_url" type="url"></label>
+      <label>Description <input name="description"></label>
+      <button type="submit">Add service</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Add access profile</h2>
+    <p>Use comma-separated IDs. Empty device IDs creates a reusable invite template.</p>
+    <form method="post" action="/admin/access-profiles">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <label>ID <input name="id" required></label>
+      <label>Name <input name="name" required></label>
+      <label>Device IDs <input name="device_ids"></label>
+      <label>Service IDs <input name="service_ids" required></label>
+      <button type="submit">Add profile</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Advanced default-deny policy</h2>
+    <p>Rules are JSON. The compiler keeps default action deny and validates CIDR, protocol, and ports.</p>
+    <form method="post" action="/admin/policy">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <textarea name="rules" rows="12" spellcheck="false">{{.PolicyJSON}}</textarea>
+      <button type="submit">Replace policy</button>
+    </form>
+  </section>
 </body>
 </html>

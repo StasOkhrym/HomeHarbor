@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -151,6 +152,26 @@ func TestCSRFRejectsMismatchAndLogoutRevokesSession(t *testing.T) {
 	auth.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent || sessions.revoked != sessions.session.Token {
 		t.Fatalf("logout status=%d revoked=%q", rec.Code, sessions.revoked)
+	}
+}
+
+func TestCSRFAcceptsSameOriginHTMLFormToken(t *testing.T) {
+	auth, sessions := newBrowserAuthTest(t)
+	sessionCookie := auth.sessionCookie(sessions.session)
+	csrfCookie, err := auth.csrfCookie(sessions.session.Token, sessions.session.ExpiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"_csrf": {csrfCookie.Value}}
+	req := httptest.NewRequest(http.MethodPost, "/logout", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "https://tunnel.example.com")
+	req.AddCookie(sessionCookie)
+	req.AddCookie(csrfCookie)
+	rec := httptest.NewRecorder()
+	auth.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || sessions.revoked != sessions.session.Token {
+		t.Fatalf("form logout status=%d revoked=%q", rec.Code, sessions.revoked)
 	}
 }
 

@@ -21,6 +21,14 @@ type DeviceAddition struct {
 	Device    snapshot.Device
 }
 
+// DeviceRemoval is deliberately narrower than a generic snapshot edit. A
+// companion may remove one client identity and the ACL entries sourced from
+// it, but it cannot silently change routes, gateways, services, or another
+// device while processing an operator revoke request.
+type DeviceRemoval struct {
+	DeviceID string
+}
+
 // SnapshotSigner signs monotonic snapshots after applying a constrained local
 // diff. The control plane can publish the result, but it never receives this
 // private key or gets to choose additional fields for the mutation.
@@ -38,28 +46,9 @@ func NewSnapshotSigner(session *Session, networkID, keyID string) *SnapshotSigne
 // to one existing profile, and signs the next contiguous revision. It refuses
 // a stale/tampered head and never accepts a caller-supplied revision or hash.
 func (s *SnapshotSigner) SignDeviceAddition(previous snapshot.Envelope, addition DeviceAddition) (snapshot.Envelope, error) {
-	if s == nil || s.session == nil || s.networkID == "" || s.keyID == "" {
-		return snapshot.Envelope{}, ErrInvalidSnapshotDiff
-	}
-	privateKey, err := s.session.PrivateKey()
+	value, privateKey, err := s.currentHead(previous)
 	if err != nil {
 		return snapshot.Envelope{}, err
-	}
-	value, err := snapshot.Decode(previous)
-	if err != nil {
-		return snapshot.Envelope{}, fmt.Errorf("decode current snapshot: %w", err)
-	}
-	if previous.KeyID != s.keyID {
-		return snapshot.Envelope{}, ErrInvalidSnapshotDiff
-	}
-	currentRevision := uint64(0)
-	var currentHash []byte
-	if value.Revision > 1 {
-		currentRevision = value.Revision - 1
-		currentHash = value.PreviousHash
-	}
-	if err := snapshot.VerifyNext(previous, privateKey.Public().(ed25519.PublicKey), s.networkID, currentRevision, currentHash); err != nil {
-		return snapshot.Envelope{}, fmt.Errorf("verify current snapshot: %w", err)
 	}
 	if err := validateDeviceAddition(value, addition); err != nil {
 		return snapshot.Envelope{}, err
@@ -80,6 +69,74 @@ func (s *SnapshotSigner) SignDeviceAddition(previous snapshot.Envelope, addition
 		}
 	}
 	return snapshot.Sign(next, privateKey, s.keyID)
+}
+
+// SignDeviceRemoval verifies the current signed head and signs exactly one
+// client removal. Existing ACL entries are filtered by source device and
+// profile references are updated together, so a gateway can apply the new
+// snapshot atomically without accepting a partially revoked policy.
+func (s *SnapshotSigner) SignDeviceRemoval(previous snapshot.Envelope, removal DeviceRemoval) (snapshot.Envelope, error) {
+	value, privateKey, err := s.currentHead(previous)
+	if err != nil {
+		return snapshot.Envelope{}, err
+	}
+	if err := validateDeviceRemoval(value, removal); err != nil {
+		return snapshot.Envelope{}, err
+	}
+
+	next := cloneSnapshot(value)
+	next.Revision = value.Revision + 1
+	next.PreviousHash = append([]byte(nil), previous.Hash...)
+
+	devices := next.Devices[:0]
+	for _, device := range next.Devices {
+		if device.ID != removal.DeviceID {
+			devices = append(devices, device)
+		}
+	}
+	next.Devices = devices
+
+	removedACL := make(map[string]struct{})
+	acl := next.ACL[:0]
+	for _, rule := range next.ACL {
+		if rule.SourceDeviceID == removal.DeviceID {
+			removedACL[rule.ID] = struct{}{}
+			continue
+		}
+		acl = append(acl, rule)
+	}
+	next.ACL = acl
+	for index := range next.Profiles {
+		profile := &next.Profiles[index]
+		profile.DeviceIDs = removeString(profile.DeviceIDs, removal.DeviceID)
+		profile.ACLRuleIDs = removeStrings(profile.ACLRuleIDs, removedACL)
+	}
+
+	return snapshot.Sign(next, privateKey, s.keyID)
+}
+
+func (s *SnapshotSigner) currentHead(previous snapshot.Envelope) (snapshot.NetworkSnapshot, ed25519.PrivateKey, error) {
+	if s == nil || s.session == nil || s.networkID == "" || s.keyID == "" || previous.KeyID != s.keyID {
+		return snapshot.NetworkSnapshot{}, nil, ErrInvalidSnapshotDiff
+	}
+	privateKey, err := s.session.PrivateKey()
+	if err != nil {
+		return snapshot.NetworkSnapshot{}, nil, err
+	}
+	value, err := snapshot.Decode(previous)
+	if err != nil {
+		return snapshot.NetworkSnapshot{}, nil, fmt.Errorf("decode current snapshot: %w", err)
+	}
+	currentRevision := uint64(0)
+	var currentHash []byte
+	if value.Revision > 1 {
+		currentRevision = value.Revision - 1
+		currentHash = value.PreviousHash
+	}
+	if err := snapshot.VerifyNext(previous, privateKey.Public().(ed25519.PublicKey), s.networkID, currentRevision, currentHash); err != nil {
+		return snapshot.NetworkSnapshot{}, nil, fmt.Errorf("verify current snapshot: %w", err)
+	}
+	return value, privateKey, nil
 }
 
 // SignDeviceAdditionFromPool allocates a non-overlapping overlay address from
@@ -167,6 +224,64 @@ func validateDeviceAddition(value snapshot.NetworkSnapshot, addition DeviceAddit
 		}
 	}
 	return nil
+}
+
+func validateDeviceRemoval(value snapshot.NetworkSnapshot, removal DeviceRemoval) error {
+	if strings.TrimSpace(removal.DeviceID) == "" {
+		return ErrInvalidSnapshotDiff
+	}
+
+	var found snapshot.Device
+	foundDevice := false
+	for _, device := range value.Devices {
+		if device.ID != removal.DeviceID {
+			continue
+		}
+
+		found = device
+		foundDevice = true
+		break
+	}
+
+	if !foundDevice || found.Role != "client" {
+		return ErrInvalidSnapshotDiff
+	}
+
+	for _, gateway := range value.Gateways {
+		if gateway.DeviceID == removal.DeviceID {
+			return ErrInvalidSnapshotDiff
+		}
+	}
+
+	for _, route := range value.Routes {
+		if route.GatewayID == removal.DeviceID {
+			return ErrInvalidSnapshotDiff
+		}
+	}
+
+	return nil
+}
+
+func removeString(values []string, target string) []string {
+	filtered := values[:0]
+	for _, value := range values {
+		if value != target {
+			filtered = append(filtered, value)
+		}
+	}
+
+	return filtered
+}
+
+func removeStrings(values []string, targets map[string]struct{}) []string {
+	filtered := values[:0]
+	for _, value := range values {
+		if _, ok := targets[value]; !ok {
+			filtered = append(filtered, value)
+		}
+	}
+
+	return filtered
 }
 
 func cloneSnapshot(value snapshot.NetworkSnapshot) snapshot.NetworkSnapshot {

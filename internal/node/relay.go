@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	controlprotocol "github.com/sokhrym/go-tunnels/internal/protocol"
 	"github.com/sokhrym/go-tunnels/internal/relay"
 	"github.com/sokhrym/go-tunnels/internal/tunnel"
 )
@@ -18,12 +19,21 @@ import (
 // concerns remain owned by the tunnel and gateway layers.
 type RelayBridgeConfig struct {
 	RelayURL            string
+	RelayUDPAddress     string
 	Ticket              string
 	SessionID           string
 	DeviceID            string
 	DestinationDeviceID string
 	ListenAddress       string
 	WireGuardAddress    string
+	// STUNServer is optional. When configured, discovery runs on the same
+	// bridge socket before forwarding starts, so the candidate represents the
+	// NAT binding used by this transport rather than a separate probe socket.
+	STUNServer string
+	// OnObservedEndpoint is called when udp_pair_v1 reports the address from
+	// which this node reached the relay. It is metadata for candidate exchange,
+	// not an authorization decision or a proof that direct UDP will succeed.
+	OnObservedEndpoint func(netip.AddrPort)
 }
 
 // RelayTicketProvider obtains a fresh short-lived relay ticket. It is called
@@ -32,8 +42,8 @@ type RelayBridgeConfig struct {
 type RelayTicketProvider func(context.Context) (string, error)
 
 // RunRelayBridgeLoop reconnects a relay bridge with bounded exponential
-// backoff. The UDP listener is recreated per attempt because Bridge owns and
-// closes its socket together with its WebSocket connection.
+// backoff. The local UDP listener is recreated per attempt because each
+// transport adapter owns and closes its socket with its session.
 func RunRelayBridgeLoop(ctx context.Context, cfg RelayBridgeConfig, ticketProvider RelayTicketProvider) error {
 	if err := validateRelayBridgeConfig(cfg); err != nil {
 		return err
@@ -96,6 +106,10 @@ type KernelRelayConfig struct {
 	// peer set. When set, this relay only publishes its ephemeral local endpoint
 	// and never replaces keys or allowed prefixes itself.
 	EndpointUpdater PeerEndpointUpdater
+	// PathSelector lets a direct WireGuard handshake supersede the relay
+	// endpoint without stopping the already-prepared relay bridge. A later
+	// DirectFailed transition installs the bridge endpoint again.
+	PathSelector *controlprotocol.PathSelector
 }
 
 // ParsePrefixList parses the comma-separated route form used by the thin CLI
@@ -138,6 +152,22 @@ func RunRelayBridge(ctx context.Context, cfg RelayBridgeConfig) error {
 	if err != nil {
 		return errors.New("invalid WireGuard UDP address: " + err.Error())
 	}
+	if cfg.RelayUDPAddress != "" {
+		relayAddress, resolveErr := net.ResolveUDPAddr("udp", cfg.RelayUDPAddress)
+		if resolveErr != nil {
+			return fmt.Errorf("invalid relay UDP address: %w", resolveErr)
+		}
+		bridge, bridgeErr := relay.NewUDPPairBridge(relay.UDPPairBridgeConfig{Ticket: cfg.Ticket, RelayAddress: relayAddress, ListenAddress: listenAddress, WireGuardAddress: wireGuardAddress, OnObservedEndpoint: cfg.OnObservedEndpoint})
+		if bridgeErr != nil {
+			return bridgeErr
+		}
+		if cfg.STUNServer != "" {
+			if endpoint, discoveryErr := bridge.DiscoverServerReflexive(ctx, cfg.STUNServer); discoveryErr == nil && cfg.OnObservedEndpoint != nil {
+				cfg.OnObservedEndpoint(endpoint)
+			}
+		}
+		return bridge.Run(ctx)
+	}
 	bridge, err := relay.NewBridge(relay.BridgeConfig{
 		RelayURL:            cfg.RelayURL,
 		Ticket:              cfg.Ticket,
@@ -154,8 +184,8 @@ func RunRelayBridge(ctx context.Context, cfg RelayBridgeConfig) error {
 }
 
 func validateRelayBridgeConfig(cfg RelayBridgeConfig) error {
-	if cfg.RelayURL == "" || cfg.Ticket == "" || cfg.SessionID == "" || cfg.DeviceID == "" || cfg.DestinationDeviceID == "" {
-		return errors.New("relay URL, ticket, session, and device identities are required")
+	if (cfg.RelayURL == "" && cfg.RelayUDPAddress == "") || cfg.Ticket == "" || cfg.SessionID == "" || cfg.DeviceID == "" || cfg.DestinationDeviceID == "" {
+		return errors.New("relay URL or UDP address, ticket, session, and device identities are required")
 	}
 	if cfg.ListenAddress == "" || cfg.WireGuardAddress == "" {
 		return errors.New("relay bridge UDP addresses are required")
@@ -184,23 +214,48 @@ func RunKernelRelay(ctx context.Context, cfg KernelRelayConfig) error {
 	if err != nil {
 		return fmt.Errorf("invalid WireGuard UDP address: %w", err)
 	}
-	bridge, err := relay.NewBridge(relay.BridgeConfig{
-		RelayURL: cfg.RelayURL, Ticket: cfg.Ticket, SessionID: cfg.SessionID,
-		DeviceID: cfg.DeviceID, DestinationDeviceID: cfg.DestinationDeviceID,
-		ListenAddress: listenAddress, WireGuardAddress: wireGuardAddress,
-	})
+	var bridge relayBridgeRunner
+	var bridgeEndpoint netip.AddrPort
+	if cfg.RelayUDPAddress != "" {
+		relayAddress, resolveErr := net.ResolveUDPAddr("udp", cfg.RelayUDPAddress)
+		if resolveErr != nil {
+			return fmt.Errorf("invalid relay UDP address: %w", resolveErr)
+		}
+		udpBridge, bridgeErr := relay.NewUDPPairBridge(relay.UDPPairBridgeConfig{Ticket: cfg.Ticket, RelayAddress: relayAddress, ListenAddress: listenAddress, WireGuardAddress: wireGuardAddress, OnObservedEndpoint: cfg.OnObservedEndpoint})
+		if bridgeErr != nil {
+			return bridgeErr
+		}
+		if cfg.STUNServer != "" {
+			if endpoint, discoveryErr := udpBridge.DiscoverServerReflexive(ctx, cfg.STUNServer); discoveryErr == nil && cfg.OnObservedEndpoint != nil {
+				cfg.OnObservedEndpoint(endpoint)
+			}
+		}
+		bridge = udpBridge
+		udpBridgeAddress := udpBridge.LocalAddr()
+		bridgeEndpoint, err = netip.ParseAddrPort(udpBridgeAddress.String())
+	} else {
+		kernelBridge, bridgeErr := relay.NewBridge(relay.BridgeConfig{
+			RelayURL: cfg.RelayURL, Ticket: cfg.Ticket, SessionID: cfg.SessionID,
+			DeviceID: cfg.DeviceID, DestinationDeviceID: cfg.DestinationDeviceID,
+			ListenAddress: listenAddress, WireGuardAddress: wireGuardAddress,
+		})
+		if bridgeErr != nil {
+			return bridgeErr
+		}
+		bridge = kernelBridge
+		kernelBridgeAddress := kernelBridge.LocalAddr()
+		bridgeEndpoint, err = netip.ParseAddrPort(kernelBridgeAddress.String())
+	}
 	if err != nil {
-		return err
+		return fmt.Errorf("parse relay bridge endpoint: %w", err)
 	}
 	if err := tunnel.EnsureLinuxInterface(ctx, cfg.InterfaceName, cfg.OverlayAddress, cfg.Routes); err != nil {
 		return err
 	}
-	bridgeAddress := bridge.LocalAddr()
-	bridgeEndpoint, err := netip.ParseAddrPort(bridgeAddress.String())
-	if err != nil {
-		return fmt.Errorf("parse relay bridge endpoint: %w", err)
-	}
 	if cfg.EndpointUpdater != nil {
+		if cfg.PathSelector != nil {
+			return runKernelRelayWithPathSelector(ctx, bridge, cfg, bridgeEndpoint)
+		}
 		if err := cfg.EndpointUpdater.SetPeerEndpoint(ctx, cfg.PeerPublicKey, bridgeEndpoint); err != nil {
 			return fmt.Errorf("publish relay endpoint: %w", err)
 		}
@@ -220,6 +275,43 @@ func RunKernelRelay(ctx context.Context, cfg KernelRelayConfig) error {
 		return err
 	}
 	return bridge.Run(ctx)
+}
+
+type relayBridgeRunner interface {
+	Run(context.Context) error
+}
+
+func runKernelRelayWithPathSelector(ctx context.Context, bridge relayBridgeRunner, cfg KernelRelayConfig, bridgeEndpoint netip.AddrPort) error {
+	bridgeContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	bridgeErrors := make(chan error, 1)
+	go func() { bridgeErrors <- bridge.Run(bridgeContext) }()
+	defer func() {
+		if cfg.PathSelector.Current() != controlprotocol.PathRelay {
+			return
+		}
+		clearContext, clearCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = cfg.EndpointUpdater.ClearPeerEndpoint(clearContext, cfg.PeerPublicKey)
+		clearCancel()
+	}()
+
+	for {
+		if cfg.PathSelector.Current() == controlprotocol.PathRelay {
+			if err := cfg.EndpointUpdater.SetPeerEndpoint(ctx, cfg.PeerPublicKey, bridgeEndpoint); err != nil {
+				return fmt.Errorf("publish relay endpoint: %w", err)
+			}
+		}
+		changes := cfg.PathSelector.Changes()
+		select {
+		case err := <-bridgeErrors:
+			return err
+		case <-changes:
+			// Re-evaluate the selected path. The direct manager owns direct
+			// endpoints; this loop only installs/removes the relay endpoint.
+		case <-ctx.Done():
+			return nil
+		}
+	}
 }
 
 // RunKernelRelayLoop repeats the idempotent Linux interface/WireGuard setup

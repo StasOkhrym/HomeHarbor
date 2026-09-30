@@ -1,5 +1,6 @@
 [server]
 listen_address = ":8081"
+udp_listen_address = ":51820"
 
 [security]
 ticket_key_file = "/run/secrets/relay_ticket_key"
