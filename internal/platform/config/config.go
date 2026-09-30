@@ -16,6 +16,7 @@ import (
 type Control struct {
 	Server        Server          `toml:"server"`
 	Database      Database        `toml:"database"`
+	Redis         Redis           `toml:"redis"`
 	Auth          Auth            `toml:"auth"`
 	Relay         Relay           `toml:"relay"`
 	Networking    Networking      `toml:"networking"`
@@ -30,9 +31,31 @@ type Server struct {
 }
 
 type Database struct {
+	Driver       string `toml:"driver"`
 	URL          string `toml:"url"`
 	Password     string `toml:"password"`
 	PasswordFile string `toml:"password_file"`
+}
+
+// Redis configures ephemeral security state; secrets are resolved at startup
+// and never placed in the URL, which may appear in diagnostic messages.
+type Redis struct {
+	URL          string `toml:"url"`
+	Password     string `toml:"password"`
+	PasswordFile string `toml:"password_file"`
+}
+
+func (d *Database) validateDriver() error {
+	// Omission preserves existing TOML files, not SQL portability guarantees.
+	if d.Driver == "" {
+		d.Driver = "postgres"
+	}
+
+	if d.Driver != "postgres" {
+		return errors.New("database.driver must be postgres")
+	}
+
+	return nil
 }
 
 type Auth struct {
@@ -87,10 +110,15 @@ type RelayServer struct {
 	Server struct {
 		ListenAddress    string `toml:"listen_address"`
 		UDPListenAddress string `toml:"udp_listen_address"`
+		UDPPortMin       int    `toml:"udp_port_min"`
+		UDPPortMax       int    `toml:"udp_port_max"`
+		UDPAdvertiseHost string `toml:"udp_advertise_host"`
 	} `toml:"server"`
 	Security struct {
 		TicketKey     string `toml:"ticket_key"`
 		TicketKeyFile string `toml:"ticket_key_file"`
+		TLSCertFile   string `toml:"tls_cert_file"`
+		TLSKeyFile    string `toml:"tls_key_file"`
 	} `toml:"security"`
 }
 
@@ -173,6 +201,14 @@ func LoadRelayServer(path string) (RelayServer, error) {
 	if _, err := net.ResolveUDPAddr("udp", cfg.Server.UDPListenAddress); err != nil {
 		return cfg, fmt.Errorf("invalid relay udp_listen_address: %w", err)
 	}
+	if (cfg.Security.TLSCertFile == "") != (cfg.Security.TLSKeyFile == "") {
+		return cfg, errors.New("relay TLS certificate and key files must be configured together")
+	}
+	if cfg.Server.UDPPortMin != 0 || cfg.Server.UDPPortMax != 0 {
+		if cfg.Server.UDPPortMin < 1 || cfg.Server.UDPPortMax < cfg.Server.UDPPortMin || cfg.Server.UDPPortMax > 65535 {
+			return cfg, errors.New("relay UDP port range must be ordered within 1..65535")
+		}
+	}
 	if cfg.Server.ListenAddress == "" || len(cfg.Security.TicketKey) < 32 {
 		return cfg, errors.New("relay listen_address and a ticket key of at least 32 bytes are required")
 	}
@@ -186,6 +222,9 @@ func LoadDatabase(path string) (Database, error) {
 	var file databaseConfigFile
 	if _, err := toml.DecodeFile(path, &file); err != nil {
 		return Database{}, fmt.Errorf("decode database config: %w", err)
+	}
+	if err := file.Database.validateDriver(); err != nil {
+		return Database{}, err
 	}
 	if value := os.Getenv("GO_TUNNELS_DATABASE_URL"); value != "" {
 		file.Database.URL = value
@@ -203,6 +242,27 @@ func LoadControl(path string) (Control, error) {
 	var cfg Control
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return Control{}, fmt.Errorf("decode control config: %w", err)
+	}
+	if err := cfg.Database.validateDriver(); err != nil {
+		return Control{}, err
+	}
+	if value := os.Getenv("GO_TUNNELS_REDIS_URL"); value != "" {
+		cfg.Redis.URL = value
+	}
+	if value := os.Getenv("GO_TUNNELS_REDIS_PASSWORD"); value != "" {
+		cfg.Redis.Password = value
+	} else if cfg.Redis.PasswordFile != "" {
+		value, err := readSecret(cfg.Redis.PasswordFile, "Redis password")
+		if err != nil {
+			return Control{}, err
+		}
+		cfg.Redis.Password = value
+	}
+	if cfg.Redis.URL != "" {
+		endpoint, err := url.Parse(cfg.Redis.URL)
+		if err != nil || endpoint.Host == "" || (endpoint.Scheme != "redis" && endpoint.Scheme != "rediss") || endpoint.User != nil {
+			return Control{}, errors.New("redis.url must be a redis/rediss endpoint without embedded credentials")
+		}
 	}
 	if value := os.Getenv("GO_TUNNELS_SERVER_LISTEN_ADDRESS"); value != "" {
 		cfg.Server.ListenAddress = value
@@ -262,6 +322,9 @@ func resolveDatabaseSecret(database *Database) error {
 }
 
 func (c Control) validate() error {
+	if err := c.Database.validateDriver(); err != nil {
+		return err
+	}
 	var missing []string
 	values := []struct{ name, value string }{
 		{"server.listen_address", c.Server.ListenAddress},

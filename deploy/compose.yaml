@@ -13,6 +13,33 @@ services:
       timeout: 3s
       retries: 20
     restart: unless-stopped
+  redis:
+    image: redis:8.2-alpine
+    # Hash the file credential into a temporary ACL. Neither the password nor
+    # a plaintext password argument is passed to the Redis server process.
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        password=$$(cat /run/secrets/redis_password)
+        test -n "$$password"
+        hash=$$(printf '%s' "$$password" | sha256sum | cut -d ' ' -f 1)
+        printf 'user default on #%s ~* &* +@all\n' "$$hash" > /tmp/users.acl
+        unset password hash
+        exec redis-server --aclfile /tmp/users.acl --bind 0.0.0.0 \
+          --protected-mode yes --maxmemory 128mb --maxmemory-policy noeviction \
+          --appendonly no --save ""
+    secrets: [redis_password]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$(cat /run/secrets/redis_password) redis-cli ping | grep -qx PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 256m
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
   control:
     build:
       context: ..
@@ -22,9 +49,10 @@ services:
     configs:
       - source: control_config
         target: /etc/go-tunnels/control.toml
-    secrets: [postgres_password, session_signing_key, ceremony_encryption_key, relay_ticket_key, root_public_key]
+    secrets: [postgres_password, redis_password, session_signing_key, ceremony_encryption_key, relay_ticket_key, root_public_key]
     depends_on:
       migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "/healthcheck", "http://127.0.0.1:8080/readyz"]
       interval: 5s
@@ -67,10 +95,12 @@ services:
     configs:
       - source: relay_config
         target: /etc/go-tunnels/relay.toml
-    secrets: [relay_ticket_key]
-    ports: ["51820:51820/udp"]
+    secrets: [relay_ticket_key, relay_tls_cert, relay_tls_key, relay_tls_ca]
+    environment:
+      SSL_CERT_FILE: /run/secrets/relay_tls_ca
+    ports: ["51820-51851:51820-51851/udp"]
     healthcheck:
-      test: ["CMD", "/healthcheck", "http://127.0.0.1:8081/readyz"]
+      test: ["CMD", "/healthcheck", "https://127.0.0.1:8081/readyz"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -91,6 +121,7 @@ services:
       - ./${CADDYFILE:-Caddyfile}:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    secrets: [relay_tls_ca]
     depends_on:
       control: {condition: service_healthy}
       relay: {condition: service_healthy}
@@ -109,10 +140,14 @@ configs:
     file: "${RELAY_CONFIG:-../config/relay.toml}"
 secrets:
   postgres_password: {file: ../secrets/postgres_password}
+  redis_password: {file: ../secrets/redis_password}
   relay_ticket_key: {file: ../secrets/relay_ticket_key}
   session_signing_key: {file: ../secrets/session_signing_key}
   ceremony_encryption_key: {file: ../secrets/ceremony_encryption_key}
   root_public_key: {file: ../secrets/root_public_key}
+  relay_tls_cert: {file: ../secrets/relay_tls_cert}
+  relay_tls_key: {file: ../secrets/relay_tls_key}
+  relay_tls_ca: {file: ../secrets/relay_tls_ca}
 volumes:
   postgres-data:
   caddy-data:

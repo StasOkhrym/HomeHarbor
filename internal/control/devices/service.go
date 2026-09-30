@@ -41,6 +41,7 @@ var (
 	ErrInvalidTokenRequest    = errors.New("invalid enrollment token request")
 	ErrInvalidEnrollment      = errors.New("invalid enrollment request")
 	ErrDeviceNotFound         = errors.New("device not found")
+	ErrDeviceConflict         = errors.New("device identity already exists")
 )
 
 type Device struct {
@@ -78,7 +79,8 @@ type EnrollRequest struct {
 	WireGuardPublicKey string `json:"wireguard_public_key"`
 }
 
-type Store interface {
+type Repository interface {
+	EnrollmentPort
 	SaveEnrollmentToken(context.Context, EnrollmentToken) error
 	ConsumeEnrollmentToken(context.Context, [32]byte, time.Time) (Role, error)
 	SaveDevice(context.Context, Device) error
@@ -89,18 +91,17 @@ type Store interface {
 	RotateCredential(context.Context, string, [32]byte, [32]byte, time.Time, time.Time) error
 }
 
-// AtomicEnroller combines token consumption and device persistence. PostgreSQL
-// implements this with one transaction so a failed device insert cannot burn a
-// one-time enrollment token.
-type AtomicEnroller interface {
+// EnrollmentPort is required: token consumption and device persistence must
+// succeed or roll back together. Services never emulate this with two writes.
+type EnrollmentPort interface {
 	Enroll(context.Context, [32]byte, time.Time, Device) (Role, error)
 }
 
 type Service struct {
-	store     Store
-	now       func() time.Time
-	random    io.Reader
-	publisher Publisher
+	store       Repository
+	now         func() time.Time
+	random      io.Reader
+	publication PublicationStrategy
 }
 
 type Event struct {
@@ -114,17 +115,17 @@ type Publisher interface {
 type Option func(*Service)
 
 func WithPublisher(publisher Publisher) Option {
-	return func(service *Service) { service.publisher = publisher }
+	return WithPublicationStrategy(InProcessPublication{Publisher: publisher})
 }
 
-func NewService(store Store, now func() time.Time, random io.Reader, options ...Option) *Service {
+func NewService(store Repository, now func() time.Time, random io.Reader, options ...Option) *Service {
 	if now == nil {
 		now = time.Now
 	}
 	if random == nil {
 		random = rand.Reader
 	}
-	service := &Service{store: store, now: now, random: random}
+	service := &Service{store: store, now: now, random: random, publication: TransactionalOutbox{}}
 	for _, option := range options {
 		option(service)
 	}
@@ -164,29 +165,13 @@ func (s *Service) Enroll(ctx context.Context, request EnrollRequest) (Device, er
 		return Device{}, err
 	}
 	device := Device{ID: id, Name: request.Name, Status: StatusActive, IdentityPublicKey: request.IdentityPublicKey, WireGuardPublicKey: request.WireGuardPublicKey, CreatedAt: now, Credential: credential, CredentialHash: sha256.Sum256([]byte(credential))}
-	if atomic, ok := s.store.(AtomicEnroller); ok {
-		role, atomicErr := atomic.Enroll(ctx, sha256.Sum256([]byte(request.Token)), now, device)
-		if atomicErr != nil {
-			if errors.Is(atomicErr, ErrInvalidEnrollmentToken) {
-				return Device{}, ErrInvalidEnrollmentToken
-			}
-			return Device{}, atomicErr
-		}
-		device.Role = role
-	} else {
-		role, consumeErr := s.store.ConsumeEnrollmentToken(ctx, sha256.Sum256([]byte(request.Token)), now)
-		if consumeErr != nil {
-			return Device{}, ErrInvalidEnrollmentToken
-		}
-		device.Role = role
-		if saveErr := s.store.SaveDevice(ctx, device); saveErr != nil {
-			return Device{}, saveErr
-		}
+	role, err := s.store.Enroll(ctx, sha256.Sum256([]byte(request.Token)), now, device)
+	if err != nil {
+		return Device{}, err
 	}
-	if s.publisher != nil && !s.durableEvents() {
-		// Memory-backed stores have no durable outbox; keep their tests and local
-		// runtime observable through the configured in-process publisher.
-		_ = s.publisher.Publish(ctx, Event{Type: "device.enrolled", AggregateID: device.ID, OccurredAt: now})
+	device.Role = role
+	if err = s.publication.AfterCommit(ctx, Event{Type: "device.enrolled", AggregateID: device.ID, OccurredAt: now}); err != nil {
+		return Device{}, err
 	}
 	return device, nil
 }
@@ -224,15 +209,7 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 	if err := s.store.RevokeDevice(ctx, id, now); err != nil {
 		return err
 	}
-	if s.publisher != nil && !s.durableEvents() {
-		_ = s.publisher.Publish(ctx, Event{Type: "device.revoked", AggregateID: id, OccurredAt: now})
-	}
-	return nil
-}
-
-func (s *Service) durableEvents() bool {
-	_, ok := s.store.(interface{ DurableEvents() })
-	return ok
+	return s.publication.AfterCommit(ctx, Event{Type: "device.revoked", AggregateID: id, OccurredAt: now})
 }
 
 // Device returns the current public metadata for an active or revoked device.

@@ -21,13 +21,17 @@ type fakeSessions struct {
 	valid    string
 	recovery string
 	revoked  string
+	failure  error
 }
 
 func (f *fakeSessions) CreateSession(context.Context, time.Duration) (identity.IssuedSession, error) {
-	return f.session, nil
+	return f.session, f.failure
 }
 
 func (f *fakeSessions) ValidateSession(_ context.Context, token string) (identity.Session, error) {
+	if f.failure != nil {
+		return identity.Session{}, f.failure
+	}
 	if token != f.valid || !time.Now().Before(f.session.ExpiresAt) {
 		return identity.Session{}, identity.ErrInvalidCredential
 	}
@@ -36,7 +40,7 @@ func (f *fakeSessions) ValidateSession(_ context.Context, token string) (identit
 
 func (f *fakeSessions) RevokeSession(_ context.Context, token string) error {
 	f.revoked = token
-	return nil
+	return f.failure
 }
 
 func (f *fakeSessions) ConsumeRecoveryCode(_ context.Context, code string) error {
@@ -103,25 +107,48 @@ func TestRecoveryLoginSetsHardenedCookies(t *testing.T) {
 	}
 }
 
+func TestBrowserSessionOutageReturns503WithoutIssuingCookies(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		t.Run(method, func(t *testing.T) {
+			auth, sessions := newBrowserAuthTest(t)
+			sessions.failure = identity.ErrSecurityStateUnavailable
+			server := NewServer(nil, auth, WithBrowserHandlers(auth.Handler(), auth.LoginHandler(), auth.LoginAssetHandler(), auth.AuthorizeMutation))
+			path := "/api/v1/admin/devices"
+			body := ""
+			if method == http.MethodPost {
+				path, body = "/api/v1/auth/login/finish", `{"ceremony_id":"id","response":{}}`
+			}
+			request := httptest.NewRequest(method, path, strings.NewReader(body))
+			request.Header.Set("Origin", "https://tunnel.example.com")
+			request.AddCookie(auth.sessionCookie(sessions.session))
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, request)
+			if response.Code != http.StatusServiceUnavailable || len(response.Result().Cookies()) != 0 {
+				t.Fatalf("outage status=%d cookies=%v body=%s", response.Code, response.Result().Cookies(), response.Body.String())
+			}
+		})
+	}
+}
+
 func TestSignedSessionRejectsTamperingAndExpiry(t *testing.T) {
 	auth, sessions := newBrowserAuthTest(t)
 	cookie := auth.sessionCookie(sessions.session)
 	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
 	req.AddCookie(cookie)
-	if !auth.IsAdmin(req.Context(), req) {
+	if authorized, err := auth.IsAdmin(req.Context(), req); !authorized || err != nil {
 		t.Fatal("valid session rejected")
 	}
 	cookie.Value += "x"
 	req = httptest.NewRequest(http.MethodGet, "/admin", nil)
 	req.AddCookie(cookie)
-	if auth.IsAdmin(req.Context(), req) {
+	if authorized, err := auth.IsAdmin(req.Context(), req); authorized || err != nil {
 		t.Fatal("tampered cookie accepted")
 	}
 	sessions.session.ExpiresAt = time.Now().Add(-time.Second)
 	cookie = auth.sessionCookie(sessions.session)
 	req = httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(cookie)
-	if auth.IsAdmin(req.Context(), req) {
+	if authorized, err := auth.IsAdmin(req.Context(), req); authorized || err != nil {
 		t.Fatal("expired session accepted")
 	}
 }

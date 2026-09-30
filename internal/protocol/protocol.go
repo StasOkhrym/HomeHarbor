@@ -11,7 +11,10 @@ import (
 
 const CurrentVersion uint16 = 1
 const (
-	CapabilityRelay     = "relay-v1"
+	CapabilityRelay = "relay-v1"
+	// CapabilityUDPPairV2 identifies authenticated per-peer UDP ingress, not
+	// the old bearer-bearing datagram format. It must be negotiated explicitly.
+	CapabilityUDPPairV2 = "udp_pair_v2"
 	CapabilityDirectUDP = "direct-udp-v1"
 	CapabilitySplitDNS  = "split-dns-v1"
 )
@@ -39,11 +42,11 @@ func Negotiate(hello Hello) (Negotiated, *ProtocolError) {
 	if !slices.Contains(hello.Versions, CurrentVersion) {
 		return Negotiated{}, &ProtocolError{Code: ErrorUpgradeRequired, Message: "client does not support protocol version 1"}
 	}
-	if !slices.Contains(hello.Capabilities, CapabilityRelay) {
-		return Negotiated{}, &ProtocolError{Code: ErrorUpgradeRequired, Message: "relay-v1 capability is required"}
+	if !slices.Contains(hello.Capabilities, CapabilityRelay) && !slices.Contains(hello.Capabilities, CapabilityUDPPairV2) {
+		return Negotiated{}, &ProtocolError{Code: ErrorUpgradeRequired, Message: "a supported relay capability is required"}
 	}
-	supported := []string{CapabilityRelay}
-	for _, c := range []string{CapabilityDirectUDP, CapabilitySplitDNS} {
+	supported := []string{}
+	for _, c := range []string{CapabilityRelay, CapabilityUDPPairV2, CapabilityDirectUDP, CapabilitySplitDNS} {
 		if slices.Contains(hello.Capabilities, c) {
 			supported = append(supported, c)
 		}

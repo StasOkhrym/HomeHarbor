@@ -16,6 +16,8 @@ if [ ! -f .local/control.toml ]; then
 fi
 if [ ! -f .local/relay.toml ]; then
 	cp config/relay.example.toml .local/relay.toml
+	sed -i.bak -e "s/relay.example.com/$relay_domain/g" .local/relay.toml
+	rm -f .local/relay.toml.bak
 fi
 if [ ! -f .local/admin.toml ]; then
 	cp config/admin.example.toml .local/admin.toml
@@ -47,6 +49,7 @@ command -v openssl >/dev/null 2>&1 || {
 }
 
 create_secret secrets/postgres_password 32
+create_secret secrets/redis_password 32
 create_secret secrets/relay_ticket_key 32
 create_secret secrets/session_signing_key 48
 create_secret secrets/ceremony_encryption_key 24
@@ -55,9 +58,40 @@ create_secret secrets/ceremony_encryption_key 24
 # catches truncated mounts and accidental empty files before Compose starts a
 # control process that can never pass its authentication validation.
 require_secret_length secrets/postgres_password 44
+require_secret_length secrets/redis_password 44
 require_secret_length secrets/relay_ticket_key 44
 require_secret_length secrets/session_signing_key 64
 require_secret_length secrets/ceremony_encryption_key 32
+
+# Local-only backend CA. Production receives operator-provisioned TLS files;
+# dev-init never rotates existing material or repairs a half-written key pair.
+if [ ! -f secrets/relay_tls_ca ] && [ ! -f secrets/relay_tls_cert ] && [ ! -f secrets/relay_tls_key ]; then
+    if [ -e .local/relay-ca-key.pem ]; then
+        echo 'Existing local relay CA key without its certificates; restore the TLS files before retrying' >&2
+        exit 1
+    fi
+    umask 077
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -sha256 \
+        -subj '/CN=Go Tunnels Local Relay CA' \
+        -keyout .local/relay-ca-key.pem -out secrets/relay_tls_ca >/dev/null 2>&1
+    openssl req -new -newkey rsa:2048 -nodes -sha256 -subj '/CN=relay' \
+        -keyout secrets/relay_tls_key -out .local/relay-tls.csr >/dev/null 2>&1
+    printf '%s\n' 'basicConstraints=critical,CA:FALSE' \
+        'keyUsage=critical,digitalSignature,keyEncipherment' \
+        'extendedKeyUsage=serverAuth' \
+        'subjectAltName=DNS:relay,DNS:localhost,IP:127.0.0.1' > .local/relay-tls.ext
+    openssl x509 -req -days 365 -sha256 -in .local/relay-tls.csr \
+        -CA secrets/relay_tls_ca -CAkey .local/relay-ca-key.pem -set_serial 2 \
+        -extfile .local/relay-tls.ext -out secrets/relay_tls_cert >/dev/null 2>&1
+fi
+for path in secrets/relay_tls_ca secrets/relay_tls_cert secrets/relay_tls_key; do
+    if [ ! -s "$path" ]; then
+        echo "Missing relay TLS file $path; restore the complete existing set" >&2
+        exit 1
+    fi
+done
+chmod 0600 secrets/relay_tls_key
+chmod 0644 secrets/relay_tls_cert secrets/relay_tls_ca
 
 # The trusted companion owns the encrypted root key. Compose receives only its
 # public half, so the control plane can verify signed snapshots without gaining
@@ -84,7 +118,14 @@ if [ ! -s .local/root-passphrase ]; then
     exit 1
 fi
 chmod 0600 .local/root-passphrase
-cp .local/root-public.key secrets/root_public_key
+if [ -e secrets/root_public_key ]; then
+    if ! cmp -s .local/root-public.key secrets/root_public_key; then
+        echo "secrets/root_public_key differs from .local/root-public.key; restore the matching trust anchor before initializing" >&2
+        exit 1
+    fi
+else
+    cp .local/root-public.key secrets/root_public_key
+fi
 chmod 0644 secrets/root_public_key
 
 # These local-only substitutions make the one-shot companion commands point at
@@ -117,5 +158,12 @@ sed -i.bak \
     -e 's|^# root_public_key_file = .*|root_public_key_file = "/run/secrets/root_public_key"|' \
     .local/control.toml
 rm -f .local/control.toml.bak
+
+# Upgrade ignored local configs only when this script is explicitly run.
+# Keep existing Redis settings and trust keys intact.
+if ! grep -Eq '^[[:space:]]*\[redis\][[:space:]]*(#.*)?$' .local/control.toml; then
+    printf '\n%s\n' '[redis]' 'url = "redis://redis:6379/0"' \
+        'password_file = "/run/secrets/redis_password"' >> .local/control.toml
+fi
 
 echo "local configuration and secrets are ready"

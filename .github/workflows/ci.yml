@@ -7,20 +7,6 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17.6-alpine
-        env:
-          POSTGRES_DB: go_tunnels
-          POSTGRES_USER: go_tunnels
-          POSTGRES_PASSWORD: ci-only-integration-password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U go_tunnels -d go_tunnels"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -29,19 +15,23 @@ jobs:
         with:
           version: v2.14.0
           args: --timeout=5m --fix=false ./...
+      - name: Check formatting without edits
+        run: make fmt-check
+      - name: Test tooling behavior
+        run: make scripts-test
       - run: go test -race ./...
       - name: Fuzz protocol parsers
         run: make fuzz
       - run: go vet ./...
       - run: go build ./cmd/...
+      - name: Enforce module architecture
+        run: make architecture
       - name: Validate Compose secret boundaries
         run: make compose-check
       - name: Validate Ansible deployment bundle
         run: make deploy-check
-      - name: PostgreSQL integration tests
-        env:
-          TEST_DATABASE_URL: postgres://go_tunnels:ci-only-integration-password@127.0.0.1:5432/go_tunnels?sslmode=disable
-        run: make integration
+      - name: Real PostgreSQL and authenticated Redis integration (no skips)
+        run: make integration-local
       - name: Vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 

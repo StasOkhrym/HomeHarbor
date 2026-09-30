@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestRouterAddsRequestID(t *testing.T) {
-	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
+	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if response.Header().Get("X-Request-ID") == "" {
@@ -22,7 +23,7 @@ func TestRouterAddsRequestID(t *testing.T) {
 }
 
 func TestRouterPreservesIncomingRequestID(t *testing.T) {
-	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
+	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	request.Header.Set("X-Request-ID", "external-request-id")
 	response := httptest.NewRecorder()
@@ -33,7 +34,7 @@ func TestRouterPreservesIncomingRequestID(t *testing.T) {
 }
 
 func TestRouterReplacesUnsafeRequestID(t *testing.T) {
-	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
+	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	request.Header.Set("X-Request-ID", "request\nwith-secret")
 	response := httptest.NewRecorder()
@@ -44,7 +45,7 @@ func TestRouterReplacesUnsafeRequestID(t *testing.T) {
 }
 
 func TestRouterRejectsOversizedAPIBody(t *testing.T) {
-	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
+	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/enroll", bytes.NewBufferString(`{"padding":"`+strings.Repeat("x", int(maxRequestBodyBytes)+1)+`"}`))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -64,5 +65,18 @@ func TestRecoverMiddlewareReturnsStableInternalError(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "database password") || strings.Contains(response.Body.String(), "secret") {
 		t.Fatalf("panic details leaked in response: %s", response.Body.String())
+	}
+}
+
+type readOnlyAuthorizer struct{}
+
+func (readOnlyAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) { return true, nil }
+
+func TestAdminMutationRequiresExplicitMutationAuthorization(t *testing.T) {
+	server := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), readOnlyAuthorizer{})
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/admin/enrollment-tokens", strings.NewReader(`{"role":"client","ttl_seconds":60}`)))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("mutation status=%d", response.Code)
 	}
 }

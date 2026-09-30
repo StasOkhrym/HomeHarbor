@@ -170,8 +170,11 @@ func VerifyNext(envelope Envelope, publicKey ed25519.PublicKey, networkID string
 		return err
 	}
 	if currentRevision == 0 {
-		if value.Revision == 0 || len(value.PreviousHash) != 0 {
+		if len(currentHash) != 0 || len(value.PreviousHash) != 0 {
 			return ErrInvalidSnapshot
+		}
+		if value.Revision != 1 {
+			return ErrRevisionGap
 		}
 		return nil
 	}

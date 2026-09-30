@@ -103,27 +103,33 @@ func (a *BrowserAuth) LoginHandler() http.Handler { return http.HandlerFunc(a.lo
 func (a *BrowserAuth) LoginAssetHandler() http.Handler { return http.HandlerFunc(a.loginAsset) }
 
 // IsAdmin requires both a valid cookie signature and a live server-side session.
-func (a *BrowserAuth) IsAdmin(ctx context.Context, request *http.Request) bool {
+func (a *BrowserAuth) IsAdmin(ctx context.Context, request *http.Request) (bool, error) {
 	token, ok := a.sessionToken(request)
 	if !ok {
 		a.audit(ctx, "admin.auth", false)
-		return false
+		return false, nil
 	}
 	_, err := a.sessions.ValidateSession(ctx, token)
 	if err != nil {
 		a.audit(ctx, "admin.auth", false)
 	}
-	return err == nil
+	if errors.Is(err, identity.ErrInvalidCredential) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // AuthorizeMutation additionally binds state-changing requests to their CSRF cookie.
-func (a *BrowserAuth) AuthorizeMutation(ctx context.Context, request *http.Request) bool {
+func (a *BrowserAuth) AuthorizeMutation(ctx context.Context, request *http.Request) (bool, error) {
 	token, ok := a.sessionToken(request)
 	if !ok || !a.validCSRF(request, token) {
-		return false
+		return false, nil
 	}
 	_, err := a.sessions.ValidateSession(ctx, token)
-	return err == nil
+	if errors.Is(err, identity.ErrInvalidCredential) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (a *BrowserAuth) sessionToken(request *http.Request) (string, bool) {
@@ -203,6 +209,10 @@ func (a *BrowserAuth) beginLogin(w http.ResponseWriter, r *http.Request) {
 
 func (a *BrowserAuth) writeBegin(w http.ResponseWriter, result identity.BeginCeremony, err error) {
 	if err != nil {
+		if errors.Is(err, identity.ErrSecurityStateUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "security state unavailable")
+			return
+		}
 		writeError(w, http.StatusUnauthorized, "ceremony unavailable")
 		return
 	}
@@ -220,6 +230,10 @@ func (a *BrowserAuth) finishBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := a.passkeys.FinishBootstrap(r.Context(), input.CeremonyID, input.Response); err != nil {
+		if errors.Is(err, identity.ErrSecurityStateUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "security state unavailable")
+			return
+		}
 		a.audit(r.Context(), "admin.bootstrap", false)
 		writeError(w, http.StatusUnauthorized, "invalid ceremony")
 		return
@@ -230,7 +244,7 @@ func (a *BrowserAuth) finishBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err = a.establishSession(w, r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "create session")
+		a.writeSessionError(w, err)
 		return
 	}
 	a.audit(r.Context(), "admin.bootstrap", true)
@@ -245,12 +259,16 @@ func (a *BrowserAuth) finishLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := a.passkeys.FinishLogin(r.Context(), input.CeremonyID, input.Response); err != nil {
+		if errors.Is(err, identity.ErrSecurityStateUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "security state unavailable")
+			return
+		}
 		a.audit(r.Context(), "admin.login", false)
 		writeError(w, http.StatusUnauthorized, "invalid credential")
 		return
 	}
 	if err := a.establishSession(w, r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "create session")
+		a.writeSessionError(w, err)
 		return
 	}
 	a.audit(r.Context(), "admin.login", true)
@@ -270,7 +288,7 @@ func (a *BrowserAuth) recoveryLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.establishSession(w, r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "create session")
+		a.writeSessionError(w, err)
 		return
 	}
 	a.audit(r.Context(), "admin.recovery", true)
@@ -284,6 +302,10 @@ func (a *BrowserAuth) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.sessions.RevokeSession(r.Context(), token); err != nil {
+		if errors.Is(err, identity.ErrSecurityStateUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "security state unavailable")
+			return
+		}
 		a.audit(r.Context(), "admin.logout", false)
 		writeError(w, http.StatusUnauthorized, "invalid session")
 		return
@@ -292,6 +314,14 @@ func (a *BrowserAuth) logout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, expiredCookie(csrfCookieName))
 	a.audit(r.Context(), "admin.logout", true)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *BrowserAuth) writeSessionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, identity.ErrSecurityStateUnavailable) {
+		writeError(w, http.StatusServiceUnavailable, "security state unavailable")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "create session")
 }
 
 func (a *BrowserAuth) audit(ctx context.Context, action string, success bool) {

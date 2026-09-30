@@ -98,7 +98,7 @@ func TestCredentialCounterCannotRegress(t *testing.T) {
 
 func newPasskeyTestService(t *testing.T, store *MemoryStore, now func() time.Time) *PasskeyService {
 	t.Helper()
-	service, err := NewPasskeyService(PasskeyConfig{RPID: "tunnel.example.com", RPOrigin: "https://tunnel.example.com", EncryptionKey: bytes.Repeat([]byte{7}, 32), CeremonyTTL: 10 * time.Minute}, store, now, &sequenceReader{next: 'p'})
+	service, err := NewPasskeyService(PasskeyConfig{RPID: "tunnel.example.com", RPOrigin: "https://tunnel.example.com", EncryptionKey: bytes.Repeat([]byte{7}, 32), CeremonyTTL: 10 * time.Minute}, store, store, now, &sequenceReader{next: 'p'})
 	if err != nil {
 		t.Fatal(err)
 	}

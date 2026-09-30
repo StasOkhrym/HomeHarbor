@@ -22,7 +22,7 @@ func TestApplyCanonicalizesSuffixesAndCloseReverts(t *testing.T) {
 	if err := manager.Apply(context.Background(), netip.MustParseAddr("192.168.1.1"), []string{"Home.ARPA.", "cloud.home.arpa", "home.arpa"}); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{{"revert", "gt0"}, {"dns", "gt0", "192.168.1.1"}, {"domain", "gt0", "~cloud.home.arpa"}, {"domain", "gt0", "~home.arpa"}, {"default-route", "gt0", "false"}}
+	want := [][]string{{"revert", "gt0"}, {"default-route", "gt0", "false"}, {"domain", "gt0", "~cloud.home.arpa", "~home.arpa"}, {"dns", "gt0", "192.168.1.1"}}
 	if !reflect.DeepEqual(commands, want) {
 		t.Fatalf("commands=%#v, want %#v", commands, want)
 	}
@@ -51,7 +51,7 @@ func TestApplyRevertsAfterResolverFailure(t *testing.T) {
 	if err := manager.Apply(context.Background(), netip.MustParseAddr("192.168.1.1"), []string{"home.arpa"}); !errors.Is(err, failure) {
 		t.Fatalf("Apply() error=%v", err)
 	}
-	if !reflect.DeepEqual(commands, []string{"revert gt0", "dns gt0 192.168.1.1", "revert gt0"}) {
+	if !reflect.DeepEqual(commands, []string{"revert gt0", "default-route gt0 false", "domain gt0 ~home.arpa", "dns gt0 192.168.1.1", "revert gt0"}) {
 		t.Fatalf("commands=%#v", commands)
 	}
 }
@@ -79,9 +79,37 @@ func TestApplyRestoresPreviousSettingsAfterUpdateFailure(t *testing.T) {
 	if err := manager.Apply(context.Background(), netip.MustParseAddr("192.168.1.2"), []string{"new.home.arpa"}); err == nil {
 		t.Fatal("second Apply() error=nil")
 	}
-	want := []string{"revert gt0", "dns gt0 192.168.1.2", "domain gt0 ~new.home.arpa", "revert gt0", "dns gt0 192.168.1.1", "domain gt0 ~old.home.arpa", "default-route gt0 false"}
+	want := []string{"revert gt0", "default-route gt0 false", "domain gt0 ~new.home.arpa", "revert gt0", "default-route gt0 false", "domain gt0 ~old.home.arpa", "dns gt0 192.168.1.1"}
 	if !reflect.DeepEqual(commands, want) {
 		t.Fatalf("commands=%#v, want %#v", commands, want)
+	}
+}
+
+func TestFailedRestorationRemainsDirtyUntilCloseSucceeds(t *testing.T) {
+	m, _ := NewManager("wg0")
+	fail := false
+	var commands []string
+	m.run = func(_ context.Context, args ...string) error {
+		commands = append(commands, strings.Join(args, " "))
+		if fail && args[0] == "dns" {
+			return errors.New("resolver failure")
+		}
+		return nil
+	}
+	if err := m.Apply(context.Background(), netip.MustParseAddr("192.168.1.1"), []string{"home.arpa"}); err != nil {
+		t.Fatal(err)
+	}
+	fail = true
+	if err := m.Apply(context.Background(), netip.MustParseAddr("192.168.1.2"), []string{"new.home.arpa"}); err == nil {
+		t.Fatal("expected failed update and restoration")
+	}
+	commands = nil
+	fail = false
+	if err := m.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(commands, []string{"revert wg0"}) {
+		t.Fatalf("dirty DNS state was abandoned: %v", commands)
 	}
 }
 

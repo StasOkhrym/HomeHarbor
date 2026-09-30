@@ -20,7 +20,7 @@ import (
 
 type bootstrapAuthorizer struct{}
 
-func (bootstrapAuthorizer) IsAdmin(context.Context, *http.Request) bool { return false }
+func (bootstrapAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) { return false, nil }
 
 func TestLoadAndSignInitialSnapshotManifest(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)

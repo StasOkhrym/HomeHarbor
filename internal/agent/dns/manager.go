@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 type commandRunner func(context.Context, ...string) error
@@ -23,6 +24,7 @@ type Manager struct {
 	active   bool
 	resolver netip.Addr
 	suffixes []string
+	dirty    bool
 }
 
 func NewManager(link string) (*Manager, error) {
@@ -40,10 +42,7 @@ func (m *Manager) Apply(ctx context.Context, resolver netip.Addr, suffixes []str
 	if m == nil {
 		return errors.New("dns manager is nil")
 	}
-	if !resolver.IsValid() || resolver.IsUnspecified() {
-		return errors.New("a concrete DNS resolver address is required")
-	}
-	canonical, err := canonicalSuffixes(suffixes)
+	canonical, err := ValidateSettings(resolver, suffixes)
 	if err != nil {
 		return err
 	}
@@ -52,6 +51,7 @@ func (m *Manager) Apply(ctx context.Context, resolver netip.Addr, suffixes []str
 	previousActive := m.active
 	previousResolver := m.resolver
 	previousSuffixes := slices.Clone(m.suffixes)
+	m.dirty = true
 	if err := m.run(ctx, "revert", m.link); err != nil {
 		return fmt.Errorf("reset split DNS link: %w", err)
 	}
@@ -64,9 +64,15 @@ func (m *Manager) Apply(ctx context.Context, resolver netip.Addr, suffixes []str
 				m.active = false
 				m.resolver = netip.Addr{}
 				m.suffixes = nil
+				return errors.Join(err, fmt.Errorf("restore previous split DNS: %w", restoreErr))
 			}
 		} else {
-			_ = m.run(context.Background(), "revert", m.link)
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if cleanupErr := m.run(cleanup, "revert", m.link); cleanupErr != nil {
+				return errors.Join(err, fmt.Errorf("revert failed split DNS: %w", cleanupErr))
+			}
+			m.dirty = false
 		}
 		return err
 	}
@@ -77,25 +83,36 @@ func (m *Manager) Apply(ctx context.Context, resolver netip.Addr, suffixes []str
 }
 
 func (m *Manager) applySettings(ctx context.Context, resolver netip.Addr, suffixes []string) error {
-	if err := m.run(ctx, "dns", m.link, resolver.String()); err != nil {
-		return fmt.Errorf("set split DNS resolver: %w", err)
-	}
-	for _, suffix := range suffixes {
-		if err := m.run(ctx, "domain", m.link, "~"+suffix); err != nil {
-			return fmt.Errorf("set split DNS suffix %s: %w", suffix, err)
-		}
-	}
+	// resolved replaces the domain list per command; send all suffixes at
+	// once, and constrain resolver routing BEFORE exposing the new server.
 	if err := m.run(ctx, "default-route", m.link, "false"); err != nil {
 		return fmt.Errorf("disable split DNS default route: %w", err)
 	}
+
+	args := []string{"domain", m.link}
+	for _, suffix := range suffixes {
+		args = append(args, "~"+suffix)
+	}
+
+	if err := m.run(ctx, args...); err != nil {
+		return fmt.Errorf("set split DNS suffixes: %w", err)
+	}
+
+	if err := m.run(ctx, "dns", m.link, resolver.String()); err != nil {
+		return fmt.Errorf("set split DNS resolver: %w", err)
+	}
+
 	return nil
 }
 
 func (m *Manager) restoreSettings(resolver netip.Addr, suffixes []string) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	if err := m.run(ctx, "revert", m.link); err != nil {
 		return err
 	}
+
 	return m.applySettings(ctx, resolver, suffixes)
 }
 
@@ -104,18 +121,35 @@ func (m *Manager) Close(ctx context.Context) error {
 	if m == nil {
 		return nil
 	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !m.active {
+
+	if !m.active && !m.dirty {
 		return nil
 	}
+
 	if err := m.run(ctx, "revert", m.link); err != nil {
 		return fmt.Errorf("restore system DNS: %w", err)
 	}
+
 	m.active = false
+	m.dirty = false
 	m.resolver = netip.Addr{}
 	m.suffixes = nil
+
 	return nil
+}
+
+// ValidateSettings is the pure preparation boundary shared by snapshot owners.
+func ValidateSettings(resolver netip.Addr, suffixes []string) ([]string, error) {
+	if !resolver.IsValid() || resolver.IsUnspecified() || resolver.IsMulticast() || resolver.Is4In6() || resolver.Zone() != "" {
+		return nil, errors.New("a concrete DNS resolver address is required")
+	}
+	if len(suffixes) == 0 {
+		return nil, errors.New("split DNS requires route-only suffixes")
+	}
+	return canonicalSuffixes(suffixes)
 }
 
 func canonicalSuffixes(values []string) ([]string, error) {

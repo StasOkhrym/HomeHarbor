@@ -65,3 +65,19 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	}
 	writeErrorCode(w, status, code, message)
 }
+
+func (s *Server) listAvailableServices(w http.ResponseWriter, r *http.Request) {
+	device, ok := deviceFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "device authentication required")
+		return
+	}
+
+	items, err := s.services.ListForDevice(r.Context(), device.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list available services")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"services": items})
+}

@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	controlnetwork "github.com/sokhrym/go-tunnels/internal/control/network"
 	"github.com/sokhrym/go-tunnels/internal/control/policy"
+	controlroutes "github.com/sokhrym/go-tunnels/internal/control/routes"
 	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
 )
 
@@ -66,7 +66,7 @@ func (s *Server) revokeDeviceForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) approveRouteForm(w http.ResponseWriter, r *http.Request) {
-	if err := s.network.Approve(r.Context(), r.PathValue("id")); err != nil {
+	if err := s.routes.Approve(r.Context(), r.PathValue("id")); err != nil {
 		http.Error(w, "could not approve route", http.StatusBadRequest)
 		return
 	}
@@ -74,7 +74,7 @@ func (s *Server) approveRouteForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) rejectRouteForm(w http.ResponseWriter, r *http.Request) {
-	if err := s.network.Reject(r.Context(), r.PathValue("id")); err != nil {
+	if err := s.routes.Reject(r.Context(), r.PathValue("id")); err != nil {
 		http.Error(w, "could not reject route", http.StatusBadRequest)
 		return
 	}
@@ -92,15 +92,15 @@ func (s *Server) createRouteForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DNS resolver must be a valid IP address", http.StatusBadRequest)
 		return
 	}
-	item := controlnetwork.AdvertisementRequest{
+	item := controlroutes.AdvertisementRequest{
 		ID:              strings.TrimSpace(r.FormValue("id")),
 		GatewayDeviceID: strings.TrimSpace(r.FormValue("gateway_device_id")),
 		Prefix:          prefix,
 		Resolver:        resolver,
 		DomainSuffix:    strings.TrimSpace(r.FormValue("domain_suffix")),
 	}
-	if _, err := s.network.Advertise(r.Context(), item); err != nil {
-		if errors.Is(err, controlnetwork.ErrInvalidAdvertisement) {
+	if _, err := s.routes.Advertise(r.Context(), item); err != nil {
+		if errors.Is(err, controlroutes.ErrInvalidAdvertisement) {
 			http.Error(w, "route values are invalid", http.StatusBadRequest)
 			return
 		}

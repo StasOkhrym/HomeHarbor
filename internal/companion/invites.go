@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+
 	controlinvites "github.com/sokhrym/go-tunnels/internal/control/invites"
 	"github.com/sokhrym/go-tunnels/internal/invite"
 	"github.com/sokhrym/go-tunnels/internal/protocol"
@@ -111,10 +113,27 @@ func (a RemoteApprover) Approve(ctx context.Context, inviteID, code string, root
 	if err := json.NewDecoder(response.Body).Decode(&pending); err != nil {
 		return err
 	}
-	if err := invite.VerifyProofWithCode(pending.Permit, pending.Proof, pending.ProfileID, code, a.Now().UTC()); err != nil {
+	if pending.InviteID != inviteID || pending.DeviceID != pending.Proof.DeviceID || !bytes.Equal(pending.DevicePublic, pending.Proof.DevicePublicKey) || !bytes.Equal(pending.WireGuardPublicKey, pending.Proof.WireGuardPublicKey) {
+		return invite.ErrInvalidProof
+	}
+	checkAt := a.Now().UTC()
+	if pending.Status == controlinvites.StatusApproved && pending.ApprovedAt != nil {
+		checkAt = pending.ApprovedAt.UTC()
+	}
+	if pending.Status != controlinvites.StatusPending && pending.Status != controlinvites.StatusApproved {
+		return controlinvites.ErrInviteConsumed
+	}
+	network, err := invite.PermitNetworkID(pending.Permit)
+	if err != nil {
+		return err
+	}
+	if err := invite.VerifyPermit(pending.Permit, root.Public().(ed25519.PublicKey), network, checkAt); err != nil {
+		return err
+	}
+	if err := invite.VerifyProofWithCode(pending.Permit, pending.Proof, pending.ProfileID, code, checkAt); err != nil {
 		// Only a structurally valid proof can consume a local code attempt. The
 		// plaintext code and its digest remain inside the companion process.
-		if proofErr := invite.VerifyProof(pending.Permit, pending.Proof, pending.ProfileID, a.Now().UTC()); proofErr != nil {
+		if proofErr := invite.VerifyProof(pending.Permit, pending.Proof, pending.ProfileID, checkAt); proofErr != nil {
 			return proofErr
 		}
 		if a.Attempts == nil {
@@ -146,6 +165,18 @@ func (a RemoteApprover) Approve(ctx context.Context, inviteID, code string, root
 	defer func(body io.ReadCloser) { _ = body.Close() }(response.Body)
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("approve invite: status %d", response.StatusCode)
+	}
+	var result controlinvites.ApprovalResult
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 16<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return errors.New("invalid public approval response")
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return errors.New("invalid public approval response")
+	}
+	if result.InviteID != pending.InviteID || result.DeviceID != pending.DeviceID || result.ProfileID != pending.ProfileID || result.Status != controlinvites.StatusApproved {
+		return errors.New("approval response differs from signed public diff")
 	}
 	return nil
 }
@@ -205,12 +236,17 @@ func (a RemoteApprover) PublishSnapshot(ctx context.Context, inviteID string, ro
 	if snapshotNetwork != permitNetworkID {
 		return errors.New("invite and signed snapshot belong to different networks")
 	}
+	var wireGuard wgtypes.Key
+	if len(record.WireGuardPublicKey) != len(wireGuard) {
+		return invite.ErrInvalidProof
+	}
+	copy(wireGuard[:], record.WireGuardPublicKey)
 	session := NewSession(a.Now)
 	if err := session.Unlock(root); err != nil {
 		return err
 	}
 	next, err := NewSnapshotSigner(session, snapshotNetwork, a.KeyID).SignDeviceAdditionFromPool(previous, DeviceAddition{ProfileID: record.ProfileID, Device: snapshot.Device{
-		ID: record.DeviceID, Role: "client", IdentityPublicKey: base64.RawURLEncoding.EncodeToString(record.DevicePublic), WireGuardPublicKey: base64.RawURLEncoding.EncodeToString(record.WireGuardPublicKey),
+		ID: record.DeviceID, Role: "client", IdentityPublicKey: base64.RawURLEncoding.EncodeToString(record.DevicePublic), WireGuardPublicKey: wireGuard.String(),
 	}}, a.OverlayPool)
 	session.Close()
 	if err != nil {

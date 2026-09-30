@@ -70,7 +70,8 @@ func TestRunCoordinationVerifiesAndAppliesSignedSnapshot(t *testing.T) {
 	}
 	server := newCoordinationTestServer(t, envelope)
 	defer server.Close()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 	recorder := &snapshotRecorder{cancel: cancel}
 	err = RunCoordination(ctx, CoordinationConfig{URL: "ws" + server.URL[len("http"):], Credential: "credential", DeviceID: "device-1", NetworkID: "home", RootPublicKey: publicKey, HeartbeatEvery: time.Hour}, recorder)
 	if err != nil {
@@ -82,8 +83,9 @@ func TestRunCoordinationVerifiesAndAppliesSignedSnapshot(t *testing.T) {
 }
 
 func TestRunCoordinationLoopStopsOnCancellationDuringBackoff(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		cancel()
@@ -118,6 +120,9 @@ func TestRunCoordinationLoopRetainsCursorAcrossReconnect(t *testing.T) {
 	}
 	var connections atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveCoordinationTestHistory(w, r, []snapshot.Envelope{first, second}) {
+			return
+		}
 		connection, acceptErr := websocket.Accept(w, r, nil)
 		if acceptErr != nil {
 			t.Errorf("accept: %v", acceptErr)
@@ -150,11 +155,12 @@ func TestRunCoordinationLoopRetainsCursorAcrossReconnect(t *testing.T) {
 			_ = connection.Close(websocket.StatusServiceRestart, "test reconnect")
 			return
 		}
-		<-r.Context().Done()
+		consumeCoordinationTestPeer(r.Context(), connection)
 	}))
 	defer server.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 	recorder := &cursorRecorder{cancel: cancel}
 	err = RunCoordinationLoop(ctx, CoordinationConfig{
 		URL:              "ws" + server.URL[len("http"):],
@@ -178,7 +184,7 @@ func TestRunCoordinationPublishesCandidateUpdatesAfterWelcome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	var received controlprotocol.CandidateUpdate
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -255,6 +261,9 @@ func TestCandidatePublisherStopsWhenSessionContextEnds(t *testing.T) {
 func newCoordinationTestServer(t *testing.T, envelope snapshot.Envelope) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveCoordinationTestHistory(w, r, []snapshot.Envelope{envelope}) {
+			return
+		}
 		connection, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			t.Errorf("accept: %v", err)
@@ -276,6 +285,6 @@ func newCoordinationTestServer(t *testing.T, envelope snapshot.Envelope) *httpte
 			return
 		}
 		_ = wsjson.Write(r.Context(), connection, controlprotocol.Message{Type: "network.snapshot", Payload: payload})
-		<-r.Context().Done()
+		consumeCoordinationTestPeer(r.Context(), connection)
 	}))
 }

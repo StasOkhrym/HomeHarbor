@@ -2,9 +2,12 @@ package node
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
+	"sync"
 
 	"github.com/sokhrym/go-tunnels/internal/agent/nft"
 	"github.com/sokhrym/go-tunnels/internal/control/policy"
@@ -12,22 +15,53 @@ import (
 	"github.com/sokhrym/go-tunnels/internal/tunnel"
 )
 
-// GatewayReconciler applies only snapshots that identify this node as an
-// approved gateway. It deliberately ignores client-only snapshots so a client
-// cannot accidentally gain forwarding privileges by running the same binary.
+// GatewayReconciler owns the tunnel firewall, link routes and optional DNS.
+// Removing this node's gateway approval installs an empty deny policy and
+// revokes owned routes/DNS rather than retaining the previous gateway state.
 type GatewayReconciler struct {
-	interfaceName string
-	deviceID      string
-	policies      *nft.Applier
-	dns           DNSApplier
-	forwarding    bool
-	ensure        func(context.Context, string, string, []netip.Prefix) error
+	mu                   sync.Mutex
+	interfaceName        string
+	deviceID             string
+	policies             *nft.Applier
+	dns                  DNSApplier
+	forwarding           bool
+	ensure               func(context.Context, string, string, []netip.Prefix) error
+	routes               routeOwnership
+	prepared             *gatewayPlan
+	guarded              bool
+	staged               bool
+	revision             uint64
+	committedFingerprint [32]byte
+}
+
+// StagedSnapshotApplier is the gateway's multi-owner boundary. Parent owns
+// serialization and the signed/applied revision cursor: Prepare every owner,
+// Guard gateways, ApplyPrepared gateways and Apply other owners, then Commit
+// gateways ONLY after WireGuard, routes and DNS all succeeded. Any failure
+// returns without Commit and leaves the tunnel closed for same-revision retry.
+// Apply is a convenience for a gateway without other state owners; composition
+// MUST use ApplyPrepared instead or it would release the guard too early.
+type StagedSnapshotApplier interface {
+	Prepare(context.Context, snapshot.NetworkSnapshot) error
+	Guard(context.Context, snapshot.NetworkSnapshot) error
+	ApplyPrepared(context.Context, snapshot.NetworkSnapshot) error
+	Commit(context.Context, snapshot.NetworkSnapshot) error
+}
+
+type gatewayPlan struct {
+	fingerprint [32]byte
+	value       snapshot.NetworkSnapshot
+	policy      *nft.PreparedPolicy
+	overlay     string
+	routes      []netip.Prefix
+	approved    bool
 }
 
 // DNSApplier is the small consumer-side contract needed by the gateway. It
 // keeps the policy reconciler testable and prevents it from depending on the
 // concrete systemd-resolved implementation.
 type DNSApplier interface {
+	Prepare(context.Context, snapshot.NetworkSnapshot) error
 	Apply(context.Context, snapshot.NetworkSnapshot) error
 }
 
@@ -35,9 +69,11 @@ type DNSApplier interface {
 // never enables forwarding or installs nftables rules: a client must consume
 // gateway routes, not become a transit router for the host network.
 type ClientReconciler struct {
+	mu            sync.Mutex
 	interfaceName string
 	deviceID      string
 	ensure        func(context.Context, string, string, []netip.Prefix) error
+	routes        routeOwnership
 }
 
 // NewClientReconciler creates the production client network reconciler.
@@ -48,13 +84,21 @@ func NewClientReconciler(interfaceName, deviceID string) *ClientReconciler {
 // NewClientReconcilerWithEnsurer keeps command execution behind a narrow seam
 // so snapshot selection can be tested without CAP_NET_ADMIN or a Linux host.
 func NewClientReconcilerWithEnsurer(interfaceName, deviceID string, ensure func(context.Context, string, string, []netip.Prefix) error) *ClientReconciler {
-	return &ClientReconciler{interfaceName: interfaceName, deviceID: deviceID, ensure: ensure}
+	return &ClientReconciler{interfaceName: interfaceName, deviceID: deviceID, ensure: ensure, routes: newRouteOwnership()}
 }
 
 // Apply reconciles the client's overlay address and every approved LAN route.
 // Route validation happens before the command boundary, so a malformed signed
 // snapshot cannot partially change the local interface.
 func (r *ClientReconciler) Apply(ctx context.Context, value snapshot.NetworkSnapshot) error {
+	if r == nil {
+		return errors.New("client reconciler is not configured")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.Prepare(ctx, value); err != nil {
+		return err
+	}
 	if r == nil || r.interfaceName == "" || r.deviceID == "" || r.ensure == nil {
 		return errors.New("client reconciler is not configured")
 	}
@@ -82,7 +126,51 @@ func (r *ClientReconciler) Apply(ctx context.Context, value snapshot.NetworkSnap
 		}
 		routes = append(routes, prefix)
 	}
-	return r.ensure(ctx, r.interfaceName, local.OverlayAddress, routes)
+	return r.routes.reconcile(ctx, r.interfaceName, routes, func() error { return r.ensure(ctx, r.interfaceName, local.OverlayAddress, routes) })
+}
+
+func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSnapshot) error {
+	if r == nil || r.ensure == nil || r.deviceID == "" {
+		return errors.New("client reconciler is not configured")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := nft.Compile(r.interfaceName, nil, policy.Snapshot{DefaultAction: policy.ActionDeny}); err != nil {
+		return err
+	}
+	found := false
+	peers := make(map[string]netip.Prefix, len(value.Devices))
+	for _, d := range value.Devices {
+		if _, exists := peers[d.ID]; exists {
+			return errors.New("duplicate client device identity")
+		}
+		p, err := netip.ParsePrefix(d.OverlayAddress)
+		if err != nil {
+			return fmt.Errorf("device %s overlay: %w", d.ID, err)
+		}
+		peers[d.ID] = p
+		if d.ID == r.deviceID {
+			found = true
+			if err != nil || !p.IsValid() || p.Bits() != p.Addr().BitLen() || p.Addr().IsUnspecified() || d.Role != "client" {
+				return errors.New("invalid client overlay identity")
+			}
+		}
+	}
+	if !found {
+		return fmt.Errorf("client device %s is missing from snapshot", r.deviceID)
+	}
+	if _, err := nft.Compile(r.interfaceName, peers, policy.Snapshot{DefaultAction: policy.ActionDeny}); err != nil {
+		return err
+	}
+	for _, route := range value.Routes {
+		p, err := netip.ParsePrefix(route.Prefix)
+		if err != nil || !p.IsValid() || p.Bits() == 0 {
+			return fmt.Errorf("route %s has invalid non-default prefix", route.ID)
+		}
+	}
+	_, _, err := prepareDNS(value)
+	return err
 }
 
 // NewGatewayReconciler composes firewall and optional split-DNS ownership.
@@ -100,7 +188,11 @@ func NewGatewayReconciler(interfaceName, deviceID string, dnsReconcilers ...*DNS
 // deployment choice. The default constructor remains fail-safe for developers
 // and hosts where another network manager owns sysctl state.
 func NewGatewayReconcilerWithOptions(interfaceName, deviceID string, dnsReconciler *DNSReconciler, enableForwarding bool) *GatewayReconciler {
-	return NewGatewayReconcilerWithEnsurer(interfaceName, deviceID, dnsReconciler, enableForwarding, tunnel.EnsureLinuxInterface)
+	var owner DNSApplier
+	if dnsReconciler != nil {
+		owner = dnsReconciler
+	}
+	return NewGatewayReconcilerWithEnsurer(interfaceName, deviceID, owner, enableForwarding, tunnel.EnsureLinuxInterface)
 }
 
 // NewGatewayReconcilerWithEnsurer exposes the host-interface boundary for
@@ -108,12 +200,55 @@ func NewGatewayReconcilerWithOptions(interfaceName, deviceID string, dnsReconcil
 // implementation, while tests can verify policy/DNS transaction ordering
 // without creating a real tunnel device.
 func NewGatewayReconcilerWithEnsurer(interfaceName, deviceID string, dnsReconciler DNSApplier, enableForwarding bool, ensure func(context.Context, string, string, []netip.Prefix) error) *GatewayReconciler {
-	return &GatewayReconciler{interfaceName: interfaceName, deviceID: deviceID, policies: nft.NewApplier(interfaceName, nil), dns: dnsReconciler, forwarding: enableForwarding, ensure: ensure}
+	return &GatewayReconciler{interfaceName: interfaceName, deviceID: deviceID, policies: nft.NewApplier(interfaceName, nil), dns: dnsReconciler, forwarding: enableForwarding, ensure: ensure, routes: newRouteOwnership()}
 }
 
 func (r *GatewayReconciler) Apply(ctx context.Context, value snapshot.NetworkSnapshot) error {
+	if r == nil {
+		return errors.New("gateway reconciler is not configured")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := r.prepare(ctx, value); err != nil {
+		return err
+	}
+
+	if err := r.guard(ctx, value); err != nil {
+		return err
+	}
+
+	if err := r.applyPrepared(ctx, value); err != nil {
+		return err
+	}
+
+	return r.commit(ctx, value)
+}
+
+func (r *GatewayReconciler) Prepare(ctx context.Context, value snapshot.NetworkSnapshot) error {
+	if r == nil {
+		return errors.New("gateway reconciler is not configured")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.prepare(ctx, value)
+}
+
+func (r *GatewayReconciler) prepare(ctx context.Context, value snapshot.NetworkSnapshot) error {
 	if r == nil || r.policies == nil || r.interfaceName == "" || r.deviceID == "" || r.ensure == nil {
 		return errors.New("gateway reconciler is not configured")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if value.Revision == 0 || value.Revision < r.revision {
+		return nft.ErrRevisionRollback
+	}
+	if value.Revision == r.revision && snapshotFingerprint(value) != r.committedFingerprint {
+		return errors.New("different gateway state for committed revision")
 	}
 	var local snapshot.Device
 	var isGateway bool
@@ -123,11 +258,11 @@ func (r *GatewayReconciler) Apply(ctx context.Context, value snapshot.NetworkSna
 			break
 		}
 	}
-	if !isGateway {
-		return nil
-	}
 	peers := make(map[string]netip.Prefix, len(value.Devices))
 	for _, device := range value.Devices {
+		if _, exists := peers[device.ID]; exists || device.ID == "" {
+			return fmt.Errorf("duplicate or empty device ID %s", device.ID)
+		}
 		prefix, err := netip.ParsePrefix(device.OverlayAddress)
 		if err != nil {
 			return fmt.Errorf("device %s has invalid overlay address: %w", device.ID, err)
@@ -137,29 +272,50 @@ func (r *GatewayReconciler) Apply(ctx context.Context, value snapshot.NetworkSna
 			local = device
 		}
 	}
-	if local.ID == "" {
+	if local.ID == "" && isGateway {
 		return errors.New("gateway device is missing from snapshot")
 	}
-	overlay, err := netip.ParsePrefix(local.OverlayAddress)
-	if err != nil {
-		return fmt.Errorf("gateway overlay address: %w", err)
+	if isGateway && local.Role != "gateway" {
+		return errors.New("approved gateway has invalid device role")
 	}
 	routes := make([]netip.Prefix, 0)
-	for _, route := range value.Routes {
-		if route.GatewayID != r.deviceID {
-			continue
+	if isGateway {
+		for id, prefix := range peers {
+			if id != r.deviceID {
+				routes = append(routes, prefix)
+			}
 		}
-		prefix, parseErr := netip.ParsePrefix(route.Prefix)
-		if parseErr != nil {
-			return fmt.Errorf("route %s has invalid prefix: %w", route.ID, parseErr)
-		}
-		routes = append(routes, prefix)
 	}
-	if err := r.ensure(ctx, r.interfaceName, overlay.String(), routes); err != nil {
+	seenRoutes := make(map[string]bool)
+	for _, route := range value.Routes {
+		if route.ID == "" || seenRoutes[route.ID] {
+			return errors.New("duplicate or empty route ID")
+		}
+		seenRoutes[route.ID] = true
+		prefix, parseErr := netip.ParsePrefix(route.Prefix)
+		if parseErr != nil || !prefix.IsValid() || prefix.Bits() == 0 {
+			return fmt.Errorf("route %s has invalid non-default prefix", route.ID)
+		}
+		// LANs served by this gateway keep their native host routes. Only
+		// another approved gateway's LAN belongs on the encrypted interface.
+		if isGateway && route.GatewayID != r.deviceID {
+			approved := false
+			for _, gateway := range value.Gateways {
+				if gateway.DeviceID == route.GatewayID {
+					approved = true
+				}
+			}
+			if !approved {
+				return fmt.Errorf("route %s references unapproved gateway", route.ID)
+			}
+			routes = append(routes, prefix.Masked())
+		}
+	}
+	if _, _, err := prepareDNS(value); err != nil {
 		return err
 	}
-	if r.forwarding {
-		if err := tunnel.EnableLinuxForwarding(ctx); err != nil {
+	if r.dns != nil {
+		if err := r.dns.Prepare(ctx, value); err != nil {
 			return err
 		}
 	}
@@ -172,20 +328,150 @@ func (r *GatewayReconciler) Apply(ctx context.Context, value snapshot.NetworkSna
 		protocol := policy.Protocol(acl.Protocol)
 		rules = append(rules, policy.Rule{ID: acl.ID, SourceDeviceID: acl.SourceDeviceID, Destination: destination, Protocol: protocol, PortFrom: acl.PortFrom, PortTo: acl.PortTo})
 	}
-	r.policies.UpdatePeers(peers)
-	if r.policies.Revision() != value.Revision {
-		if err := r.policies.Apply(ctx, policy.Snapshot{Revision: value.Revision, DefaultAction: policy.ActionDeny, Rules: rules}); err != nil {
+	// Validate even an unapproved local gateway's ACL before any mutation;
+	// its final policy is nevertheless empty so revocation cannot retain allows.
+	if _, err := nft.Compile(r.interfaceName, peers, policy.Snapshot{Revision: value.Revision, DefaultAction: policy.ActionDeny, Rules: rules}); err != nil {
+		return err
+	}
+	if !isGateway {
+		rules = nil
+	}
+	prepared, err := r.policies.Prepare(peers, policy.Snapshot{Revision: value.Revision, DefaultAction: policy.ActionDeny, Rules: rules})
+	if err != nil {
+		return err
+	}
+	r.prepared = &gatewayPlan{fingerprint: snapshotFingerprint(value), value: cloneNetworkSnapshot(value), policy: prepared, overlay: local.OverlayAddress, routes: uniquePrefixes(routes), approved: isGateway}
+	r.staged = false
+	return nil
+}
+
+func snapshotFingerprint(value snapshot.NetworkSnapshot) [32]byte {
+	encoded, _ := json.Marshal(value) // NetworkSnapshot contains no fallible JSON values.
+	return sha256.Sum256(encoded)
+}
+
+func (r *GatewayReconciler) matchesPrepared(value snapshot.NetworkSnapshot) error {
+	if r.prepared == nil || r.prepared.fingerprint != snapshotFingerprint(value) {
+		return errors.New("snapshot does not match prepared gateway state")
+	}
+
+	return nil
+}
+
+func (r *GatewayReconciler) Guard(ctx context.Context, value snapshot.NetworkSnapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.guard(ctx, value)
+}
+
+func (r *GatewayReconciler) guard(ctx context.Context, value snapshot.NetworkSnapshot) error {
+	if err := r.matchesPrepared(value); err != nil {
+		return err
+	}
+
+	r.guarded, r.staged = false, false
+
+	if err := r.policies.Guard(ctx); err != nil {
+		return err
+	}
+
+	r.guarded = true
+
+	return nil
+}
+
+// Bootstrap installs a tunnel-only deny before any encrypted path is opened.
+// Boot callers must fail startup if this fails; no valid snapshot is required.
+func (r *GatewayReconciler) Bootstrap(ctx context.Context) error {
+	if r == nil || r.policies == nil {
+		return errors.New("gateway reconciler is not configured")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.staged = false
+
+	if err := r.policies.Guard(ctx); err != nil {
+		return err
+	}
+
+	r.guarded = true
+
+	return nil
+}
+
+func (r *GatewayReconciler) ApplyPrepared(ctx context.Context, value snapshot.NetworkSnapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.applyPrepared(ctx, value)
+}
+
+func (r *GatewayReconciler) applyPrepared(ctx context.Context, value snapshot.NetworkSnapshot) error {
+	if err := r.matchesPrepared(value); err != nil {
+		return err
+	}
+	if !r.guarded {
+		return errors.New("gateway apply requires tunnel deny guard")
+	}
+	r.staged = false
+	plan := r.prepared
+	if err := r.routes.reconcile(ctx, r.interfaceName, plan.routes, func() error {
+		if !plan.approved {
+			return nil
+		}
+		return r.ensure(ctx, r.interfaceName, plan.overlay, plan.routes)
+	}); err != nil {
+		return err
+	}
+	if r.forwarding && plan.approved {
+		if err := tunnel.EnableLinuxForwarding(ctx); err != nil {
 			return err
 		}
 	}
 	if r.dns != nil {
-		// A DNS command can fail after the firewall has committed. The next
-		// retry sees the same signed revision, skips the already-installed
-		// policy, and gets another chance to reconcile DNS without weakening
-		// nftables' monotonic revision invariant.
-		if err := r.dns.Apply(ctx, value); err != nil {
+		dnsValue := cloneNetworkSnapshot(plan.value)
+		if !plan.approved {
+			dnsValue.Routes = nil
+		}
+		if err := r.dns.Apply(ctx, dnsValue); err != nil {
 			return fmt.Errorf("apply split DNS snapshot revision %d: %w", value.Revision, err)
 		}
 	}
+	r.staged = true
 	return nil
+}
+
+func (r *GatewayReconciler) Commit(ctx context.Context, value snapshot.NetworkSnapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.commit(ctx, value)
+}
+
+func (r *GatewayReconciler) commit(ctx context.Context, value snapshot.NetworkSnapshot) error {
+	if err := r.matchesPrepared(value); err != nil {
+		return err
+	}
+
+	if !r.guarded || !r.staged {
+		return errors.New("gateway commit requires successful guarded apply")
+	}
+
+	if err := r.policies.Commit(ctx, r.prepared.policy); err != nil {
+		return err
+	}
+
+	r.revision, r.guarded, r.staged = value.Revision, false, false
+	r.committedFingerprint = r.prepared.fingerprint
+
+	return nil
+}
+
+func (r *GatewayReconciler) Revision() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.revision
 }

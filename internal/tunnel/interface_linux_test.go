@@ -5,10 +5,9 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"reflect"
 	"testing"
-
-	"net/netip"
 )
 
 func TestEnsureLinuxInterfaceReconcilesIdempotently(t *testing.T) {

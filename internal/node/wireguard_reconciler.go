@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"sync"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -54,10 +55,16 @@ func NewSnapshotWireGuardReconcilerWithApplier(interfaceName, localDeviceID, pri
 // Apply installs a complete peer set derived from the signed snapshot. A
 // failed kernel update leaves both the previous snapshot and endpoint map
 // intact, allowing the coordination loop to retry without losing connectivity.
-func (r *SnapshotWireGuardReconciler) Apply(_ context.Context, value snapshot.NetworkSnapshot) error {
+func (r *SnapshotWireGuardReconciler) Apply(ctx context.Context, value snapshot.NetworkSnapshot) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	peers, err := BuildWireGuardPeerConfigs(value, r.localDeviceID)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := r.validateDesired(value); err != nil {
+		return err
+	}
+	peers, err := r.desiredPeers(value)
 	if err != nil {
 		return err
 	}
@@ -78,10 +85,105 @@ func (r *SnapshotWireGuardReconciler) Apply(_ context.Context, value snapshot.Ne
 	return nil
 }
 
+// Prepare validates identity, topology and the local key without touching
+// WireGuard or endpoint ownership. Parent must prepare this owner before the
+// gateway guard and any other mutations. Same-revision Apply is intentionally
+// repeated after another owner fails; current is WG state, not global success.
+func (r *SnapshotWireGuardReconciler) Prepare(ctx context.Context, value snapshot.NetworkSnapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := r.validateDesired(value); err != nil {
+		return err
+	}
+	peers, err := r.desiredPeers(value)
+	if err != nil {
+		return err
+	}
+	_, err = r.configForPeers(peers)
+	return err
+}
+
+func (r *SnapshotWireGuardReconciler) desiredPeers(value snapshot.NetworkSnapshot) ([]tunnel.PeerConfig, error) {
+	peers, err := BuildWireGuardPeerConfigs(value, r.localDeviceID)
+	if !errors.Is(err, ErrLocalDeviceMissing) || value.Revision == 0 {
+		return peers, err
+	}
+	for _, gateway := range value.Gateways {
+		if gateway.DeviceID == r.localDeviceID {
+			return nil, err
+		}
+	}
+	// A verified revision may revoke this node entirely. Absence means an
+	// empty ReplacePeers, not "keep the last working permissions". Do this
+	// on restart too: kernel peers can outlive the process's in-memory cursor.
+	return nil, nil
+}
+
+func (r *SnapshotWireGuardReconciler) validateDesired(value snapshot.NetworkSnapshot) error {
+	if r.current != nil {
+		if value.Revision < r.current.Revision {
+			return errors.New("WireGuard snapshot revision rollback")
+		}
+		if value.Revision == r.current.Revision && snapshotFingerprint(value) != snapshotFingerprint(*r.current) {
+			return errors.New("different WireGuard state for accepted revision")
+		}
+	}
+	addresses := make(map[netip.Addr]bool)
+	keys := make(map[wgtypes.Key]bool)
+	for _, device := range value.Devices {
+		p, err := netip.ParsePrefix(device.OverlayAddress)
+		if err != nil || !p.IsValid() || p.Bits() != p.Addr().BitLen() || p.Addr().IsUnspecified() || p.Addr().IsMulticast() || p.Addr().Is4In6() {
+			return fmt.Errorf("device %s requires a concrete overlay host prefix", device.ID)
+		}
+		if addresses[p.Addr()] {
+			return errors.New("duplicate WireGuard overlay identity")
+		}
+		addresses[p.Addr()] = true
+		key, err := wgtypes.ParseKey(device.WireGuardPublicKey)
+		if err != nil || key == (wgtypes.Key{}) {
+			return fmt.Errorf("device %s has invalid WireGuard identity", device.ID)
+		}
+		if keys[key] {
+			return errors.New("duplicate WireGuard public key")
+		}
+		keys[key] = true
+		if device.Role != "gateway" && device.Role != "client" {
+			return errors.New("invalid WireGuard device role")
+		}
+	}
+	// A LAN route must not give another gateway authority to impersonate an
+	// overlay host or overlap a different gateway's cryptokey route ownership.
+	for i, route := range value.Routes {
+		prefix, err := netip.ParsePrefix(route.Prefix)
+		if err != nil || prefix.Bits() == 0 {
+			return fmt.Errorf("invalid WireGuard route %s", route.ID)
+		}
+		for address := range addresses {
+			if prefix.Contains(address) {
+				return errors.New("LAN route overlaps overlay identity")
+			}
+		}
+		for _, previous := range value.Routes[:i] {
+			other, err := netip.ParsePrefix(previous.Prefix)
+			if err == nil && previous.GatewayID != route.GatewayID && prefix.Overlaps(other) {
+				return errors.New("LAN routes overlap across WireGuard gateways")
+			}
+		}
+	}
+	_, _, err := prepareDNS(value)
+	return err
+}
+
 // SetPeerEndpoint updates only the endpoint of an existing or future peer.
 // Before the first snapshot it is cached; after that it is applied together
 // with the currently accepted allowed-prefix set.
-func (r *SnapshotWireGuardReconciler) SetPeerEndpoint(_ context.Context, publicKey string, endpoint netip.AddrPort) error {
+func (r *SnapshotWireGuardReconciler) SetPeerEndpoint(ctx context.Context, publicKey string, endpoint netip.AddrPort) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if publicKey == "" || !endpoint.IsValid() || endpoint.Port() == 0 || endpoint.Addr().IsUnspecified() {
 		return errors.New("valid peer public key and endpoint are required")
 	}
@@ -94,7 +196,7 @@ func (r *SnapshotWireGuardReconciler) SetPeerEndpoint(_ context.Context, publicK
 		r.endpoints[publicKey] = endpoint
 		return nil
 	}
-	peers, err := BuildWireGuardPeerConfigs(*r.current, r.localDeviceID)
+	peers, err := r.desiredPeers(*r.current)
 	if err != nil {
 		return err
 	}
@@ -121,14 +223,17 @@ func (r *SnapshotWireGuardReconciler) SetPeerEndpoint(_ context.Context, publicK
 // ClearPeerEndpoint removes a relay/direct endpoint while preserving the
 // peer's public key and allowed prefixes. A subsequent transport can safely
 // install a fresh endpoint without rebuilding policy state.
-func (r *SnapshotWireGuardReconciler) ClearPeerEndpoint(_ context.Context, publicKey string) error {
+func (r *SnapshotWireGuardReconciler) ClearPeerEndpoint(ctx context.Context, publicKey string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.current == nil {
 		delete(r.endpoints, publicKey)
 		return nil
 	}
-	peers, err := BuildWireGuardPeerConfigs(*r.current, r.localDeviceID)
+	peers, err := r.desiredPeers(*r.current)
 	if err != nil {
 		return err
 	}
@@ -168,8 +273,18 @@ func peerExists(peers []tunnel.PeerConfig, publicKey string) bool {
 
 func cloneNetworkSnapshot(value snapshot.NetworkSnapshot) snapshot.NetworkSnapshot {
 	copy := value
-	copy.Devices = append([]snapshot.Device(nil), value.Devices...)
-	copy.Gateways = append([]snapshot.Gateway(nil), value.Gateways...)
-	copy.Routes = append([]snapshot.Route(nil), value.Routes...)
+	copy.Devices = slices.Clone(value.Devices)
+	copy.Gateways = slices.Clone(value.Gateways)
+	copy.Routes = slices.Clone(value.Routes)
+	copy.ACL = slices.Clone(value.ACL)
+	copy.PreviousHash = slices.Clone(value.PreviousHash)
+	copy.Services = slices.Clone(value.Services)
+	copy.Profiles = slices.Clone(value.Profiles)
+	for i := range copy.Profiles {
+		copy.Profiles[i].DeviceIDs = slices.Clone(value.Profiles[i].DeviceIDs)
+		copy.Profiles[i].ServiceIDs = slices.Clone(value.Profiles[i].ServiceIDs)
+		copy.Profiles[i].ACLRuleIDs = slices.Clone(value.Profiles[i].ACLRuleIDs)
+	}
+
 	return copy
 }

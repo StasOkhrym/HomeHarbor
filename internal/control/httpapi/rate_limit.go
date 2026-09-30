@@ -1,11 +1,17 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
 )
+
+// RateLimitStore is owned by the HTTP consumer, not by its Redis adapter.
+type RateLimitStore interface {
+	Allow(context.Context, string, string, int, time.Duration) (bool, time.Duration, error)
+}
 
 type rateWindow struct {
 	started time.Time
@@ -18,12 +24,20 @@ const maxTrackedRateLimitClients = 10_000
 // endpoints. It bounds credential guessing without pretending to be a global
 // distributed quota; multiple control replicas should add a shared edge limit.
 type RateLimiter struct {
+	shared RateLimitStore
+	bucket string
 	limit  int
 	window time.Duration
 	now    func() time.Time
 
 	mu      sync.Mutex
 	clients map[string]rateWindow
+}
+
+// NewSharedRateLimiter never falls back to a process-local quota. The memory
+// constructor remains available for deterministic unit tests only.
+func NewSharedRateLimiter(store RateLimitStore, bucket string, limit int, window time.Duration) *RateLimiter {
+	return &RateLimiter{shared: store, bucket: bucket, limit: limit, window: window}
 }
 
 func NewRateLimiter(limit int, window time.Duration, now func() time.Time) *RateLimiter {
@@ -86,8 +100,24 @@ func (l *RateLimiter) Allow(key string) bool {
 func (l *RateLimiter) Middleware(key func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !l.Allow(key(r)) {
-				w.Header().Set("Retry-After", strconv.FormatInt(int64(l.window/time.Second), 10))
+			allowed, retry := false, l.window
+			if l.shared != nil {
+				ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+				var err error
+				allowed, retry, err = l.shared.Allow(ctx, l.bucket, key(r), l.limit, l.window)
+				cancel()
+				if err != nil {
+					writeError(w, http.StatusServiceUnavailable, "security state unavailable")
+					return
+				}
+			} else if l.clients != nil {
+				allowed = l.Allow(key(r))
+			} else {
+				writeError(w, http.StatusServiceUnavailable, "security state unavailable")
+				return
+			}
+			if !allowed {
+				w.Header().Set("Retry-After", strconv.FormatInt(max(1, int64((retry+time.Second-1)/time.Second)), 10))
 				writeError(w, http.StatusTooManyRequests, "too many requests")
 				return
 			}

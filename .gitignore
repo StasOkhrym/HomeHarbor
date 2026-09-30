@@ -13,3 +13,4 @@ secrets/
 config/control.toml
 config/relay.toml
 .local/
+__pycache__/

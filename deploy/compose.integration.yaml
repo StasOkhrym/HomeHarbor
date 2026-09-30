@@ -1,6 +1,48 @@
+# Standalone test stack: no application configuration or companion trust keys.
 services:
   postgres:
-    # The base Compose file keeps PostgreSQL private to the Compose network.
-    # This override exposes an ephemeral high port only for host-side tests.
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: go_tunnels
+      POSTGRES_USER: go_tunnels
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: [postgres-data:/var/lib/postgresql/data]
     ports:
       - "127.0.0.1:${INTEGRATION_POSTGRES_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U go_tunnels -d go_tunnels"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:8.2-alpine
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        password=$$(cat /run/secrets/redis_password)
+        test -n "$$password"
+        hash=$$(printf '%s' "$$password" | sha256sum | cut -d ' ' -f 1)
+        printf 'user default on #%s ~* &* +@all\n' "$$hash" > /tmp/users.acl
+        unset password hash
+        exec redis-server --aclfile /tmp/users.acl --bind 0.0.0.0 \
+          --protected-mode yes --maxmemory 128mb --maxmemory-policy noeviction \
+          --appendonly no --save ""
+    secrets: [redis_password]
+    ports:
+      - "127.0.0.1:${INTEGRATION_REDIS_PORT:-56379}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$(cat /run/secrets/redis_password) redis-cli ping | grep -qx PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 256m
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+secrets:
+  postgres_password: {file: "${INTEGRATION_SECRETS_DIR:-../secrets}/postgres_password"}
+  redis_password: {file: "${INTEGRATION_SECRETS_DIR:-../secrets}/redis_password"}
+volumes:
+  postgres-data:

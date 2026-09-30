@@ -20,20 +20,32 @@ import (
 	"github.com/ThreeDotsLabs/watermill/pubsub/gochannel"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 
-	"github.com/sokhrym/go-tunnels/internal/control/audit"
+	workflowstorage "github.com/sokhrym/go-tunnels/internal/app/control/storage"
+	"github.com/sokhrym/go-tunnels/internal/app/control/workflows"
+	auditstorage "github.com/sokhrym/go-tunnels/internal/control/audit/storage"
 	"github.com/sokhrym/go-tunnels/internal/control/coordination"
 	"github.com/sokhrym/go-tunnels/internal/control/devices"
+	devicesstorage "github.com/sokhrym/go-tunnels/internal/control/devices/storage"
 	"github.com/sokhrym/go-tunnels/internal/control/httpapi"
 	"github.com/sokhrym/go-tunnels/internal/control/identity"
+	identityredis "github.com/sokhrym/go-tunnels/internal/control/identity/redis"
+	identitystorage "github.com/sokhrym/go-tunnels/internal/control/identity/storage"
 	controlinvites "github.com/sokhrym/go-tunnels/internal/control/invites"
+	invitesstorage "github.com/sokhrym/go-tunnels/internal/control/invites/storage"
 	"github.com/sokhrym/go-tunnels/internal/control/policy"
-	controlnetwork "github.com/sokhrym/go-tunnels/internal/control/routes"
+	policystorage "github.com/sokhrym/go-tunnels/internal/control/policy/storage"
+	controlroutes "github.com/sokhrym/go-tunnels/internal/control/routes"
+	routesstorage "github.com/sokhrym/go-tunnels/internal/control/routes/storage"
 	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
+	servicesstorage "github.com/sokhrym/go-tunnels/internal/control/services/storage"
 	controlsnapshots "github.com/sokhrym/go-tunnels/internal/control/snapshots"
+	snapshotsstorage "github.com/sokhrym/go-tunnels/internal/control/snapshots/storage"
 	"github.com/sokhrym/go-tunnels/internal/platform/config"
 	"github.com/sokhrym/go-tunnels/internal/platform/events"
 	"github.com/sokhrym/go-tunnels/internal/platform/lifecycle"
+	"github.com/sokhrym/go-tunnels/internal/platform/redissecurity"
 	"github.com/sokhrym/go-tunnels/internal/relay"
 	networksnapshot "github.com/sokhrym/go-tunnels/internal/snapshot"
 	"github.com/sokhrym/go-tunnels/migrations"
@@ -47,6 +59,9 @@ type App struct {
 	pool          *pgxpool.Pool
 	bus           *gochannel.GoChannel
 	logger        *slog.Logger
+	redis         *redis.Client
+	auditPipeline *events.AuditPipeline
+	coordination  *coordination.Handler
 }
 
 var _ lifecycle.Component = (*App)(nil)
@@ -58,6 +73,32 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if cfg.Database.Driver != "" && cfg.Database.Driver != "postgres" {
+		return nil, errors.New("unsupported database driver")
+	}
+	if cfg.Redis.URL == "" || cfg.Redis.Password == "" {
+		return nil, errors.New("redis endpoint and resolved password are required")
+	}
+	redisOptions, err := redis.ParseURL(cfg.Redis.URL)
+	if err != nil {
+		return nil, errors.New("invalid Redis endpoint")
+	}
+	redisOptions.Password = cfg.Redis.Password
+	redisOptions.DialTimeout = time.Second
+	redisOptions.ReadTimeout = time.Second
+	redisOptions.WriteTimeout = time.Second
+	redisClient := redis.NewClient(redisOptions)
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		_ = redisClient.Close()
+		return nil, errors.New("redis security state unavailable")
+	}
+	keepRedis := false
+	defer func() {
+		if !keepRedis {
+			_ = redisClient.Close()
+		}
+	}()
+	securityState := redissecurity.New(redisClient, "go-tunnels:"+cfg.Networking.NetworkID)
 	poolConfig, err := pgxpool.ParseConfig(cfg.Database.URL)
 	if err != nil {
 		return nil, errors.Join(errors.New("parse database configuration"), err)
@@ -76,26 +117,19 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	if err := pool.Ping(ctx); err != nil {
 		return closePool(errors.Join(errors.New("ping database"), err))
 	}
-	bus := gochannel.NewGoChannel(gochannel.Config{}, watermill.NewSlogLogger(logger))
+	bus := gochannel.NewGoChannel(gochannel.Config{PreserveContext: true}, watermill.NewSlogLogger(logger))
 	closeBusAndPool := func(err error) (*App, error) {
 		_ = bus.Close()
 		pool.Close()
 		return nil, err
 	}
-	auditSink := audit.NewPostgresSink(pool)
-	if err := events.ConsumeDeviceAudit(ctx, bus, auditSink, logger, "device.enrolled", "device.revoked"); err != nil {
-		return closeBusAndPool(errors.Join(errors.New("start audit consumer"), err))
-	}
-	go func() {
-		if err := events.RunOutboxDispatcher(ctx, pool, bus, logger); err != nil && ctx.Err() == nil {
-			logger.Error("outbox dispatcher stopped", "error", err)
-		}
-	}()
+	auditSink := auditstorage.New(pool)
+	auditPipeline := events.NewAuditPipeline(bus, auditSink)
 
-	deviceService := devices.NewService(devices.NewPostgresStore(pool), time.Now, nil, devices.WithPublisher(events.NewWatermillPublisher(bus)))
-	networkService := controlnetwork.NewService(controlnetwork.NewPostgresStore(pool), time.Now)
-	policyService := policy.NewService(policy.NewPostgresStore(pool), policy.Compiler{})
-	serviceCatalog := controlservices.NewService(controlservices.NewPostgresStore(pool), time.Now, controlservices.WithDeviceActiveChecker(func(ctx context.Context, id string) (bool, error) {
+	deviceService := devices.NewService(devicesstorage.New(pool, workflowstorage.AppendEvent), time.Now, nil)
+	routeService := controlroutes.NewService(routesstorage.New(pool), time.Now)
+	policyService := policy.NewService(policystorage.New(pool), policy.Compiler{})
+	serviceCatalog := controlservices.NewService(servicesstorage.New(pool), time.Now, controlservices.WithDeviceActiveChecker(func(ctx context.Context, id string) (bool, error) {
 		device, err := deviceService.Device(ctx, id)
 		if err != nil {
 			return false, err
@@ -106,14 +140,14 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		return source.Status == devices.StatusActive && destination.Status == devices.StatusActive && source.Role != destination.Role
 	}
 	var signedSnapshots *controlsnapshots.Service
-	identityStore := identity.NewPostgresStore(pool)
-	identityService := identity.NewService(identityStore, time.Now, nil)
+	identityStore := identitystorage.New(pool)
+	identityService := identity.NewService(identityStore, identityredis.NewSessions(redisClient, "go-tunnels:"+cfg.Networking.NetworkID, time.Now), time.Now, nil)
 	passkeyService, err := identity.NewPasskeyService(identity.PasskeyConfig{
 		RPID:          cfg.Auth.RPID,
 		RPOrigin:      cfg.Auth.RPOrigin,
 		EncryptionKey: []byte(cfg.Auth.CeremonyEncryptionKey),
 		CeremonyTTL:   cfg.Auth.CeremonyDuration(),
-	}, identityStore, time.Now, nil)
+	}, identityStore, identityredis.NewCeremonies(securityState, time.Now), time.Now, nil)
 	if err != nil {
 		return closeBusAndPool(errors.Join(errors.New("configure passkeys"), err))
 	}
@@ -128,11 +162,19 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	}
 
 	serverOptions := []httpapi.ServerOption{
-		httpapi.WithNetworkService(networkService),
+		httpapi.WithBrowserHandlers(auth.Handler(), auth.LoginHandler(), auth.LoginAssetHandler(), auth.AuthorizeMutation),
+		httpapi.WithSharedRateLimits(securityState),
+		httpapi.WithRouteService(routeService),
 		httpapi.WithPolicyService(policyService),
 		httpapi.WithServiceCatalog(serviceCatalog),
 		httpapi.WithAuditReader(auditSink),
 		httpapi.WithReadiness(func(readinessCtx context.Context) error {
+			if err := auditPipeline.Check(); err != nil {
+				return err
+			}
+			if err := redisClient.Ping(readinessCtx).Err(); err != nil {
+				return errors.New("redis security state unavailable")
+			}
 			if err := pool.Ping(readinessCtx); err != nil {
 				return err
 			}
@@ -164,12 +206,16 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		if strings.TrimSpace(cfg.Networking.NetworkID) == "" {
 			return closeBusAndPool(errors.New("networking.network_id is required when invite verification is enabled"))
 		}
-		signedSnapshots = controlsnapshots.NewService(controlsnapshots.NewPostgresStore(pool), rootPublic, cfg.Networking.NetworkID)
-		inviteStore := controlinvites.NewPostgresStore(pool)
+		signedSnapshots = controlsnapshots.NewService(snapshotsstorage.New(pool), rootPublic, cfg.Networking.NetworkID)
+		inviteStore := invitesstorage.New(pool)
+		activation := workflows.NewActivation(workflowstorage.NewActivationUnitOfWork(pool), inviteStore, signedSnapshots, securityState, rootPublic, cfg.Networking.NetworkID, time.Now, nil)
+		activationHandler := httpapi.NewActivationHandler(activation, activation)
 		serverOptions = append(serverOptions,
-			httpapi.WithInviteService(controlinvites.NewService(inviteStore, rootPublic, cfg.Networking.NetworkID, time.Now, controlinvites.WithActivator(inviteStore))),
+			httpapi.WithInviteService(controlinvites.NewService(inviteStore, rootPublic, cfg.Networking.NetworkID, time.Now, controlinvites.WithApprovalWorkflow(activation))),
+			httpapi.WithActivationHandlers(activationHandler.Challenge, activationHandler.Claim),
 			httpapi.WithSnapshotService(signedSnapshots),
 			httpapi.WithCompanionRootKey(rootPublic),
+			httpapi.WithSharedChallenges(sharedChallenges{store: securityState}),
 		)
 		// Candidate exchange must use the same signed topology as relay ticket
 		// issuance. A role-only check would disclose endpoint candidates for a
@@ -183,11 +229,11 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	// known. The same instance owns live snapshot broadcasts and WebSocket
 	// connections; creating a temporary handler earlier would silently strand
 	// broadcasts on a hub that serves no production clients.
-	coordinationHandler := coordination.NewHandler(deviceService, signedSnapshots, []string{cfg.Auth.RPOrigin}, peerAuthorization)
+	coordinationHandler := coordination.NewHandlerWithHistory(deviceService, deviceService, signedSnapshots, []string{cfg.Auth.RPOrigin}, peerAuthorization)
 	if signedSnapshots != nil {
 		serverOptions = append(serverOptions, httpapi.WithSnapshotBroadcaster(coordinationHandler))
 	}
-	serverOptions = append(serverOptions, httpapi.WithCoordinationHandler(coordinationHandler))
+	serverOptions = append(serverOptions, httpapi.WithCoordinationHandler(coordinationHandler), httpapi.WithSnapshotHistoryHandler(http.HandlerFunc(coordinationHandler.ServeHistory)))
 	var metricsServer *http.Server
 	if address := strings.TrimSpace(cfg.Observability.MetricsAddress); address != "" {
 		metricsMux := http.NewServeMux()
@@ -208,7 +254,11 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		serverOptions...,
 	).Handler()
 
+	keepRedis = true
 	return &App{
+		coordination:  coordinationHandler,
+		redis:         redisClient,
+		auditPipeline: auditPipeline,
 		pool:          pool,
 		bus:           bus,
 		logger:        logger,
@@ -316,6 +366,11 @@ func loadRootPublicKey(path string) (ed25519.PublicKey, error) {
 // Run serves HTTP until the context is cancelled. Shutdown has a bounded
 // deadline so a stuck client cannot prevent the process from exiting.
 func (a *App) Run(ctx context.Context) error {
+	// Run owns every dependency even if listener creation fails. Workers stop
+	// before stores close; a deferred cleanup cannot race a still-running sink.
+	defer a.pool.Close()
+	defer func() { _ = a.redis.Close() }()
+	defer func() { _ = a.bus.Close() }()
 	listener, err := net.Listen("tcp", a.server.Addr)
 	if err != nil {
 		return err
@@ -329,37 +384,23 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		defer func() { _ = metricsListener.Close() }()
 	}
-	runContext, cancel := context.WithCancel(ctx)
-	defer cancel()
-	serverErr := make(chan error, 2)
-	go func() {
-		serverErr <- a.server.Serve(listener)
-	}()
-	if a.metricsServer != nil {
-		go func() {
-			serverErr <- a.metricsServer.Serve(metricsListener)
-		}()
-	}
-	go func() {
-		<-runContext.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := a.server.Shutdown(shutdownCtx); err != nil {
-			a.logger.Error("shutdown control server", "error", err)
-		}
-		if a.metricsServer != nil {
-			if err := a.metricsServer.Shutdown(shutdownCtx); err != nil {
-				a.logger.Error("shutdown control metrics server", "error", err)
+	components := []lifecycle.Component{
+		a.coordination,
+		a.auditPipeline,
+		lifecycle.Func(func(ctx context.Context) error {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-a.auditPipeline.Ready():
 			}
-		}
-	}()
-
-	err = <-serverErr
-	cancel()
-	if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
-		err = nil
+			return events.RunOutboxDispatcher(ctx, a.pool, a.auditPipeline, a.logger)
+		}),
+		lifecycle.Func(func(ctx context.Context) error { return serveHTTP(ctx, a.server, listener) }),
 	}
-	_ = a.bus.Close()
-	a.pool.Close()
-	return err
+	if a.metricsServer != nil {
+		components = append(components, lifecycle.Func(func(ctx context.Context) error {
+			return serveHTTP(ctx, a.metricsServer, metricsListener)
+		}))
+	}
+	return lifecycle.Run(ctx, components...)
 }

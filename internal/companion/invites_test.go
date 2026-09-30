@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -41,7 +42,7 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := controlinvites.NewMemoryStore()
-	inviteService := controlinvites.NewService(store, rootPublic, "home", func() time.Time { return now }, controlinvites.WithActivator(store))
+	inviteService := controlinvites.NewService(store, rootPublic, "home", func() time.Time { return now }, controlinvites.WithApprovalWorkflow(approvalFixture{store: store, root: rootPublic}))
 	if err := inviteService.SubmitProof(context.Background(), permit, proof); err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +74,9 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 	}
 	if len(value.Devices) != 1 || value.Devices[0].ID != "phone" || value.Devices[0].OverlayAddress != "10.200.0.1/32" {
 		t.Fatalf("published device=%#v", value.Devices)
+	}
+	if value.Devices[0].WireGuardPublicKey != base64.StdEncoding.EncodeToString(proof.WireGuardPublicKey) {
+		t.Fatalf("published nonstandard WireGuard key %q", value.Devices[0].WireGuardPublicKey)
 	}
 }
 
@@ -179,4 +183,4 @@ func TestValidateControlEndpointRejectsUnsafeDestinations(t *testing.T) {
 
 type allowAllAuthorizer struct{}
 
-func (allowAllAuthorizer) IsAdmin(context.Context, *http.Request) bool { return true }
+func (allowAllAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) { return true, nil }

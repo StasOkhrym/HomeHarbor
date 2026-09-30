@@ -19,15 +19,23 @@ import (
 type Authenticator interface {
 	Authenticate(context.Context, string) (devices.Device, error)
 }
+
+// DeviceReader resolves only the target of an explicitly authorized peer update.
+type DeviceReader interface {
+	Device(context.Context, string) (devices.Device, error)
+}
 type SnapshotProvider interface {
 	Latest(context.Context) (snapshot.Envelope, error)
 }
 type Handler struct {
 	Auth           Authenticator
 	Snapshots      SnapshotProvider
+	History        SnapshotHistoryProvider
 	AllowedOrigins []string
 	AuthorizePeer  func(context.Context, devices.Device, devices.Device) bool
+	devices        DeviceReader
 	hub            *hub
+	sessions       *sessionOwner
 }
 
 // BroadcastSnapshot sends a committed signed head to currently connected
@@ -37,24 +45,41 @@ func (h *Handler) BroadcastSnapshot(ctx context.Context, envelope snapshot.Envel
 	if h == nil {
 		return
 	}
+
 	broadcastContext, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	payload, err := json.Marshal(envelope)
+
+	message, err := snapshotMessage(envelope)
 	if err != nil {
 		return
 	}
-	message := controlprotocol.Message{Type: "network.snapshot", Payload: payload}
+
 	h.hub.broadcastMessage(broadcastContext, "", message)
 }
 
 // NewHandler creates the coordination endpoint. Peer authorization is an
 // explicit option because candidate exchange is security-sensitive; without
 // it the handler refuses candidate updates instead of guessing a mesh policy.
-func NewHandler(auth Authenticator, snapshots SnapshotProvider, allowedOrigins []string, authorizePeer func(context.Context, devices.Device, devices.Device) bool) *Handler {
-	return &Handler{Auth: auth, Snapshots: snapshots, AllowedOrigins: append([]string(nil), allowedOrigins...), AuthorizePeer: authorizePeer, hub: newHub()}
+func NewHandler(auth Authenticator, reader DeviceReader, snapshots SnapshotProvider, allowedOrigins []string, authorizePeer func(context.Context, devices.Device, devices.Device) bool) *Handler {
+	return &Handler{Auth: auth, devices: reader, Snapshots: snapshots, AllowedOrigins: append([]string(nil), allowedOrigins...), AuthorizePeer: authorizePeer, hub: newHub(), sessions: newSessionOwner()}
+}
+
+// NewHandlerWithHistory explicitly supplies the signed history dependency used
+// by ServeHistory, alongside the latest snapshot used by the WebSocket endpoint.
+func NewHandlerWithHistory(auth Authenticator, reader DeviceReader, snapshots SnapshotHistoryProvider, allowedOrigins []string, authorizePeer func(context.Context, devices.Device, devices.Device) bool) *Handler {
+	handler := NewHandler(auth, reader, snapshots, allowedOrigins, authorizePeer)
+	handler.History = snapshots
+	return handler
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx, finish, admitted := h.sessions.begin(r.Context())
+	if !admitted {
+		http.Error(w, "coordination stopped", http.StatusServiceUnavailable)
+		return
+	}
+	defer finish()
+	r = r.WithContext(ctx)
 	credential := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	device, err := h.Auth.Authenticate(r.Context(), credential)
 	if err != nil {
@@ -67,12 +92,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = connection.CloseNow() }()
+	if !h.sessions.track(connection) {
+		return
+	}
+	defer h.sessions.untrack(connection)
 	connection.SetReadLimit(64 << 10)
 	// Bound the initial read so an authenticated client cannot retain a
 	// coordination slot forever without completing protocol negotiation.
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	helloContext, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	var hello controlprotocol.Hello
-	if err = wsjson.Read(ctx, connection, &hello); err != nil {
+	if err = wsjson.Read(helloContext, connection, &hello); err != nil {
 		cancel()
 		_ = connection.Close(websocket.StatusPolicyViolation, "hello required")
 		return
@@ -108,7 +137,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = connection.Close(websocket.StatusTryAgainLater, "signed snapshot unavailable")
 		return
 	}
-	if err = writePayload(r.Context(), connection, "network.snapshot", signedSnapshot); err != nil {
+	message, err := snapshotMessage(signedSnapshot)
+	if err != nil {
+		_ = connection.Close(websocket.StatusMessageTooBig, "snapshot exceeds envelope limit")
+		return
+	}
+	if err = peer.write(r.Context(), message); err != nil {
 		return
 	}
 	for {
@@ -134,13 +168,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				_ = connection.Close(websocket.StatusInvalidFramePayloadData, "targeted candidate update required")
 				return
 			}
-			destinationReader, ok := h.Auth.(interface {
-				Device(context.Context, string) (devices.Device, error)
-			})
-			if !ok {
+			if h.devices == nil {
 				continue
 			}
-			destination, destinationErr := destinationReader.Device(r.Context(), update.DestinationDeviceID)
+			destination, destinationErr := h.devices.Device(r.Context(), update.DestinationDeviceID)
 			if destinationErr != nil || h.AuthorizePeer == nil || !h.AuthorizePeer(r.Context(), device, destination) {
 				continue
 			}

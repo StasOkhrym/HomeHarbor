@@ -99,6 +99,7 @@ func TestControlValidationRejectsUnsafeAuthenticationSettings(t *testing.T) {
 		{"wrong ceremony key size", func(c *Control) { c.Auth.CeremonyEncryptionKey = "short" }},
 		{"invalid session TTL", func(c *Control) { c.Auth.SessionTTL = "0s" }},
 		{"invalid ceremony TTL", func(c *Control) { c.Auth.CeremonyTTL = "not-a-duration" }},
+		{"unsupported database driver", func(c *Control) { c.Database.Driver = "sqlite" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

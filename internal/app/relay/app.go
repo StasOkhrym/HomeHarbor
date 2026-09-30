@@ -3,11 +3,13 @@ package relay
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -27,22 +29,60 @@ type App struct {
 	udpListenAddr string
 	tickets       relayruntime.TicketIssuer
 	ready         *atomic.Bool
+	udpV2         *relayruntime.UDPPairV2
+	initErr       error
 }
 
 var _ lifecycle.Component = (*App)(nil)
 
 // New creates a relay runtime from validated configuration.
 func New(cfg config.RelayServer, logger *slog.Logger) *App {
+	return NewWithOptions(cfg, logger, Options{})
+}
+
+// Options is the integration boundary for relay configuration owned by the
+// parent. TLSConfig must contain the serving certificate (or GetCertificate).
+// No proxy header substitutes for the TLS-authenticated control connection.
+type Options struct {
+	UDPV2     relayruntime.UDPPairV2Config
+	TLSConfig *tls.Config
+}
+
+func NewWithOptions(cfg config.RelayServer, logger *slog.Logger, options Options) *App {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	hub := relayruntime.NewHub()
 	ready := &atomic.Bool{}
 	mux := http.NewServeMux()
-	mux.Handle("/relay/v1", relayruntime.WebSocketHandler{
-		Hub:     hub,
-		Tickets: relayruntime.TicketIssuer{Key: []byte(cfg.Security.TicketKey)},
-	})
+	tickets := relayruntime.TicketIssuer{Key: []byte(cfg.Security.TicketKey)}
+	udpAddress, initErr := net.ResolveUDPAddr("udp", cfg.Server.UDPListenAddress)
+	udpListenAddr := cfg.Server.UDPListenAddress
+	if initErr == nil {
+		if options.UDPV2.ListenIP == nil {
+			options.UDPV2.ListenIP = udpAddress.IP
+		}
+		if options.UDPV2.PortMin == 0 && options.UDPV2.PortMax == 0 && udpAddress.Port != 0 {
+			options.UDPV2.PortMin = udpAddress.Port
+			options.UDPV2.PortMax = min(udpAddress.Port+1023, 65535)
+		}
+		port := udpAddress.Port
+		if options.UDPV2.PortMin != 0 {
+			port = options.UDPV2.PortMin
+		}
+		host := ""
+		if options.UDPV2.ListenIP != nil {
+			host = options.UDPV2.ListenIP.String()
+		}
+		udpListenAddr = net.JoinHostPort(host, strconv.Itoa(port))
+	}
+	var udpV2 *relayruntime.UDPPairV2
+	if initErr == nil {
+		udpV2, initErr = relayruntime.NewUDPPairV2(tickets, options.UDPV2)
+	}
+	if udpV2 != nil {
+		mux.Handle("/relay/udp/v2", udpV2)
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -57,10 +97,13 @@ func New(cfg config.RelayServer, logger *slog.Logger) *App {
 	return &App{
 		hub:           hub,
 		logger:        logger,
-		udpListenAddr: cfg.Server.UDPListenAddress,
+		udpListenAddr: udpListenAddr,
 		tickets:       relayruntime.TicketIssuer{Key: []byte(cfg.Security.TicketKey)},
 		ready:         ready,
+		udpV2:         udpV2,
+		initErr:       initErr,
 		server: &http.Server{
+			TLSConfig:         options.TLSConfig,
 			Addr:              cfg.Server.ListenAddress,
 			Handler:           mux,
 			ReadHeaderTimeout: 5 * time.Second,
@@ -75,6 +118,10 @@ func New(cfg config.RelayServer, logger *slog.Logger) *App {
 // Run serves the relay until ctx is cancelled. Active WebSocket sessions are
 // closed by net/http shutdown and clients reconnect using their credentials.
 func (a *App) Run(ctx context.Context) error {
+	if a.initErr != nil {
+		return a.initErr
+	}
+	defer func() { _ = a.udpV2.Close() }()
 	tcpListener, err := net.Listen("tcp", a.server.Addr)
 	if err != nil {
 		return fmt.Errorf("listen relay HTTP: %w", err)
@@ -97,31 +144,59 @@ func (a *App) Run(ctx context.Context) error {
 // exercising the same readiness, shutdown, and UDP relay path as production.
 func (a *App) runWithListeners(ctx context.Context, tcpListener net.Listener, udpConnection *net.UDPConn) error {
 	if tcpListener == nil || udpConnection == nil {
+		if tcpListener != nil {
+			_ = tcpListener.Close()
+		}
+		if udpConnection != nil {
+			_ = udpConnection.Close()
+		}
 		return errors.New("relay listeners are required")
 	}
-	// Readiness means both public transports are bound. Binding TCP before UDP
-	// lets startup fail cleanly without advertising a relay that cannot accept
-	// its packet path, while this helper owns both sockets until shutdown.
 	defer func() { _ = tcpListener.Close() }()
+	defer func() { _ = udpConnection.Close() }()
+	if a.initErr != nil {
+		return a.initErr
+	}
+	defer func() { _ = a.udpV2.Close() }()
+	if err := a.udpV2.AdoptListener(udpConnection); err != nil {
+		return err
+	}
+	if a.server.TLSConfig != nil {
+		tcpListener = tls.NewListener(tcpListener, a.server.TLSConfig.Clone())
+	}
 	a.ready.Store(true)
 	defer a.ready.Store(false)
 	runContext, cancel := context.WithCancel(ctx)
 	defer cancel()
-	udpRelay := relayruntime.NewUDPPairRelay(udpConnection, a.tickets)
 	serverErr := make(chan error, 2)
 	go func() { serverErr <- a.server.Serve(tcpListener) }()
-	go func() { serverErr <- udpRelay.Run(runContext) }()
-	go func() {
-		<-runContext.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := a.server.Shutdown(shutdownCtx); err != nil {
-			a.logger.Error("shutdown relay server", "error", err)
-		}
-		_ = udpConnection.Close()
-	}()
-	err := <-serverErr
+	go func() { serverErr <- a.udpV2.Run(runContext) }()
+	var err error
+	consumed := 0
+	select {
+	case err = <-serverErr:
+		consumed++
+	case <-ctx.Done():
+	}
 	cancel()
+	_ = a.udpV2.Close()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if shutdownErr := a.server.Shutdown(shutdownCtx); shutdownErr != nil {
+		_ = a.server.Close()
+		if err == nil {
+			err = shutdownErr
+		}
+	}
+	// Both owners finish before returning. Hijacked WSS handshakes are closed
+	// and awaited by UDPv2.Close rather than relying on net/http Shutdown.
+	for consumed < 2 {
+		result := <-serverErr
+		consumed++
+		if err == nil && result != nil && !errors.Is(result, http.ErrServerClosed) {
+			err = result
+		}
+	}
 	if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
 		err = nil
 	}

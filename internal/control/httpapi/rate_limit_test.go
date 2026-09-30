@@ -1,12 +1,31 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
 )
+
+type unavailableLimitStore struct{}
+
+func (unavailableLimitStore) Allow(context.Context, string, string, int, time.Duration) (bool, time.Duration, error) {
+	return false, 0, errors.New("redis unavailable")
+}
+
+func TestSharedLimiterFailsClosedOnStoreFailure(t *testing.T) {
+	limiter := NewSharedRateLimiter(unavailableLimitStore{}, "login", 5, time.Minute)
+	called := false
+	handler := limiter.Middleware(func(*http.Request) string { return "client" })(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/login", nil))
+	if response.Code != http.StatusServiceUnavailable || called {
+		t.Fatalf("status=%d handler called=%v", response.Code, called)
+	}
+}
 
 func TestRateLimiterRejectsRequestsAfterLimit(t *testing.T) {
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)

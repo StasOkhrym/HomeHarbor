@@ -134,7 +134,7 @@ func TestRotateCredentialRevokesPreviousCredential(t *testing.T) {
 
 func TestEnrollRejectsMalformedPublicKeysAndOversizedName(t *testing.T) {
 	store := NewMemoryStore()
-	service := NewService(store, time.Now, fixedRandom{'k'})
+	service := NewService(store, time.Now, &sequenceRandom{})
 	tests := []struct {
 		name   string
 		mutate func(*EnrollRequest)

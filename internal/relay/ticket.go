@@ -2,6 +2,7 @@ package relay
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -23,6 +24,7 @@ const (
 )
 
 type TicketClaims struct {
+	TicketID            string `json:"jti,omitempty"`
 	Version             int    `json:"v"`
 	Audience            string `json:"aud"`
 	SessionID           string `json:"sid"`
@@ -60,7 +62,13 @@ func (i TicketIssuer) issue(sessionID, deviceID, destinationDeviceID string, ttl
 	if i.Now != nil {
 		now = i.Now
 	}
-	payload, err := json.Marshal(TicketClaims{Version: TicketVersion, Audience: RelayAudience, SessionID: sessionID, DeviceID: deviceID, DestinationDeviceID: destinationDeviceID, ExpiresAt: now().Add(ttl).Unix()})
+	// A fresh admission/rebind must not replay a credential issued in the same
+	// second. Older transports can still verify claims without this field.
+	var nonce [32]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", fmt.Errorf("generate ticket ID: %w", err)
+	}
+	payload, err := json.Marshal(TicketClaims{TicketID: base64.RawURLEncoding.EncodeToString(nonce[:]), Version: TicketVersion, Audience: RelayAudience, SessionID: sessionID, DeviceID: deviceID, DestinationDeviceID: destinationDeviceID, ExpiresAt: now().Add(ttl).Unix()})
 	if err != nil {
 		return "", err
 	}

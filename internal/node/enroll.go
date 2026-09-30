@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/sokhrym/go-tunnels/internal/control/devices"
+	"github.com/sokhrym/go-tunnels/internal/protocol"
 )
 
 func Enroll(ctx context.Context, httpClient *http.Client, controlURL, token, name string, state *State) error {
@@ -89,6 +90,7 @@ type RelaySession struct {
 	DeviceID            string `json:"device_id"`
 	DestinationDeviceID string `json:"destination_device_id"`
 	RelayURL            string `json:"relay_url"`
+	RelayTransport      string `json:"relay_transport"`
 	RelayUDPAddress     string `json:"relay_udp_address,omitempty"`
 	Ticket              string `json:"ticket"`
 	ExpiresInSeconds    int64  `json:"expires_in_seconds"`
@@ -105,9 +107,10 @@ func IssueRelaySession(ctx context.Context, httpClient *http.Client, controlURL,
 		httpClient = http.DefaultClient
 	}
 	body, err := json.Marshal(struct {
-		SessionID           string `json:"session_id"`
-		DestinationDeviceID string `json:"destination_device_id"`
-	}{sessionID, destinationDeviceID})
+		SessionID           string   `json:"session_id"`
+		DestinationDeviceID string   `json:"destination_device_id"`
+		Capabilities        []string `json:"capabilities"`
+	}{sessionID, destinationDeviceID, []string{protocol.CapabilityUDPPairV2}})
 	if err != nil {
 		return RelaySession{}, err
 	}
@@ -129,7 +132,7 @@ func IssueRelaySession(ctx context.Context, httpClient *http.Client, controlURL,
 	if err := json.NewDecoder(response.Body).Decode(&session); err != nil {
 		return RelaySession{}, err
 	}
-	if session.Ticket == "" || session.RelayURL == "" || session.SessionID != sessionID {
+	if session.Ticket == "" || !strings.HasPrefix(session.RelayURL, "wss://") || !strings.HasSuffix(session.RelayURL, "/relay/udp/v2") || session.RelayTransport != protocol.CapabilityUDPPairV2 || session.RelayUDPAddress != "" || session.SessionID != sessionID || session.DestinationDeviceID != destinationDeviceID {
 		return RelaySession{}, errors.New("control plane returned incomplete relay session")
 	}
 	return session, nil

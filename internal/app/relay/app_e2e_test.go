@@ -6,11 +6,14 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/sokhrym/go-tunnels/internal/node"
 	"github.com/sokhrym/go-tunnels/internal/platform/config"
+	relayruntime "github.com/sokhrym/go-tunnels/internal/relay"
 )
 
 func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
@@ -18,7 +21,13 @@ func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
 	cfg.Server.ListenAddress = "127.0.0.1:0"
 	cfg.Server.UDPListenAddress = "127.0.0.1:0"
 	cfg.Security.TicketKey = "01234567890123456789012345678901"
-	app := New(cfg, slog.Default())
+	// Use a trusted test certificate on the actual production listener. The
+	// temporary server supplies only certificate material, not the relay path.
+	certServer := httptest.NewTLSServer(http.NotFoundHandler())
+	client := certServer.Client()
+	tlsConfig := certServer.TLS.Clone()
+	certServer.Close()
+	app := NewWithOptions(cfg, slog.Default(), Options{TLSConfig: tlsConfig})
 
 	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -35,7 +44,7 @@ func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
 	appErrors := make(chan error, 1)
 	go func() { appErrors <- app.runWithListeners(ctx, tcpListener, udpListener) }()
 
-	waitForRelayReady(t, tcpListener.Addr().String())
+	waitForRelayReady(t, "https://"+tcpListener.Addr().String(), client)
 
 	const sessionID = "production-relay-acceptance"
 	ticketGateway, err := app.tickets.IssueForPeer(sessionID, "gateway", "client", time.Minute)
@@ -54,7 +63,9 @@ func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
 	bridgeErrors := make(chan error, 2)
 	go func() {
 		bridgeErrors <- node.RunRelayBridge(ctx, node.RelayBridgeConfig{
-			RelayUDPAddress:     udpListener.LocalAddr().String(),
+			RelayURL:            "wss://" + tcpListener.Addr().String() + "/relay/udp/v2",
+			RelayTransport:      relayruntime.UDPPairV2Protocol,
+			RelayHTTPClient:     client,
 			Ticket:              ticketGateway,
 			SessionID:           sessionID,
 			DeviceID:            "gateway",
@@ -65,7 +76,9 @@ func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
 	}()
 	go func() {
 		bridgeErrors <- node.RunRelayBridge(ctx, node.RelayBridgeConfig{
-			RelayUDPAddress:     udpListener.LocalAddr().String(),
+			RelayURL:            "wss://" + tcpListener.Addr().String() + "/relay/udp/v2",
+			RelayTransport:      relayruntime.UDPPairV2Protocol,
+			RelayHTTPClient:     client,
 			Ticket:              ticketClient,
 			SessionID:           sessionID,
 			DeviceID:            "client",
@@ -75,11 +88,6 @@ func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
 		})
 	}()
 
-	// udp_pair_v1 learns the destination only after both authenticated tickets
-	// have registered. Prime both bridge sockets before asserting forwarding so
-	// the first payload is not mistaken for a one-sided binding probe.
-	primeRelayPeer(t, wireGuardGateway, bridgeListenGateway)
-	primeRelayPeer(t, wireGuardClient, bridgeListenClient)
 	waitForRelayUDP(t, wireGuardGateway, bridgeListenGateway, wireGuardClient, []byte("gateway-to-client"))
 	waitForRelayUDP(t, wireGuardClient, bridgeListenClient, wireGuardGateway, []byte("client-to-gateway"))
 
@@ -104,31 +112,23 @@ func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
 	}
 }
 
-func primeRelayPeer(t *testing.T, sender *net.UDPConn, bridgeAddress *net.UDPAddr) {
+func waitForRelayReady(t *testing.T, address string, client *http.Client) {
 	t.Helper()
-	for index := 0; index < 20; index++ {
-		if _, err := sender.WriteToUDP([]byte("register"), bridgeAddress); err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-func waitForRelayReady(t *testing.T, address string) {
-	t.Helper()
-	client := &http.Client{Timeout: 200 * time.Millisecond}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		response, err := client.Get("http://" + address + "/readyz")
+		response, err := client.Get(strings.TrimSuffix(address, "/") + "/readyz")
 		if err == nil {
 			_, _ = io.Copy(io.Discard, response.Body)
+
 			_ = response.Body.Close()
 			if response.StatusCode == http.StatusOK {
 				return
 			}
 		}
+
 		time.Sleep(10 * time.Millisecond)
 	}
+
 	t.Fatal("production relay readiness did not become healthy")
 }
 

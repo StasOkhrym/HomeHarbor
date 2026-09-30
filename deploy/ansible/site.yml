@@ -10,6 +10,17 @@
     control_domain: control.tunnel.example.com
     relay_domain: relay.tunnel.example.com
   tasks:
+    - name: Require Redis credential in the operator secret set
+      ansible.builtin.assert:
+        that:
+          - go_tunnels_secrets is defined
+          - go_tunnels_secrets.redis_password is defined
+          - go_tunnels_secrets.redis_password | length > 0
+          - go_tunnels_secrets.relay_tls_cert is defined
+          - go_tunnels_secrets.relay_tls_key is defined
+          - go_tunnels_secrets.relay_tls_ca is defined
+        fail_msg: Supply Redis credential and relay TLS certificate/key/CA through the encrypted secret set
+      no_log: true
     - name: Install Docker packages
       ansible.builtin.apt:
         name: [docker.io, docker-compose-v2]

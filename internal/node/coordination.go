@@ -1,7 +1,6 @@
 package node
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -22,47 +21,84 @@ import (
 )
 
 // SnapshotApplier is the only authority a node uses for local network state.
-// Implementations must apply atomically and retain their previous state when
-// this callback returns an error.
+// Validation errors leave active state intact. Runtime errors may leave partial
+// kernel state, but gateways must keep the tunnel denied until a complete retry.
 type SnapshotApplier interface {
 	Apply(context.Context, snapshot.NetworkSnapshot) error
 }
 
-// CompositeSnapshotApplier runs state owners in order. Gateway policy is
-// applied before WireGuard peers so a failed peer update cannot expose a new
-// decrypted path through an old firewall revision.
-type CompositeSnapshotApplier struct {
-	components []SnapshotApplier
+// PreparedSnapshotApplier validates without mutating runtime state, then applies
+// under the gateway's deny guard. Dependencies are explicit, not discovered by
+// runtime assertions on an Apply-only interface.
+type PreparedSnapshotApplier interface {
+	SnapshotApplier
+	Prepare(context.Context, snapshot.NetworkSnapshot) error
 }
 
-func NewCompositeSnapshotApplier(components ...SnapshotApplier) *CompositeSnapshotApplier {
-	filtered := make([]SnapshotApplier, 0, len(components))
-	for _, component := range components {
-		if component != nil {
-			filtered = append(filtered, component)
-		}
-	}
-	return &CompositeSnapshotApplier{components: filtered}
+// CompositeSnapshotApplier serializes multi-owner changes. It releases a gateway
+// guard only after every owner succeeds; this is fail-closed, not a claim of an
+// atomic transaction across WireGuard, nftables, routing and systemd-resolved.
+type CompositeSnapshotApplier struct {
+	mu         sync.Mutex
+	guard      StagedSnapshotApplier
+	components []PreparedSnapshotApplier
+}
+
+// NewCompositeSnapshotApplier accepts a nil guard for a non-forwarding client.
+// Nil owners are errors at Apply; silently filtering them hides broken wiring.
+func NewCompositeSnapshotApplier(guard StagedSnapshotApplier, components ...PreparedSnapshotApplier) *CompositeSnapshotApplier {
+	return &CompositeSnapshotApplier{guard: guard, components: append([]PreparedSnapshotApplier(nil), components...)}
 }
 
 func (a *CompositeSnapshotApplier) Apply(ctx context.Context, value snapshot.NetworkSnapshot) error {
-	if a == nil || len(a.components) == 0 {
+	if a == nil || (a.guard == nil && len(a.components) == 0) {
 		return errors.New("snapshot applier has no components")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, component := range a.components {
+		if component == nil {
+			return errors.New("nil snapshot owner")
+		}
+	}
+	if a.guard != nil {
+		if err := a.guard.Prepare(ctx, value); err != nil {
+			return err
+		}
+	}
+	for _, component := range a.components {
+		if err := component.Prepare(ctx, value); err != nil {
+			return err
+		}
+	}
+	if a.guard != nil {
+		if err := a.guard.Guard(ctx, value); err != nil {
+			return err
+		}
+		if err := a.guard.ApplyPrepared(ctx, value); err != nil {
+			return err
+		}
 	}
 	for _, component := range a.components {
 		if err := component.Apply(ctx, value); err != nil {
 			return err
 		}
 	}
+	if a.guard != nil {
+		return a.guard.Commit(ctx, value)
+	}
 	return nil
 }
 
 type CoordinationConfig struct {
-	URL              string
-	Credential       string
-	DeviceID         string
-	NetworkID        string
-	RootPublicKey    ed25519.PublicKey
+	URL           string
+	Credential    string
+	DeviceID      string
+	NetworkID     string
+	RootPublicKey ed25519.PublicKey
+	// StatePath optionally stores the last applied signed envelope. The root
+	// key and network remain provisioned configuration, never downloaded state.
+	StatePath        string
 	HeartbeatEvery   time.Duration
 	ReconnectInitial time.Duration
 	ReconnectMax     time.Duration
@@ -90,9 +126,15 @@ func RunCoordinationLoop(ctx context.Context, cfg CoordinationConfig, applier Sn
 		maximum = 30 * time.Second
 	}
 	backoff := initial
-	cursor := coordinationCursor{}
+	cursor, err := restoreSnapshotCursor(ctx, cfg, applier)
+	if err != nil {
+		return err
+	}
 	for {
 		err := runCoordination(ctx, cfg, applier, &cursor)
+		if errors.Is(err, ErrSnapshotState) {
+			return err
+		}
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -138,7 +180,10 @@ func LoadPublicKeyFile(path string) (ed25519.PublicKey, error) {
 // every snapshot before applying it. A reconnect should call this function
 // again; it intentionally does not invent a snapshot during control outage.
 func RunCoordination(ctx context.Context, cfg CoordinationConfig, applier SnapshotApplier) error {
-	cursor := coordinationCursor{}
+	cursor, err := restoreSnapshotCursor(ctx, cfg, applier)
+	if err != nil {
+		return err
+	}
 	return runCoordination(ctx, cfg, applier, &cursor)
 }
 
@@ -170,7 +215,7 @@ func runCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 		defer cancel()
 		return wsjson.Write(writeContext, connection, value)
 	}
-	capabilities := []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilitySplitDNS}
+	capabilities := []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityUDPPairV2, controlprotocol.CapabilitySplitDNS}
 	if cfg.CandidateProvider != nil || cfg.CandidateHandler != nil {
 		// Candidate exchange is opt-in. Advertising it only when both the
 		// caller and its peer understand the feature keeps older nodes on the
@@ -191,7 +236,7 @@ func runCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 	if err != nil {
 		return fmt.Errorf("read coordination welcome: %w", err)
 	}
-	if welcome.Type != "welcome" || welcome.Protocol.Version != controlprotocol.CurrentVersion || !welcome.Protocol.Has(controlprotocol.CapabilityRelay) {
+	if welcome.Type != "welcome" || welcome.Protocol.Version != controlprotocol.CurrentVersion || (!welcome.Protocol.Has(controlprotocol.CapabilityRelay) && !welcome.Protocol.Has(controlprotocol.CapabilityUDPPairV2)) {
 		return errors.New("coordination protocol negotiation failed")
 	}
 	if (cfg.CandidateProvider != nil || cfg.CandidateHandler != nil) && !welcome.Protocol.Has(controlprotocol.CapabilityDirectUDP) {
@@ -249,24 +294,9 @@ func runCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 			if err := json.Unmarshal(message.Payload, &envelope); err != nil {
 				return fmt.Errorf("decode network snapshot envelope: %w", err)
 			}
-			// Control sends its current head after every reconnect. The exact
-			// same signed head is a safe replay; anything else must advance the
-			// chain through VerifyNext and cannot silently replace local state.
-			if cursor.revision != 0 && cursor.revision == snapshotRevision(envelope) && bytes.Equal(cursor.hash, envelope.Hash) {
-				continue
+			if err := reconcileSnapshotHead(ctx, cfg, applier, cursor, envelope); err != nil {
+				return err
 			}
-			if err := snapshot.VerifyNext(envelope, cfg.RootPublicKey, cfg.NetworkID, cursor.revision, cursor.hash); err != nil {
-				return fmt.Errorf("verify network snapshot: %w", err)
-			}
-			value, err := snapshot.Decode(envelope)
-			if err != nil {
-				return fmt.Errorf("decode verified network snapshot: %w", err)
-			}
-			if err := applier.Apply(ctx, value); err != nil {
-				return fmt.Errorf("apply network snapshot revision %d: %w", value.Revision, err)
-			}
-			cursor.revision = value.Revision
-			cursor.hash = append(cursor.hash[:0], envelope.Hash...)
 		case "heartbeat.ack":
 			// The read deadline is refreshed by the next successful message.
 		default:
@@ -319,12 +349,4 @@ func runCandidatePublisher(
 			_ = sendCandidates()
 		}
 	}
-}
-
-func snapshotRevision(envelope snapshot.Envelope) uint64 {
-	value, err := snapshot.Decode(envelope)
-	if err != nil {
-		return 0
-	}
-	return value.Revision
 }

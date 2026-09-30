@@ -1,0 +1,1 @@
+DROP INDEX device_credentials_one_active_per_device;

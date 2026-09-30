@@ -35,6 +35,13 @@ type peerCoordinationAuthStub struct {
 	devices map[string]devices.Device
 }
 
+// Authentication alone must not implicitly supply candidate lookup privileges.
+type authenticationOnly struct{ delegate Authenticator }
+
+func (a authenticationOnly) Authenticate(ctx context.Context, credential string) (devices.Device, error) {
+	return a.delegate.Authenticate(ctx, credential)
+}
+
 func (s peerCoordinationAuthStub) Authenticate(_ context.Context, credential string) (devices.Device, error) {
 	for id, device := range s.devices {
 		if credential == "credential-"+id {
@@ -66,7 +73,7 @@ func TestBroadcastSnapshotReachesConnectedPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewHandler(coordinationAuthStub{}, coordinationSnapshotStub{envelope: first}, nil, nil)
+	handler := NewHandler(coordinationAuthStub{}, nil, coordinationSnapshotStub{envelope: first}, nil, nil)
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
@@ -115,7 +122,7 @@ func TestCandidateForwardingUsesAuthenticatedSourceIdentity(t *testing.T) {
 		"source":      {ID: "source", Status: devices.StatusActive},
 		"destination": {ID: "destination", Status: devices.StatusActive},
 	}}
-	handler := NewHandler(auth, coordinationSnapshotStub{envelope: first}, nil, func(_ context.Context, source, destination devices.Device) bool {
+	handler := NewHandler(authenticationOnly{auth}, auth, coordinationSnapshotStub{envelope: first}, nil, func(_ context.Context, source, destination devices.Device) bool {
 		return source.ID != destination.ID
 	})
 	server := httptest.NewServer(handler)
@@ -186,7 +193,7 @@ func TestCandidateForwardingRequiresAuthorizedPeer(t *testing.T) {
 		"source":      {ID: "source", Status: devices.StatusActive},
 		"destination": {ID: "destination", Status: devices.StatusActive},
 	}}
-	handler := NewHandler(auth, coordinationSnapshotStub{envelope: first}, nil, func(context.Context, devices.Device, devices.Device) bool {
+	handler := NewHandler(auth, auth, coordinationSnapshotStub{envelope: first}, nil, func(context.Context, devices.Device, devices.Device) bool {
 		return false
 	})
 	server := httptest.NewServer(handler)
@@ -249,7 +256,7 @@ func TestCandidateForwardingRequiresDirectCapability(t *testing.T) {
 		"source":      {ID: "source", Status: devices.StatusActive},
 		"destination": {ID: "destination", Status: devices.StatusActive},
 	}}
-	handler := NewHandler(auth, coordinationSnapshotStub{envelope: first}, nil, func(context.Context, devices.Device, devices.Device) bool {
+	handler := NewHandler(auth, auth, coordinationSnapshotStub{envelope: first}, nil, func(context.Context, devices.Device, devices.Device) bool {
 		return true
 	})
 	server := httptest.NewServer(handler)

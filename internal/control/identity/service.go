@@ -30,28 +30,34 @@ type IssuedSession struct {
 	ExpiresAt time.Time
 }
 
-type Store interface {
+type Repository interface {
 	SaveRecoveryCodes(context.Context, []RecoveryCode) error
 	ConsumeRecoveryCode(context.Context, [32]byte, time.Time) error
+}
+
+// SessionRepository owns ephemeral browser access, independently of durable
+// passkeys and recovery codes. Production supplies Redis, never a DB fallback.
+type SessionRepository interface {
 	SaveSession(context.Context, Session) error
 	Session(context.Context, [32]byte) (Session, error)
 	RevokeSession(context.Context, [32]byte, time.Time) error
 }
 
 type Service struct {
-	store  Store
-	now    func() time.Time
-	random io.Reader
+	store    Repository
+	sessions SessionRepository
+	now      func() time.Time
+	random   io.Reader
 }
 
-func NewService(store Store, now func() time.Time, random io.Reader) *Service {
+func NewService(store Repository, sessions SessionRepository, now func() time.Time, random io.Reader) *Service {
 	if now == nil {
 		now = time.Now
 	}
 	if random == nil {
 		random = rand.Reader
 	}
-	return &Service{store: store, now: now, random: random}
+	return &Service{store: store, sessions: sessions, now: now, random: random}
 }
 
 func (s *Service) GenerateRecoveryCodes(ctx context.Context, count int) ([]string, error) {
@@ -81,7 +87,7 @@ func (s *Service) ConsumeRecoveryCode(ctx context.Context, plaintext string) err
 	if plaintext == "" {
 		return ErrInvalidCredential
 	}
-	// Atomicity belongs to Store: multiple control replicas may race to consume
+	// Atomicity belongs to Repository: multiple control replicas may race to consume
 	// the same hash and exactly one transaction is allowed to update used_at.
 	if err := s.store.ConsumeRecoveryCode(ctx, hashToken(plaintext), s.now().UTC()); err != nil {
 		return ErrInvalidCredential
@@ -99,7 +105,7 @@ func (s *Service) CreateSession(ctx context.Context, ttl time.Duration) (IssuedS
 	}
 	now := s.now().UTC()
 	session := Session{Hash: hashToken(token), CreatedAt: now, ExpiresAt: now.Add(ttl)}
-	if err = s.store.SaveSession(ctx, session); err != nil {
+	if err = s.sessions.SaveSession(ctx, session); err != nil {
 		return IssuedSession{}, err
 	}
 	return IssuedSession{Token: token, ExpiresAt: session.ExpiresAt}, nil
@@ -109,8 +115,11 @@ func (s *Service) ValidateSession(ctx context.Context, plaintext string) (Sessio
 	if plaintext == "" {
 		return Session{}, ErrInvalidCredential
 	}
-	session, err := s.store.Session(ctx, hashToken(plaintext))
-	if err != nil || session.RevokedAt != nil || !s.now().UTC().Before(session.ExpiresAt) {
+	session, err := s.sessions.Session(ctx, hashToken(plaintext))
+	if err != nil {
+		return Session{}, err
+	}
+	if session.RevokedAt != nil || !s.now().UTC().Before(session.ExpiresAt) {
 		// Deliberately collapse missing, expired, and revoked states so callers do
 		// not gain a token-enumeration oracle from different errors.
 		return Session{}, ErrInvalidCredential
@@ -122,10 +131,7 @@ func (s *Service) RevokeSession(ctx context.Context, plaintext string) error {
 	if plaintext == "" {
 		return ErrInvalidCredential
 	}
-	if err := s.store.RevokeSession(ctx, hashToken(plaintext), s.now().UTC()); err != nil {
-		return ErrInvalidCredential
-	}
-	return nil
+	return s.sessions.RevokeSession(ctx, hashToken(plaintext), s.now().UTC())
 }
 
 func (s *Service) randomToken(size int) (string, error) {

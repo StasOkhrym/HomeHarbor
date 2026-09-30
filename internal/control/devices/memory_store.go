@@ -39,6 +39,9 @@ func (s *MemoryStore) ConsumeEnrollmentToken(_ context.Context, hash [32]byte, n
 func (s *MemoryStore) SaveDevice(_ context.Context, device Device) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkUnique(device); err != nil {
+		return err
+	}
 	device.Credential = ""
 	s.devices[device.ID] = device
 	s.credentialExpires[device.ID] = device.CreatedAt.Add(CredentialTTL)
@@ -52,6 +55,9 @@ func (s *MemoryStore) Enroll(_ context.Context, hash [32]byte, now time.Time, de
 	if !ok || token.UsedAt != nil || !now.Before(token.ExpiresAt) {
 		return "", ErrInvalidEnrollmentToken
 	}
+	if err := s.checkUnique(device); err != nil {
+		return "", err
+	}
 	token.UsedAt = &now
 	s.tokens[hash] = token
 	device.Role = token.Role
@@ -59,6 +65,16 @@ func (s *MemoryStore) Enroll(_ context.Context, hash [32]byte, now time.Time, de
 	s.devices[device.ID] = device
 	s.credentialExpires[device.ID] = device.CreatedAt.Add(CredentialTTL)
 	return token.Role, nil
+}
+
+// checkUnique is called with mu held, before consuming a one-time token.
+func (s *MemoryStore) checkUnique(device Device) error {
+	for _, current := range s.devices {
+		if current.ID == device.ID || current.IdentityPublicKey == device.IdentityPublicKey || current.WireGuardPublicKey == device.WireGuardPublicKey {
+			return ErrDeviceConflict
+		}
+	}
+	return nil
 }
 
 func (s *MemoryStore) Device(_ context.Context, id string) (Device, error) {

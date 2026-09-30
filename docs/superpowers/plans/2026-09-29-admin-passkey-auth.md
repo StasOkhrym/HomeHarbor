@@ -50,8 +50,8 @@
 **Files:**
 - Create: `migrations/000002_admin_identity.up.sql`
 - Create: `migrations/000002_admin_identity.down.sql`
-- Create: `internal/control/identity/postgres_store.go`
-- Test: `internal/control/identity/postgres_store_test.go`
+- Create: `internal/control/identity/storage_store.go`
+- Test: `internal/control/identity/storage_store_test.go`
 
 **Interfaces:**
 - Consumes: Task 1 `identity.Store`.

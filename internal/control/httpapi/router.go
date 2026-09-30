@@ -32,8 +32,8 @@ func NewRouter(server *Server) http.Handler {
 	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	if assets, ok := server.authorizer.(interface{ LoginAssetHandler() http.Handler }); ok {
-		router.Get("/assets/login.js", assets.LoginAssetHandler().ServeHTTP)
+	if server.loginAsset != nil {
+		router.Get("/assets/login.js", server.loginAsset.ServeHTTP)
 	}
 	router.Get("/assets/admin.css", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
@@ -53,134 +53,8 @@ func NewRouter(server *Server) http.Handler {
 		router.Handle("/metrics", server.metrics)
 	}
 
-	router.Route("/api/v1", func(api chi.Router) {
-		api.Use(limitRequestBody)
-		api.Use(server.apiLimiter.Middleware(server.clientKey))
-		if auth, ok := server.authorizer.(interface{ Handler() http.Handler }); ok {
-			api.Mount("/auth", server.authLimiter.Middleware(server.clientKey)(auth.Handler()))
-		}
-		api.Post("/enrollment-tokens", server.requireAdmin(http.HandlerFunc(server.issueToken)).ServeHTTP)
-		api.Post("/enroll", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.enroll)).ServeHTTP)
-
-		// The resource groups make the public API discoverable. The flat routes
-		// below remain temporarily for already enrolled clients and are removed
-		// only after the versioned API migration is complete.
-		api.Route("/admin", func(admin chi.Router) {
-			admin.Use(server.requireAdmin)
-			admin.Post("/enrollment-tokens", http.HandlerFunc(server.issueToken).ServeHTTP)
-			admin.Get("/devices", http.HandlerFunc(server.listDevices).ServeHTTP)
-			if server.audit != nil {
-				admin.Get("/audit", http.HandlerFunc(server.listAudit).ServeHTTP)
-			}
-			if server.network != nil {
-				admin.Get("/routes", http.HandlerFunc(server.listRoutes).ServeHTTP)
-			}
-			if server.services != nil {
-				admin.Get("/services", http.HandlerFunc(server.listServices).ServeHTTP)
-				admin.Get("/access-profiles", http.HandlerFunc(server.listProfiles).ServeHTTP)
-			}
-		})
-		api.Route("/devices", func(devices chi.Router) {
-			devices.Get("/", server.requireAdmin(http.HandlerFunc(server.listDevices)).ServeHTTP)
-			devices.Delete("/{id}", server.requireAdmin(http.HandlerFunc(server.revokeDevice)).ServeHTTP)
-			devices.Post("/credentials/rotate", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.rotateCredential)).ServeHTTP)
-		})
-		api.Route("/invites", func(invites chi.Router) {
-			if server.invites == nil {
-				return
-			}
-			invites.Post("/proof", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.submitInviteProof)).ServeHTTP)
-			invites.Get("/{id}", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.getInvite)).ServeHTTP)
-			invites.Post("/{id}/approval", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.approveInvite)).ServeHTTP)
-		})
-		if server.services != nil {
-			api.Get("/services/available", server.requireDevice(http.HandlerFunc(server.listAvailableServices)).ServeHTTP)
-		}
-		api.Route("/services", func(services chi.Router) {
-			if server.services == nil {
-				return
-			}
-			services.Use(server.requireAdmin)
-			services.Get("/", http.HandlerFunc(server.listServices).ServeHTTP)
-			services.Post("/", http.HandlerFunc(server.createService).ServeHTTP)
-		})
-		api.Route("/coordination", func(coordination chi.Router) {
-			if server.coordination != nil {
-				coordination.Get("/", server.coordination.ServeHTTP)
-			}
-			if server.snapshots != nil {
-				coordination.Post("/snapshots", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.publishSnapshot)).ServeHTTP)
-				coordination.Get("/snapshot", server.requireAdmin(http.HandlerFunc(server.latestSnapshot)).ServeHTTP)
-				if server.companionChallenges != nil {
-					coordination.Get("/snapshot/companion-challenge", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.issueCompanionChallenge)).ServeHTTP)
-					coordination.Get("/snapshot/companion", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.companionSnapshot)).ServeHTTP)
-				}
-			}
-		})
-		api.Route("/relay-sessions", func(relaySessions chi.Router) {
-			if server.relayIssuer != nil {
-				relaySessions.Post("/", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.issueRelaySession)).ServeHTTP)
-			}
-		})
-
-		api.Post("/devices/credentials/rotate", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.rotateCredential)).ServeHTTP)
-		if server.relayIssuer != nil {
-			api.Post("/relay-sessions", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.issueRelaySession)).ServeHTTP)
-		}
-		if server.invites != nil {
-			api.Post("/invites/proof", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.submitInviteProof)).ServeHTTP)
-			api.Get("/invites/{id}", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.getInvite)).ServeHTTP)
-			api.Post("/invites/{id}/approval", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.approveInvite)).ServeHTTP)
-		}
-		if server.snapshots != nil {
-			api.Post("/coordination/snapshots", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.publishSnapshot)).ServeHTTP)
-			api.Get("/coordination/snapshot", server.requireAdmin(http.HandlerFunc(server.latestSnapshot)).ServeHTTP)
-			if server.companionChallenges != nil {
-				api.Get("/coordination/snapshot/companion-challenge", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.issueCompanionChallenge)).ServeHTTP)
-				api.Get("/coordination/snapshot/companion", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.companionSnapshot)).ServeHTTP)
-			}
-		}
-		api.Get("/devices", server.requireAdmin(http.HandlerFunc(server.listDevices)).ServeHTTP)
-		api.Delete("/devices/{id}", server.requireAdmin(http.HandlerFunc(server.revokeDevice)).ServeHTTP)
-		if server.network != nil {
-			api.Get("/routes", server.requireAdmin(http.HandlerFunc(server.listRoutes)).ServeHTTP)
-			api.Post("/routes", server.requireAdmin(http.HandlerFunc(server.advertiseRoute)).ServeHTTP)
-			api.Post("/routes/{id}/approve", server.requireAdmin(http.HandlerFunc(server.approveRoute)).ServeHTTP)
-			api.Post("/routes/{id}/reject", server.requireAdmin(http.HandlerFunc(server.rejectRoute)).ServeHTTP)
-		}
-		if server.policy != nil {
-			api.Get("/policy", server.requireAdmin(http.HandlerFunc(server.latestPolicy)).ServeHTTP)
-			api.Put("/policy", server.requireAdmin(http.HandlerFunc(server.replacePolicy)).ServeHTTP)
-		}
-		if server.services != nil {
-			api.Get("/services", server.requireAdmin(http.HandlerFunc(server.listServices)).ServeHTTP)
-			api.Post("/services", server.requireAdmin(http.HandlerFunc(server.createService)).ServeHTTP)
-			api.Get("/access-profiles", server.requireAdmin(http.HandlerFunc(server.listProfiles)).ServeHTTP)
-			api.Post("/access-profiles", server.requireAdmin(http.HandlerFunc(server.createProfile)).ServeHTTP)
-		}
-		if server.coordination != nil {
-			api.Get("/coordination", server.coordination.ServeHTTP)
-		}
-	})
-
-	router.Route("/admin", func(admin chi.Router) {
-		admin.Use(limitRequestBody)
-		admin.Use(server.apiLimiter.Middleware(server.clientKey))
-		admin.Get("/", server.requireAdmin(http.HandlerFunc(server.adminDashboard)).ServeHTTP)
-		admin.Post("/enrollment-tokens", server.requireAdmin(http.HandlerFunc(server.issueEnrollmentTokenForm)).ServeHTTP)
-		admin.Post("/devices/{id}/revoke", server.requireAdmin(http.HandlerFunc(server.revokeDeviceForm)).ServeHTTP)
-		if server.network != nil {
-			admin.Post("/routes", server.requireAdmin(http.HandlerFunc(server.createRouteForm)).ServeHTTP)
-			admin.Post("/routes/{id}/approve", server.requireAdmin(http.HandlerFunc(server.approveRouteForm)).ServeHTTP)
-			admin.Post("/routes/{id}/reject", server.requireAdmin(http.HandlerFunc(server.rejectRouteForm)).ServeHTTP)
-		}
-		admin.Post("/services", server.requireAdmin(http.HandlerFunc(server.createServiceForm)).ServeHTTP)
-		admin.Post("/access-profiles", server.requireAdmin(http.HandlerFunc(server.createProfileForm)).ServeHTTP)
-		admin.Post("/policy", server.requireAdmin(http.HandlerFunc(server.replacePolicyForm)).ServeHTTP)
-		if login, ok := server.authorizer.(interface{ LoginHandler() http.Handler }); ok {
-			admin.Handle("/login", login.LoginHandler())
-		}
-	})
+	router.Route("/api/v1", server.registerAPI)
+	router.Route("/admin", server.registerBrowserAdmin)
 	return router
 }
 

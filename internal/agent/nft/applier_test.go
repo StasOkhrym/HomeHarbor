@@ -40,3 +40,36 @@ func TestApplierKeepsLastRevisionWhenNftRejectsUpdate(t *testing.T) {
 		t.Fatalf("rollback error=%v", err)
 	}
 }
+
+func TestPreparedPolicyRejectsForeignOwnerAndRetriesAfterGuard(t *testing.T) {
+	ctx := context.Background()
+	var live string
+	a := NewApplierWithRunner("wg0", nil, func(_ context.Context, s string) error { live = s; return nil })
+	b := NewApplierWithRunner("wg1", nil, func(context.Context, string) error { t.Fatal("foreign commit mutated firewall"); return nil })
+	value := policy.Snapshot{Revision: 1, DefaultAction: policy.ActionDeny}
+	prepared, err := a.Prepare(nil, value)
+	if err != nil || live != "" {
+		t.Fatalf("prepare mutated kernel: %v %s", err, live)
+	}
+	if err := b.Commit(ctx, prepared); err == nil {
+		t.Fatal("foreign owner accepted staged policy")
+	}
+	if err := a.Guard(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if a.Revision() != 0 {
+		t.Fatal("guard advanced applied revision")
+	}
+	if err := a.Commit(ctx, prepared); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Guard(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Commit(ctx, prepared); err != nil {
+		t.Fatalf("same committed revision could not release retry guard: %v", err)
+	}
+	if a.Revision() != 1 || !strings.Contains(live, "revision=1") {
+		t.Fatal("commit did not converge")
+	}
+}

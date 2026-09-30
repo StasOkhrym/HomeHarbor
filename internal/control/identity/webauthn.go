@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	ErrInvalidCeremony = errors.New("invalid or expired ceremony")
-	ErrBootstrapClosed = errors.New("passkey bootstrap is already complete")
+	ErrInvalidCeremony          = errors.New("invalid or expired ceremony")
+	ErrBootstrapClosed          = errors.New("passkey bootstrap is already complete")
+	ErrSecurityStateUnavailable = errors.New("security state unavailable")
 )
 
 var adminUserHandle = []byte("go-tunnels-admin-v1")
@@ -30,12 +31,17 @@ type Ceremony struct {
 	ConsumedAt        *time.Time
 }
 
-type PasskeyStore interface {
+type PasskeyRepository interface {
 	HasCredentials(context.Context) (bool, error)
 	Credentials(context.Context, []byte) ([]webauthn.Credential, error)
 	Credential(context.Context, []byte, []byte) (webauthn.Credential, error)
 	SaveCredential(context.Context, []byte, webauthn.Credential) error
 	UpdateCredential(context.Context, []byte, webauthn.Credential) error
+}
+
+// CeremonyRepository is ephemeral one-time proof state, independent of the
+// durable passkey credentials and authenticator counters.
+type CeremonyRepository interface {
 	SaveCeremony(context.Context, Ceremony) error
 	ConsumeCeremony(context.Context, [32]byte, time.Time) (Ceremony, error)
 }
@@ -53,15 +59,19 @@ type BeginCeremony struct {
 }
 
 type PasskeyService struct {
-	store    PasskeyStore
-	now      func() time.Time
-	random   io.Reader
-	webAuthn *webauthn.WebAuthn
-	aead     cipher.AEAD
-	ttl      time.Duration
+	store      PasskeyRepository
+	ceremonies CeremonyRepository
+	now        func() time.Time
+	random     io.Reader
+	webAuthn   *webauthn.WebAuthn
+	aead       cipher.AEAD
+	ttl        time.Duration
 }
 
-func NewPasskeyService(config PasskeyConfig, store PasskeyStore, now func() time.Time, random io.Reader) (*PasskeyService, error) {
+func NewPasskeyService(config PasskeyConfig, store PasskeyRepository, ceremonies CeremonyRepository, now func() time.Time, random io.Reader) (*PasskeyService, error) {
+	if store == nil || ceremonies == nil {
+		return nil, errors.New("passkey and ceremony repositories are required")
+	}
 	if len(config.EncryptionKey) != 32 {
 		return nil, errors.New("WebAuthn ceremony encryption key must be 32 bytes")
 	}
@@ -83,7 +93,7 @@ func NewPasskeyService(config PasskeyConfig, store PasskeyStore, now func() time
 	if now == nil {
 		now = time.Now
 	}
-	return &PasskeyService{store: store, now: now, random: random, webAuthn: wa, aead: aead, ttl: config.CeremonyTTL}, nil
+	return &PasskeyService{store: store, ceremonies: ceremonies, now: now, random: random, webAuthn: wa, aead: aead, ttl: config.CeremonyTTL}, nil
 }
 
 func (s *PasskeyService) BeginBootstrap(ctx context.Context) (BeginCeremony, error) {
@@ -184,7 +194,7 @@ func (s *PasskeyService) saveCeremony(ctx context.Context, kind string, options 
 		return BeginCeremony{}, err
 	}
 	ceremony := Ceremony{IDHash: hashToken(id), Kind: kind, PayloadCiphertext: ciphertext, ExpiresAt: s.now().UTC().Add(s.ttl)}
-	if err = s.store.SaveCeremony(ctx, ceremony); err != nil {
+	if err = s.ceremonies.SaveCeremony(ctx, ceremony); err != nil {
 		return BeginCeremony{}, err
 	}
 	encodedOptions, err := json.Marshal(options)
@@ -195,7 +205,10 @@ func (s *PasskeyService) saveCeremony(ctx context.Context, kind string, options 
 }
 
 func (s *PasskeyService) consumeCeremony(ctx context.Context, id, expectedKind string) (Ceremony, webauthn.SessionData, error) {
-	ceremony, err := s.store.ConsumeCeremony(ctx, hashToken(id), s.now().UTC())
+	ceremony, err := s.ceremonies.ConsumeCeremony(ctx, hashToken(id), s.now().UTC())
+	if errors.Is(err, ErrSecurityStateUnavailable) {
+		return Ceremony{}, webauthn.SessionData{}, err
+	}
 	if err != nil || ceremony.Kind != expectedKind {
 		return Ceremony{}, webauthn.SessionData{}, ErrInvalidCeremony
 	}

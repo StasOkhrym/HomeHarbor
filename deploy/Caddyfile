@@ -4,5 +4,10 @@
 }
 
 {$RELAY_DOMAIN} {
-    reverse_proxy relay:8081
+    reverse_proxy https://relay:8081 {
+        transport http {
+            tls_trust_pool file /run/secrets/relay_tls_ca
+            tls_server_name relay
+        }
+    }
 }

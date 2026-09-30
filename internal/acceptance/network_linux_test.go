@@ -3,6 +3,7 @@
 package acceptance
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net/netip"
@@ -26,7 +27,7 @@ func TestLinuxNamespaceDefaultDenyLANAccess(t *testing.T) {
 	for _, namespace := range []string{clientNS, gatewayNS, lanNS} {
 		if err := run("ip", "netns", "add", namespace); err != nil {
 			if strings.Contains(err.Error(), "Operation not permitted") || strings.Contains(err.Error(), "Permission denied") {
-				t.Skipf("network namespaces are unavailable: %v", err)
+				t.Fatalf("mandatory network namespace acceptance unavailable: %v", err)
 			}
 			t.Fatal(err)
 		}
@@ -78,6 +79,9 @@ func TestLinuxNamespaceDefaultDenyLANAccess(t *testing.T) {
 	if err := tcpBanner(clientNS, "192.168.50.2", 2223); err == nil {
 		t.Fatal("default-deny policy allowed a forbidden SSH port")
 	}
+	verifyGatewayInputDenied(t, clientNS, gatewayNS)
+	verifyUnrelatedForwarding(t, clientNS, gatewayNS, lanNS)
+	verifyEstablishedRevoke(t, clientNS, gatewayNS, lanNS, "gt0", peers)
 }
 
 func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
@@ -90,7 +94,7 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 	for _, namespace := range []string{clientNS, gatewayNS, lanNS} {
 		if err := run("ip", "netns", "add", namespace); err != nil {
 			if strings.Contains(err.Error(), "Operation not permitted") || strings.Contains(err.Error(), "Permission denied") {
-				t.Skipf("network namespaces are unavailable: %v", err)
+				t.Fatalf("mandatory network namespace acceptance unavailable: %v", err)
 			}
 			t.Fatal(err)
 		}
@@ -103,6 +107,9 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 
 	createVethTopology(t, clientNS, gatewayNS, lanNS)
 	configureTopology(t, clientNS, gatewayNS, lanNS, false)
+	// Bootstrap default-deny BEFORE bringing up the encrypted interface.
+	// With no ACL even a valid WireGuard handshake conveys no LAN authority.
+	applyDefaultDenyPolicy(t, gatewayNS, "wg0", nil, policy.Snapshot{DefaultAction: policy.ActionDeny})
 	configureWireGuard(t, clientNS, gatewayNS)
 	if err := runInNamespace(lanNS, "ip", "route", "replace", "10.200.0.0/24", "via", "192.168.50.1"); err != nil {
 		t.Fatal(err)
@@ -116,11 +123,9 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 		}
 	})
 
-	// The first request proves the encrypted kernel path works before the
-	// gateway firewall is installed; the policy assertion below then proves
-	// that the source identity is the WireGuard overlay address, not the veth.
-	waitForHTTP(t, clientNS, "http://192.168.50.2:8080")
-	waitForTCPBanner(t, clientNS, "192.168.50.2", 2222)
+	if err := curl(clientNS, "http://192.168.50.2:8080"); err == nil {
+		t.Fatal("boot guard allowed encrypted LAN access before policy")
+	}
 	peers := map[string]netip.Prefix{"client": netip.MustParsePrefix("10.200.0.2/32")}
 	rules := policy.Snapshot{Revision: 1, DefaultAction: policy.ActionDeny, Rules: []policy.Rule{{
 		ID:             "allow-http",
@@ -146,20 +151,25 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 	if err := tcpBanner(clientNS, "192.168.50.2", 2223); err == nil {
 		t.Fatal("default-deny policy allowed a forbidden WireGuard SSH port")
 	}
+	verifyUnrelatedForwarding(t, clientNS, gatewayNS, lanNS)
+	verifyEstablishedRevoke(t, clientNS, gatewayNS, lanNS, "wg0", peers)
 }
 
 func requireNetworkTools(t *testing.T, wireGuard bool) {
 	t.Helper()
+
 	if os.Geteuid() != 0 {
-		t.Skip("network namespace acceptance requires root or CAP_NET_ADMIN")
+		t.Fatal("mandatory network namespace acceptance requires root or CAP_NET_ADMIN")
 	}
+
 	commands := []string{"ip", "nft", "curl", "python3"}
 	if wireGuard {
 		commands = append(commands, "wg")
 	}
+
 	for _, command := range commands {
 		if _, err := exec.LookPath(command); err != nil {
-			t.Skipf("%s is not installed", command)
+			t.Fatalf("mandatory network namespace acceptance requires %s: %v", command, err)
 		}
 	}
 }
@@ -170,8 +180,125 @@ func applyDefaultDenyPolicy(t *testing.T, namespace, interfaceName string, peers
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := runInNamespace(namespace, "nft", "list", "table", "inet", "go_tunnels"); err == nil {
+		script = "flush table inet go_tunnels\n" + script
+	}
 	if err := runWithInput(namespace, script, "nft", "-f", "-"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func verifyGatewayInputDenied(t *testing.T, clientNS, gatewayNS string) {
+	t.Helper()
+	server := exec.Command("ip", "netns", "exec", gatewayNS, "python3", "-m", "http.server", "8082", "--bind", "100.64.0.1")
+	server.Stdout, server.Stderr = io.Discard, io.Discard
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Process.Kill(); _ = server.Wait() })
+	waitForHTTP(t, gatewayNS, "http://100.64.0.1:8082")
+	if err := curl(clientNS, "http://100.64.0.1:8082"); err == nil {
+		t.Fatal("tunnel accessed a gateway-local service without input authorization")
+	}
+}
+
+func verifyUnrelatedForwarding(t *testing.T, clientNS, gatewayNS, lanNS string) {
+	t.Helper()
+	for _, command := range [][]string{
+		{"ip", "link", "add", "gt-other-peer", "type", "veth", "peer", "name", "other0"},
+		{"ip", "link", "set", "gt-other-peer", "netns", clientNS},
+		{"ip", "link", "set", "other0", "netns", gatewayNS},
+	} {
+		if err := run(command[0], command[1:]...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, command := range [][]string{
+		{clientNS, "ip", "addr", "add", "172.20.0.2/24", "dev", "gt-other-peer"},
+		{gatewayNS, "ip", "addr", "add", "172.20.0.1/24", "dev", "other0"},
+		{clientNS, "ip", "link", "set", "gt-other-peer", "up"},
+		{gatewayNS, "ip", "link", "set", "other0", "up"},
+		{clientNS, "ip", "rule", "add", "from", "172.20.0.2", "table", "100"},
+		{clientNS, "ip", "route", "add", "192.168.50.0/24", "via", "172.20.0.1", "dev", "gt-other-peer", "table", "100"},
+		{lanNS, "ip", "route", "add", "172.20.0.0/24", "via", "192.168.50.1"},
+	} {
+		if err := runInNamespace(command[0], command[1:]...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runInNamespace(clientNS, "curl", "--interface", "172.20.0.2", "--fail", "--silent", "--max-time", "2", "http://192.168.50.2:8081"); err != nil {
+		t.Fatalf("tunnel firewall blocked unrelated forwarding: %v", err)
+	}
+}
+
+// Keep one real TCP connection through a policy update: new-connection curl
+// assertions alone cannot detect an established/related acceptance bypass.
+func verifyEstablishedRevoke(t *testing.T, clientNS, gatewayNS, lanNS, link string, peers map[string]netip.Prefix) {
+	t.Helper()
+	const echo = `import socket,threading
+s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+s.bind(("192.168.50.2",9090));s.listen()
+def echo(c):
+ with c:
+  while True:
+   data=c.recv(128)
+   if not data: break
+   c.sendall(data)
+while True:
+ c,_=s.accept();threading.Thread(target=echo,args=(c,),daemon=True).start()`
+	server := exec.Command("ip", "netns", "exec", lanNS, "python3", "-u", "-c", echo)
+	server.Stdout, server.Stderr = io.Discard, io.Discard
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Process.Kill(); _ = server.Wait() })
+	allow := policy.Snapshot{Revision: 2, DefaultAction: policy.ActionDeny, Rules: []policy.Rule{{ID: "echo", SourceDeviceID: "client", Destination: netip.MustParsePrefix("192.168.50.2/32"), Protocol: policy.ProtocolTCP, PortFrom: 9090, PortTo: 9090}}}
+	applyDefaultDenyPolicy(t, gatewayNS, link, peers, allow)
+	const client = `import socket,sys,time
+deadline=time.monotonic()+5
+while True:
+ try: s=socket.create_connection(("192.168.50.2",9090),timeout=1);break
+ except OSError:
+  if time.monotonic()>deadline: raise
+  time.sleep(.1)
+with s:
+ s.sendall(b"first");assert s.recv(128)==b"first"
+ print("ESTABLISHED",flush=True)
+ sys.stdin.readline()
+ s.sendall(b"revoked")
+ try:
+  data=s.recv(128)
+  print("BYPASS" if data else "BLOCKED",flush=True)
+ except (TimeoutError,OSError): print("BLOCKED",flush=True)`
+	process := exec.Command("ip", "netns", "exec", clientNS, "python3", "-u", "-c", client)
+	input, err := process.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := process.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	process.Stderr = io.Discard
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = input.Close(); _ = process.Process.Kill(); _ = process.Wait() })
+	scanner := bufio.NewScanner(output)
+	if !scanner.Scan() || scanner.Text() != "ESTABLISHED" {
+		t.Fatal("could not establish authorized TCP flow")
+	}
+	allow.Revision, allow.Rules = 3, nil
+	applyDefaultDenyPolicy(t, gatewayNS, link, peers, allow)
+	if _, err := io.WriteString(input, "revoke\n"); err != nil {
+		t.Fatal(err)
+	}
+	if !scanner.Scan() || scanner.Text() != "BLOCKED" {
+		t.Fatalf("established TCP flow survived ACL revoke: %q", scanner.Text())
+	}
+	// Empty ACL and the staged guard must both preserve unrelated forwarding.
+	if err := runInNamespace(clientNS, "curl", "--interface", "172.20.0.2", "--fail", "--silent", "--max-time", "2", "http://192.168.50.2:8081"); err != nil {
+		t.Fatalf("revocation blocked unrelated forwarding: %v", err)
 	}
 }
 
