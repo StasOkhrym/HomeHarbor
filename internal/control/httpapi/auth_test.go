@@ -187,6 +187,24 @@ func TestCSRFCookieCreationReturnsRandomnessFailure(t *testing.T) {
 	}
 }
 
+func TestEstablishSessionRevokesSessionWhenCSRFSetupFails(t *testing.T) {
+	auth, sessions := newBrowserAuthTest(t)
+	previous := readRandom
+	readRandom = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+	t.Cleanup(func() { readRandom = previous })
+
+	recorder := httptest.NewRecorder()
+	if err := auth.establishSession(recorder, context.Background()); err == nil {
+		t.Fatal("establishSession() error=nil")
+	}
+	if sessions.revoked != sessions.session.Token {
+		t.Fatalf("revoked session=%q, want %q", sessions.revoked, sessions.session.Token)
+	}
+	if cookies := recorder.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("cookies=%#v, want none after failed setup", cookies)
+	}
+}
+
 func TestLoginPageUsesLocalScriptAsset(t *testing.T) {
 	auth, _ := newBrowserAuthTest(t)
 	recorder := httptest.NewRecorder()

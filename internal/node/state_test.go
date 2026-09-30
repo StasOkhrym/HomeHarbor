@@ -1,6 +1,7 @@
 package node
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,5 +47,35 @@ func TestLoadOrCreatePreservesExistingIdentity(t *testing.T) {
 	}
 	if second.IdentityPublicKey != first.IdentityPublicKey || second.WireGuard.PublicKey != first.WireGuard.PublicKey {
 		t.Fatalf("LoadOrCreate replaced identity: first=%#v second=%#v", first, second)
+	}
+}
+
+func TestLoadRejectsMismatchedPublicKey(t *testing.T) {
+	state, err := NewState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.IdentityPublicKey = base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := state.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load() accepted mismatched identity public key")
+	}
+}
+
+func TestLoadRejectsPartialEnrollment(t *testing.T) {
+	state, err := NewState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.DeviceID = "device-1"
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := state.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load() accepted partial enrollment")
 	}
 }

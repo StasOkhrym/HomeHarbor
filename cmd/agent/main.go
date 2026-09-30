@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sokhrym/go-tunnels/internal/agent/dns"
 	"github.com/sokhrym/go-tunnels/internal/node"
 )
 
@@ -34,6 +35,8 @@ func main() {
 	coordinationURL := flag.String("coordination", "", "control coordination WebSocket URL")
 	rootPublicKeyFile := flag.String("root-public-key", "", "trusted companion root public key file")
 	networkID := flag.String("network-id", "home", "network ID used for signed snapshot verification")
+	dnsLink := flag.String("dns-link", "", "Linux link managed by systemd-resolved for split DNS; blank disables split DNS")
+	enableForwarding := flag.Bool("enable-forwarding", false, "explicitly enable host-wide Linux IPv4/IPv6 forwarding for this gateway")
 	flag.Parse()
 	state, err := node.LoadOrCreate(*statePath)
 	if err == nil && *controlURL != "" && *token != "" {
@@ -63,9 +66,19 @@ func main() {
 	}
 	var components []func(context.Context) error
 	if err == nil && *relayURL != "" {
+		var ticketProvider node.RelayTicketProvider
+		if *controlURL != "" {
+			ticketProvider = func(providerContext context.Context) (string, error) {
+				session, providerErr := node.IssueRelaySession(providerContext, nil, *controlURL, state.DeviceCredential, *sessionID, *destination)
+				if providerErr != nil {
+					return "", providerErr
+				}
+				return session.Ticket, nil
+			}
+		}
 		if *interfaceName == "" {
 			components = append(components, func(componentContext context.Context) error {
-				return node.RunRelayBridge(componentContext, node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress})
+				return node.RunRelayBridgeLoop(componentContext, node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress}, ticketProvider)
 			})
 		} else {
 			allowed, parseErr := node.ParsePrefixList(*allowedPrefixes)
@@ -76,7 +89,7 @@ func main() {
 				routePrefixes, parseErr = node.ParsePrefixList(*routes)
 				if parseErr == nil {
 					components = append(components, func(componentContext context.Context) error {
-						return node.RunKernelRelay(componentContext, node.KernelRelayConfig{RelayBridgeConfig: node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress}, InterfaceName: *interfaceName, PrivateKey: state.WireGuard.PrivateKey, ListenPort: uint16(*listenPort), OverlayAddress: *overlayAddress, PeerPublicKey: *peerPublicKey, AllowedPrefixes: allowed, Routes: routePrefixes})
+						return node.RunKernelRelayLoop(componentContext, node.KernelRelayConfig{RelayBridgeConfig: node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress}, InterfaceName: *interfaceName, PrivateKey: state.WireGuard.PrivateKey, ListenPort: uint16(*listenPort), OverlayAddress: *overlayAddress, PeerPublicKey: *peerPublicKey, AllowedPrefixes: allowed, Routes: routePrefixes}, ticketProvider)
 					})
 				} else {
 					err = parseErr
@@ -92,10 +105,21 @@ func main() {
 			if keyErr != nil {
 				err = keyErr
 			} else {
-				reconciler := node.NewGatewayReconciler(*interfaceName, state.DeviceID)
-				components = append(components, func(componentContext context.Context) error {
-					return node.RunCoordination(componentContext, node.CoordinationConfig{URL: *coordinationURL, Credential: state.DeviceCredential, DeviceID: state.DeviceID, NetworkID: *networkID, RootPublicKey: rootPublicKey}, reconciler)
-				})
+				var dnsReconciler *node.DNSReconciler
+				if *dnsLink != "" {
+					manager, managerErr := dns.NewManager(*dnsLink)
+					if managerErr != nil {
+						err = managerErr
+					} else {
+						dnsReconciler = node.NewDNSReconciler(manager)
+					}
+				}
+				if err == nil {
+					reconciler := node.NewGatewayReconcilerWithOptions(*interfaceName, state.DeviceID, dnsReconciler, *enableForwarding)
+					components = append(components, func(componentContext context.Context) error {
+						return node.RunCoordinationLoop(componentContext, node.CoordinationConfig{URL: *coordinationURL, Credential: state.DeviceCredential, DeviceID: state.DeviceID, NetworkID: *networkID, RootPublicKey: rootPublicKey}, reconciler)
+					})
+				}
 			}
 		}
 	}

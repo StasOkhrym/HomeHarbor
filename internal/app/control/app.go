@@ -48,9 +48,9 @@ type App struct {
 
 var _ lifecycle.Component = (*App)(nil)
 
-// New validates dependencies, runs migrations, and builds the HTTP runtime.
-// Migration ownership intentionally stays here rather than in HTTP readiness:
-// only one dedicated control process should mutate the database schema.
+// New validates dependencies and builds the HTTP runtime. Migration ownership
+// intentionally stays in the dedicated migrate process rather than here or in
+// HTTP readiness: only one process should mutate the database schema.
 func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, error) {
 	if logger == nil {
 		logger = slog.Default()
@@ -92,7 +92,10 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	networkService := controlnetwork.NewService(controlnetwork.NewPostgresStore(pool), time.Now)
 	policyService := policy.NewService(policy.NewPostgresStore(pool), policy.Compiler{})
 	serviceCatalog := controlservices.NewService(controlservices.NewPostgresStore(pool), time.Now)
-	coordinationHandler := coordination.NewHandler(deviceService, nil, []string{cfg.Auth.RPOrigin})
+	peerAuthorization := func(_ context.Context, source, destination devices.Device) bool {
+		return source.Status == devices.StatusActive && destination.Status == devices.StatusActive && source.Role != destination.Role
+	}
+	coordinationHandler := coordination.NewHandler(deviceService, nil, []string{cfg.Auth.RPOrigin}, peerAuthorization)
 	var signedSnapshots *controlsnapshots.Service
 	identityStore := identity.NewPostgresStore(pool)
 	identityService := identity.NewService(identityStore, time.Now, nil)
@@ -153,8 +156,9 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		serverOptions = append(serverOptions,
 			httpapi.WithInviteService(controlinvites.NewService(controlinvites.NewPostgresStore(pool), rootPublic, cfg.Networking.NetworkID, time.Now)),
 			httpapi.WithSnapshotService(signedSnapshots),
+			httpapi.WithSnapshotBroadcaster(coordinationHandler),
 		)
-		coordinationHandler = coordination.NewHandler(deviceService, signedSnapshots, []string{cfg.Auth.RPOrigin})
+		coordinationHandler = coordination.NewHandler(deviceService, signedSnapshots, []string{cfg.Auth.RPOrigin}, peerAuthorization)
 	}
 	serverOptions = append(serverOptions, httpapi.WithCoordinationHandler(coordinationHandler))
 	handler := httpapi.NewServer(

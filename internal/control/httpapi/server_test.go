@@ -121,6 +121,35 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 	}
 }
 
+func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
+	deviceService := devices.NewService(devices.NewMemoryStore(), time.Now, nil)
+	firstToken, err := deviceService.IssueEnrollmentToken(context.Background(), devices.RoleClient, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := deviceService.Enroll(context.Background(), devices.EnrollRequest{Token: firstToken.Token, Name: "first", IdentityPublicKey: "first-identity", WireGuardPublicKey: "first-wireguard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondToken, err := deviceService.IssueEnrollmentToken(context.Background(), devices.RoleClient, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := deviceService.Enroll(context.Background(), devices.EnrollRequest{Token: secondToken.Token, Name: "second", IdentityPublicKey: "second-identity", WireGuardPublicKey: "second-wireguard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := relay.TicketIssuer{Key: []byte("01234567890123456789012345678901")}
+	handler := NewServer(deviceService, allowAuthorizer{}, WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/v1", time.Minute)).Handler()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/relay-sessions", strings.NewReader(`{"session_id":"session-1","destination_device_id":"`+second.ID+`"}`))
+	request.Header.Set("Authorization", "Bearer "+first.Credential)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("same-role relay status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestHealthEndpoints(t *testing.T) {
 	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
 	for _, path := range []string{"/healthz", "/readyz"} {
@@ -147,15 +176,49 @@ func TestReadinessAndSecurityHeaders(t *testing.T) {
 }
 
 func TestAdminPageUsesLocalAssets(t *testing.T) {
-	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
+	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	if _, err := catalog.Create(context.Background(), controlservices.Service{ID: "cloud", Name: "Nextcloud", Kind: controlservices.KindWeb, URL: "https://cloud.home.example.com", Description: "Family files"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.CreateProfile(context.Background(), controlservices.AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}, WithServiceCatalog(catalog)).Handler()
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/", nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d", recorder.Code)
 	}
 	body := recorder.Body.String()
-	if strings.Contains(body, "unpkg.com") || strings.Contains(body, "<style>") || !strings.Contains(body, "/assets/admin.css") {
+	if strings.Contains(body, "unpkg.com") || strings.Contains(body, "<style>") || !strings.Contains(body, "/assets/admin.css") || !strings.Contains(body, "Nextcloud") || !strings.Contains(body, "Family") {
 		t.Fatalf("admin page assets are not local: %s", body)
+	}
+}
+
+func TestGroupedResourceRoutesKeepAdminBoundary(t *testing.T) {
+	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), headerAuthorizer{}, WithServiceCatalog(catalog)).Handler()
+
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/admin/devices", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("grouped admin route status = %d", unauthorized.Code)
+	}
+
+	authorized := httptest.NewRequest(http.MethodGet, "/api/v1/admin/devices", nil)
+	authorized.Header.Set("X-Test-Admin", "true")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, authorized)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "devices") {
+		t.Fatalf("grouped device route status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/services/", strings.NewReader(`{"id":"files","name":"Files","kind":"web","url":"https://files.home.example.com"}`))
+	create.Header.Set("X-Test-Admin", "true")
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, create)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("grouped service route status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

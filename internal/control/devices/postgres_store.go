@@ -63,6 +63,12 @@ func (s *PostgresStore) Enroll(ctx context.Context, hash [32]byte, now time.Time
 	if _, err = tx.Exec(ctx, `INSERT INTO device_credentials(device_id,credential_hash,expires_at) VALUES($1,$2,$3)`, d.ID, d.CredentialHash[:], d.CreatedAt.Add(CredentialTTL)); err != nil {
 		return "", err
 	}
+	// The enrollment transaction owns both the one-time token and the device.
+	// Recording the outbox event before commit prevents a successful enrollment
+	// from becoming invisible to audit consumers after a control restart.
+	if err = appendEvent(ctx, tx, Event{Type: "device.enrolled", AggregateID: d.ID, OccurredAt: d.CreatedAt}); err != nil {
+		return "", err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return "", err
 	}

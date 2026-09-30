@@ -19,10 +19,26 @@ type GatewayReconciler struct {
 	interfaceName string
 	deviceID      string
 	policies      *nft.Applier
+	dns           *DNSReconciler
+	forwarding    bool
 }
 
-func NewGatewayReconciler(interfaceName, deviceID string) *GatewayReconciler {
-	return &GatewayReconciler{interfaceName: interfaceName, deviceID: deviceID, policies: nft.NewApplier(interfaceName, nil)}
+// NewGatewayReconciler composes firewall and optional split-DNS ownership.
+// DNS is applied first so a failed nft transaction leaves the node retryable;
+// the next snapshot attempt can repeat the same DNS state and policy revision.
+func NewGatewayReconciler(interfaceName, deviceID string, dnsReconcilers ...*DNSReconciler) *GatewayReconciler {
+	var dnsReconciler *DNSReconciler
+	if len(dnsReconcilers) > 0 {
+		dnsReconciler = dnsReconcilers[0]
+	}
+	return NewGatewayReconcilerWithOptions(interfaceName, deviceID, dnsReconciler, false)
+}
+
+// NewGatewayReconcilerWithOptions exposes host-wide forwarding as an explicit
+// deployment choice. The default constructor remains fail-safe for developers
+// and hosts where another network manager owns sysctl state.
+func NewGatewayReconcilerWithOptions(interfaceName, deviceID string, dnsReconciler *DNSReconciler, enableForwarding bool) *GatewayReconciler {
+	return &GatewayReconciler{interfaceName: interfaceName, deviceID: deviceID, policies: nft.NewApplier(interfaceName, nil), dns: dnsReconciler, forwarding: enableForwarding}
 }
 
 func (r *GatewayReconciler) Apply(ctx context.Context, value snapshot.NetworkSnapshot) error {
@@ -72,6 +88,11 @@ func (r *GatewayReconciler) Apply(ctx context.Context, value snapshot.NetworkSna
 	if err := tunnel.EnsureLinuxInterface(ctx, r.interfaceName, overlay.String(), routes); err != nil {
 		return err
 	}
+	if r.forwarding {
+		if err := tunnel.EnableLinuxForwarding(ctx); err != nil {
+			return err
+		}
+	}
 	rules := make([]policy.Rule, 0, len(value.ACL))
 	for _, acl := range value.ACL {
 		destination, parseErr := netip.ParsePrefix(acl.Destination)
@@ -80,6 +101,11 @@ func (r *GatewayReconciler) Apply(ctx context.Context, value snapshot.NetworkSna
 		}
 		protocol := policy.Protocol(acl.Protocol)
 		rules = append(rules, policy.Rule{ID: acl.ID, SourceDeviceID: acl.SourceDeviceID, Destination: destination, Protocol: protocol, PortFrom: acl.PortFrom, PortTo: acl.PortTo})
+	}
+	if r.dns != nil {
+		if err := r.dns.Apply(ctx, value); err != nil {
+			return fmt.Errorf("apply split DNS snapshot revision %d: %w", value.Revision, err)
+		}
 	}
 	r.policies.UpdatePeers(peers)
 	return r.policies.Apply(ctx, policy.Snapshot{Revision: value.Revision, DefaultAction: policy.ActionDeny, Rules: rules})

@@ -2,7 +2,10 @@ package protocol
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 )
 
@@ -61,6 +64,50 @@ type Candidate struct {
 	Address  string        `json:"address"`
 	Priority uint32        `json:"priority"`
 }
+
+// CandidateUpdate is always addressed to one peer. Broadcasting endpoint
+// candidates would disclose home-network topology to unrelated devices.
+type CandidateUpdate struct {
+	DestinationDeviceID string      `json:"destination_device_id"`
+	Candidates          []Candidate `json:"candidates"`
+}
+
+const maxCandidates = 8
+
+// Validate bounds candidate exchange before an endpoint can reach a peer. The
+// control connection authenticates the sender, but it does not make arbitrary
+// addresses safe: rejecting empty, duplicate, or unusable endpoints prevents
+// a malformed update from turning into an unbounded direct-dial loop.
+func (u CandidateUpdate) Validate() error {
+	if strings.TrimSpace(u.DestinationDeviceID) == "" {
+		return fmt.Errorf("candidate destination device is required")
+	}
+	if len(u.Candidates) == 0 || len(u.Candidates) > maxCandidates {
+		return fmt.Errorf("candidate count must be between 1 and %d", maxCandidates)
+	}
+	seen := make(map[string]struct{}, len(u.Candidates))
+	for _, candidate := range u.Candidates {
+		switch candidate.Type {
+		case CandidateHost, CandidateServerReflexive, CandidateRelay:
+		default:
+			return fmt.Errorf("unsupported candidate type %q", candidate.Type)
+		}
+		if candidate.Priority == 0 {
+			return fmt.Errorf("candidate priority must be positive")
+		}
+		address, err := netip.ParseAddrPort(candidate.Address)
+		if err != nil || !address.IsValid() || address.Port() == 0 || address.Addr().IsUnspecified() {
+			return fmt.Errorf("invalid candidate address %q", candidate.Address)
+		}
+		key := string(candidate.Type) + "\x00" + address.String()
+		if _, exists := seen[key]; exists {
+			return fmt.Errorf("duplicate candidate %q", candidate.Address)
+		}
+		seen[key] = struct{}{}
+	}
+	return nil
+}
+
 type Message struct {
 	Type     string          `json:"type"`
 	Revision uint64          `json:"revision,omitempty"`

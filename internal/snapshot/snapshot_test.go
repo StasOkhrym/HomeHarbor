@@ -68,3 +68,60 @@ func TestSignRejectsInvalidService(t *testing.T) {
 		t.Fatal("insecure service URL accepted")
 	}
 }
+
+func TestSignRejectsReferencesThatCouldBroadenGatewayAccess(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := NetworkSnapshot{
+		NetworkID: "home",
+		Revision:  1,
+		Devices:   []Device{{ID: "client", OverlayAddress: "100.64.0.2/32"}},
+		Gateways:  []Gateway{{DeviceID: "unknown"}},
+	}
+	if _, err = Sign(value, privateKey, "root-1"); err == nil {
+		t.Fatal("gateway referencing unknown device was accepted")
+	}
+
+	value = NetworkSnapshot{
+		NetworkID: "home",
+		Revision:  1,
+		Devices:   []Device{{ID: "client", OverlayAddress: "100.64.0.2/32"}},
+		ACL:       []ACLRule{{ID: "bad", SourceDeviceID: "client", Destination: "10.0.0.0/24", Protocol: "icmp", PortFrom: 1, PortTo: 1}},
+	}
+	if _, err = Sign(value, privateKey, "root-1"); err == nil {
+		t.Fatal("unsupported ACL protocol was accepted")
+	}
+}
+
+func TestSignRejectsServiceCredentialsAndFragments(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{"https://user:password@cloud.home", "https://cloud.home/#fragment"} {
+		if _, err = Sign(NetworkSnapshot{NetworkID: "home", Revision: 1, Services: []Service{{ID: "cloud", Name: "Cloud", URL: raw}}}, privateKey, "root-1"); err == nil {
+			t.Fatalf("unsafe service URL accepted: %s", raw)
+		}
+	}
+}
+
+func TestSignRejectsDefaultRouteAdvertisement(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	value := NetworkSnapshot{
+		NetworkID: "home",
+		Revision:  1,
+		Devices:   []Device{{ID: "gateway", OverlayAddress: "100.64.0.1/32"}},
+		Gateways:  []Gateway{{DeviceID: "gateway"}},
+		Routes:    []Route{{ID: "internet", GatewayID: "gateway", Prefix: "0.0.0.0/0"}},
+	}
+
+	if _, err := Sign(value, privateKey, "root-1"); err == nil {
+		t.Fatal("default route advertisement was accepted")
+	}
+}

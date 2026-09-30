@@ -154,11 +154,15 @@ func (a *BrowserAuth) establishSession(w http.ResponseWriter, ctx context.Contex
 	if err != nil {
 		return err
 	}
-	http.SetCookie(w, a.sessionCookie(session))
 	csrf, err := a.csrfCookie(session.Token, session.ExpiresAt)
 	if err != nil {
+		// A session without its CSRF companion is unusable for mutations but
+		// remains valid for reads. Revoke it before returning so an entropy
+		// failure cannot leave an orphaned authenticated browser session.
+		_ = a.sessions.RevokeSession(ctx, session.Token)
 		return err
 	}
+	http.SetCookie(w, a.sessionCookie(session))
 	http.SetCookie(w, csrf)
 	return nil
 }

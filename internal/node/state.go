@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -8,6 +9,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	"github.com/sokhrym/go-tunnels/internal/tunnel"
 )
@@ -92,8 +95,34 @@ func Load(path string) (State, error) {
 	if err = json.Unmarshal(data, &state); err != nil {
 		return State{}, err
 	}
-	if state.IdentityPrivateKey == "" || state.WireGuard.PrivateKey == "" {
-		return State{}, errors.New("node state is incomplete")
+	if err := state.Validate(); err != nil {
+		return State{}, err
 	}
 	return state, nil
+}
+
+// Validate checks the persisted public/private key relationship before a node
+// reuses local state. A damaged or hand-edited state file must fail closed;
+// silently enrolling a new identity would strand the old device and weaken
+// the operator's ability to revoke the intended key.
+func (s State) Validate() error {
+	if s.IdentityPrivateKey == "" || s.IdentityPublicKey == "" || s.WireGuard.PrivateKey == "" || s.WireGuard.PublicKey == "" {
+		return errors.New("node state is incomplete")
+	}
+	identityPrivate, err := base64.RawURLEncoding.DecodeString(s.IdentityPrivateKey)
+	if err != nil || len(identityPrivate) != ed25519.PrivateKeySize {
+		return errors.New("node identity private key is invalid")
+	}
+	identityPublic, err := base64.RawURLEncoding.DecodeString(s.IdentityPublicKey)
+	if err != nil || len(identityPublic) != ed25519.PublicKeySize || !bytes.Equal(ed25519.PrivateKey(identityPrivate).Public().(ed25519.PublicKey), identityPublic) {
+		return errors.New("node identity public key does not match private key")
+	}
+	wireGuardPrivate, err := wgtypes.ParseKey(s.WireGuard.PrivateKey)
+	if err != nil || wireGuardPrivate.PublicKey().String() != s.WireGuard.PublicKey {
+		return errors.New("WireGuard public key does not match private key")
+	}
+	if (s.DeviceID == "") != (s.DeviceCredential == "") {
+		return errors.New("enrolled node state must contain both device ID and credential")
+	}
+	return nil
 }

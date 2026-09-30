@@ -39,3 +39,17 @@ func TestBuildWireGuardConfigWithListenPort(t *testing.T) {
 		t.Fatalf("listen port=%v", config.ListenPort)
 	}
 }
+
+func TestBuildWireGuardConfigRejectsDefaultRoute(t *testing.T) {
+	local, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildWireGuardConfig(local.PrivateKey, []PeerConfig{{PublicKey: remote.PublicKey, AllowedPrefixes: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}); err == nil {
+		t.Fatal("default route was accepted")
+	}
+}

@@ -19,6 +19,12 @@ if command -v docker >/dev/null 2>&1; then
         printf 'docker compose: missing\n' >&2
         missing=1
     fi
+    if docker info >/dev/null 2>&1; then
+        printf 'docker daemon: available\n'
+    else
+        printf 'docker daemon: unavailable (start Docker before make dev-up)\n' >&2
+        missing=1
+    fi
 else
     printf 'docker: missing (required for local Compose)\n' >&2
     missing=1

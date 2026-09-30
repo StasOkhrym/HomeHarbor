@@ -14,3 +14,8 @@ import (
 func EnsureLinuxInterface(context.Context, string, string, []netip.Prefix) error {
 	return errors.New("linux WireGuard interface lifecycle is only supported on Linux")
 }
+
+// EnableLinuxForwarding is intentionally unavailable outside Linux.
+func EnableLinuxForwarding(context.Context) error {
+	return errors.New("linux forwarding management is only supported on Linux")
+}

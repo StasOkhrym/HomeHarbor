@@ -53,6 +53,28 @@ func TestRunCoordinationVerifiesAndAppliesSignedSnapshot(t *testing.T) {
 	}
 }
 
+func TestRunCoordinationLoopStopsOnCancellationDuringBackoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	err := RunCoordinationLoop(ctx, CoordinationConfig{
+		URL:              "ws://127.0.0.1:1",
+		Credential:       "credential",
+		DeviceID:         "device-1",
+		NetworkID:        "home",
+		RootPublicKey:    make([]byte, ed25519.PublicKeySize),
+		ReconnectInitial: time.Second,
+		ReconnectMax:     time.Second,
+	}, &snapshotRecorder{})
+	if err != nil {
+		t.Fatalf("RunCoordinationLoop() error = %v", err)
+	}
+}
+
 func newCoordinationTestServer(t *testing.T, envelope snapshot.Envelope) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

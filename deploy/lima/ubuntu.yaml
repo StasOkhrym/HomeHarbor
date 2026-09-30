@@ -17,5 +17,5 @@ provision:
   - mode: system
     script: |
       apt-get update
-      apt-get install -y nftables iproute2 wireguard-tools docker.io
+      apt-get install -y nftables iproute2 wireguard-tools docker.io curl python3
       modprobe tun || true

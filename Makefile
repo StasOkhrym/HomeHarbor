@@ -1,4 +1,4 @@
-.PHONY: doctor test race vet lint lint-fix build check verify dev-init dev-up dev-down dev-trust-ca vm-up vm-down integration acceptance
+.PHONY: doctor test race vet lint lint-fix build check verify dev-init dev-up dev-down dev-trust-ca vm-up vm-down integration relay-acceptance acceptance
 
 COMPOSE := docker compose -f deploy/compose.yaml
 
@@ -31,7 +31,7 @@ verify: lint
 dev-init:
 	./scripts/dev-init.sh
 
-dev-up: dev-init
+dev-up: doctor dev-init
 	CONTROL_DOMAIN=$${CONTROL_DOMAIN:-control.localhost} RELAY_DOMAIN=$${RELAY_DOMAIN:-relay.localhost} CONTROL_CONFIG=../.local/control.toml RELAY_CONFIG=../.local/relay.toml $(COMPOSE) up --build -d
 
 dev-down:
@@ -48,6 +48,9 @@ vm-down:
 
 integration:
 	./scripts/integration.sh
+
+relay-acceptance:
+	go test ./internal/node -run '^TestRelayOnlyNodeBridgesForwardOpaqueUDPInBothDirections$$' -count=1 -v
 
 acceptance:
 	./scripts/acceptance.sh

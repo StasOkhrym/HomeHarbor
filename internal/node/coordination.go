@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -28,12 +29,50 @@ type SnapshotApplier interface {
 }
 
 type CoordinationConfig struct {
-	URL            string
-	Credential     string
-	DeviceID       string
-	NetworkID      string
-	RootPublicKey  ed25519.PublicKey
-	HeartbeatEvery time.Duration
+	URL              string
+	Credential       string
+	DeviceID         string
+	NetworkID        string
+	RootPublicKey    ed25519.PublicKey
+	HeartbeatEvery   time.Duration
+	ReconnectInitial time.Duration
+	ReconnectMax     time.Duration
+	CandidateHandler func(context.Context, controlprotocol.CandidateUpdate) error
+}
+
+// RunCoordinationLoop keeps the last verified gateway state active while the
+// control connection is unavailable. A reconnect never resets the revision
+// cursor; the next snapshot must still pass the normal contiguous-chain check.
+func RunCoordinationLoop(ctx context.Context, cfg CoordinationConfig, applier SnapshotApplier) error {
+	initial := cfg.ReconnectInitial
+	if initial <= 0 {
+		initial = time.Second
+	}
+	maximum := cfg.ReconnectMax
+	if maximum < initial {
+		maximum = 30 * time.Second
+	}
+	backoff := initial
+	cursor := coordinationCursor{}
+	for {
+		err := runCoordination(ctx, cfg, applier, &cursor)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err == nil {
+			return nil
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil
+		case <-timer.C:
+		}
+		backoff = min(backoff*2, maximum)
+	}
 }
 
 // LoadPublicKeyFile accepts the raw 32-byte or base64url form used by TOML and
@@ -62,6 +101,16 @@ func LoadPublicKeyFile(path string) (ed25519.PublicKey, error) {
 // every snapshot before applying it. A reconnect should call this function
 // again; it intentionally does not invent a snapshot during control outage.
 func RunCoordination(ctx context.Context, cfg CoordinationConfig, applier SnapshotApplier) error {
+	cursor := coordinationCursor{}
+	return runCoordination(ctx, cfg, applier, &cursor)
+}
+
+type coordinationCursor struct {
+	revision uint64
+	hash     []byte
+}
+
+func runCoordination(ctx context.Context, cfg CoordinationConfig, applier SnapshotApplier, cursor *coordinationCursor) error {
 	if cfg.URL == "" || cfg.Credential == "" || cfg.DeviceID == "" || cfg.NetworkID == "" || len(cfg.RootPublicKey) != ed25519.PublicKeySize || applier == nil {
 		return errors.New("coordination URL, credentials, device, network, root key, and applier are required")
 	}
@@ -72,13 +121,15 @@ func RunCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 		return fmt.Errorf("dial coordination: %w", err)
 	}
 	defer func() { _ = connection.CloseNow() }()
+	sessionContext, sessionCancel := context.WithCancel(ctx)
+	defer sessionCancel()
 	connection.SetReadLimit(64 << 10)
 
 	writeMu := sync.Mutex{}
 	write := func(value any) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
-		writeContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+		writeContext, cancel := context.WithTimeout(sessionContext, 10*time.Second)
 		defer cancel()
 		return wsjson.Write(writeContext, connection, value)
 	}
@@ -90,7 +141,7 @@ func RunCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 		Type     string                     `json:"type"`
 		Protocol controlprotocol.Negotiated `json:"protocol"`
 	}
-	welcomeContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+	welcomeContext, cancel := context.WithTimeout(sessionContext, 10*time.Second)
 	err = wsjson.Read(welcomeContext, connection, &welcome)
 	cancel()
 	if err != nil {
@@ -117,10 +168,8 @@ func RunCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 		}
 	}()
 
-	var revision uint64
-	var previousHash []byte
 	for {
-		readContext, readCancel := context.WithTimeout(ctx, 2*time.Minute)
+		readContext, readCancel := context.WithTimeout(sessionContext, 2*time.Minute)
 		var message controlprotocol.Message
 		err = wsjson.Read(readContext, connection, &message)
 		readCancel()
@@ -136,7 +185,13 @@ func RunCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 			if err := json.Unmarshal(message.Payload, &envelope); err != nil {
 				return fmt.Errorf("decode network snapshot envelope: %w", err)
 			}
-			if err := snapshot.VerifyNext(envelope, cfg.RootPublicKey, cfg.NetworkID, revision, previousHash); err != nil {
+			// Control sends its current head after every reconnect. The exact
+			// same signed head is a safe replay; anything else must advance the
+			// chain through VerifyNext and cannot silently replace local state.
+			if cursor.revision != 0 && cursor.revision == snapshotRevision(envelope) && bytes.Equal(cursor.hash, envelope.Hash) {
+				continue
+			}
+			if err := snapshot.VerifyNext(envelope, cfg.RootPublicKey, cfg.NetworkID, cursor.revision, cursor.hash); err != nil {
 				return fmt.Errorf("verify network snapshot: %w", err)
 			}
 			value, err := snapshot.Decode(envelope)
@@ -146,15 +201,36 @@ func RunCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 			if err := applier.Apply(ctx, value); err != nil {
 				return fmt.Errorf("apply network snapshot revision %d: %w", value.Revision, err)
 			}
-			revision = value.Revision
-			previousHash = append(previousHash[:0], envelope.Hash...)
+			cursor.revision = value.Revision
+			cursor.hash = append(cursor.hash[:0], envelope.Hash...)
 		case "heartbeat.ack":
 			// The read deadline is refreshed by the next successful message.
 		default:
-			if strings.HasPrefix(message.Type, "candidate.") {
+			if message.Type == "candidate.update" {
+				if cfg.CandidateHandler == nil {
+					return errors.New("candidate update received without a handler")
+				}
+				var update controlprotocol.CandidateUpdate
+				if err := json.Unmarshal(message.Payload, &update); err != nil {
+					return fmt.Errorf("decode candidate update: %w", err)
+				}
+				if err := update.Validate(); err != nil {
+					return fmt.Errorf("validate candidate update: %w", err)
+				}
+				if err := cfg.CandidateHandler(ctx, update); err != nil {
+					return fmt.Errorf("handle candidate update: %w", err)
+				}
 				continue
 			}
 			return fmt.Errorf("unsupported coordination message %q", message.Type)
 		}
 	}
+}
+
+func snapshotRevision(envelope snapshot.Envelope) uint64 {
+	value, err := snapshot.Decode(envelope)
+	if err != nil {
+		return 0
+	}
+	return value.Revision
 }

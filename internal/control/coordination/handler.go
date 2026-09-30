@@ -26,11 +26,32 @@ type Handler struct {
 	Auth           Authenticator
 	Snapshots      SnapshotProvider
 	AllowedOrigins []string
+	AuthorizePeer  func(context.Context, devices.Device, devices.Device) bool
 	hub            *hub
 }
 
-func NewHandler(auth Authenticator, snapshots SnapshotProvider, allowedOrigins []string) *Handler {
-	return &Handler{Auth: auth, Snapshots: snapshots, AllowedOrigins: append([]string(nil), allowedOrigins...), hub: newHub()}
+// BroadcastSnapshot sends a committed signed head to currently connected
+// nodes. It is intentionally best-effort: the durable snapshot store remains
+// the source of truth, and disconnected nodes fetch the same head on retry.
+func (h *Handler) BroadcastSnapshot(ctx context.Context, envelope snapshot.Envelope) {
+	if h == nil {
+		return
+	}
+	broadcastContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		return
+	}
+	message := controlprotocol.Message{Type: "network.snapshot", Payload: payload}
+	h.hub.broadcastMessage(broadcastContext, "", message)
+}
+
+// NewHandler creates the coordination endpoint. Peer authorization is an
+// explicit option because candidate exchange is security-sensitive; without
+// it the handler refuses candidate updates instead of guessing a mesh policy.
+func NewHandler(auth Authenticator, snapshots SnapshotProvider, allowedOrigins []string, authorizePeer func(context.Context, devices.Device, devices.Device) bool) *Handler {
+	return &Handler{Auth: auth, Snapshots: snapshots, AllowedOrigins: append([]string(nil), allowedOrigins...), AuthorizePeer: authorizePeer, hub: newHub()}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +84,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	negotiated, protocolErr := controlprotocol.Negotiate(hello)
 	if protocolErr != nil {
-		_ = wsjson.Write(r.Context(), connection, protocolErr)
+		_ = writeJSONWithTimeout(r.Context(), connection, protocolErr)
 		_ = connection.Close(websocket.StatusPolicyViolation, protocolErr.Code)
 		return
 	}
@@ -75,7 +96,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.hub.remove(peer.id)
-	if err = wsjson.Write(r.Context(), connection, map[string]any{"type": "welcome", "protocol": negotiated}); err != nil {
+	if err = writeJSONWithTimeout(r.Context(), connection, map[string]any{"type": "welcome", "protocol": negotiated}); err != nil {
 		return
 	}
 	if h.Snapshots == nil {
@@ -100,7 +121,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		switch message.Type {
 		case "candidate.update":
-			h.hub.broadcast(r.Context(), peer.id, message)
+			var update controlprotocol.CandidateUpdate
+			if err := json.Unmarshal(message.Payload, &update); err != nil || update.Validate() != nil {
+				_ = connection.Close(websocket.StatusInvalidFramePayloadData, "targeted candidate update required")
+				return
+			}
+			destinationReader, ok := h.Auth.(interface {
+				Device(context.Context, string) (devices.Device, error)
+			})
+			if !ok {
+				continue
+			}
+			destination, destinationErr := destinationReader.Device(r.Context(), update.DestinationDeviceID)
+			if destinationErr != nil || h.AuthorizePeer == nil || !h.AuthorizePeer(r.Context(), device, destination) {
+				continue
+			}
+			h.hub.send(r.Context(), destination.ID, message)
 		case "heartbeat":
 			_ = writePayload(r.Context(), connection, "heartbeat.ack", map[string]any{"at": time.Now().UTC()})
 		}
@@ -112,7 +148,14 @@ func writePayload(ctx context.Context, connection *websocket.Conn, messageType s
 	if err != nil {
 		return err
 	}
-	return wsjson.Write(ctx, connection, controlprotocol.Message{Type: messageType, Payload: payload})
+	return writeJSONWithTimeout(ctx, connection, controlprotocol.Message{Type: messageType, Payload: payload})
+}
+
+func writeJSONWithTimeout(ctx context.Context, connection *websocket.Conn, value any) error {
+	writeContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	return wsjson.Write(writeContext, connection, value)
 }
 
 type peer struct {
@@ -124,7 +167,7 @@ type peer struct {
 func (p *peer) write(ctx context.Context, message controlprotocol.Message) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return wsjson.Write(ctx, p.connection, message)
+	return writeJSONWithTimeout(ctx, p.connection, message)
 }
 
 type hub struct {
@@ -146,10 +189,17 @@ func (h *hub) add(peer *peer) error {
 	return nil
 }
 func (h *hub) remove(id string) { h.mu.Lock(); delete(h.peers, id); h.mu.Unlock() }
-func (h *hub) broadcast(ctx context.Context, source string, message controlprotocol.Message) {
+func (h *hub) send(ctx context.Context, destination string, message controlprotocol.Message) {
 	h.mu.RLock()
-	// Snapshot peers under the lock, then release it before network I/O. A slow
-	// client must not block registrations or disconnects for every other peer.
+	peer := h.peers[destination]
+	h.mu.RUnlock()
+	if peer != nil {
+		_ = peer.write(ctx, message)
+	}
+}
+
+func (h *hub) broadcastMessage(ctx context.Context, source string, message controlprotocol.Message) {
+	h.mu.RLock()
 	peers := make([]*peer, 0, len(h.peers))
 	for id, peer := range h.peers {
 		if id != source {
@@ -157,6 +207,10 @@ func (h *hub) broadcast(ctx context.Context, source string, message controlproto
 		}
 	}
 	h.mu.RUnlock()
+	h.broadcastPeers(ctx, peers, message)
+}
+
+func (h *hub) broadcastPeers(ctx context.Context, peers []*peer, message controlprotocol.Message) {
 	for _, peer := range peers {
 		_ = peer.write(ctx, message)
 	}

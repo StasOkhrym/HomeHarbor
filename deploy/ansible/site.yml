@@ -30,7 +30,10 @@
         owner: root
         group: root
         mode: preserve
-      loop: [go.mod, go.sum, cmd, internal, config, deploy]
+      # The migrate binary embeds this directory at build time. Omitting it
+      # would let the application images build locally but break a fresh VPS
+      # rollout before PostgreSQL can be initialized.
+      loop: [go.mod, go.sum, cmd, internal, config, migrations, deploy]
       notify: Restart Go Tunnels
     - name: Write deployment secrets
       ansible.builtin.copy:

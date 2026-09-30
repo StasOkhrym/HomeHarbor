@@ -56,6 +56,35 @@ func TestApplyRevertsAfterResolverFailure(t *testing.T) {
 	}
 }
 
+func TestApplyRestoresPreviousSettingsAfterUpdateFailure(t *testing.T) {
+	manager, err := NewManager("gt0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var commands []string
+	secondApply := false
+	manager.run = func(_ context.Context, args ...string) error {
+		command := strings.Join(args, " ")
+		commands = append(commands, command)
+		if secondApply && command == "domain gt0 ~new.home.arpa" {
+			return errors.New("domain update failed")
+		}
+		return nil
+	}
+	if err := manager.Apply(context.Background(), netip.MustParseAddr("192.168.1.1"), []string{"old.home.arpa"}); err != nil {
+		t.Fatal(err)
+	}
+	commands = nil
+	secondApply = true
+	if err := manager.Apply(context.Background(), netip.MustParseAddr("192.168.1.2"), []string{"new.home.arpa"}); err == nil {
+		t.Fatal("second Apply() error=nil")
+	}
+	want := []string{"revert gt0", "dns gt0 192.168.1.2", "domain gt0 ~new.home.arpa", "revert gt0", "dns gt0 192.168.1.1", "domain gt0 ~old.home.arpa", "default-route gt0 false"}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands=%#v, want %#v", commands, want)
+	}
+}
+
 func TestCanonicalSuffixesRejectsInjectionCharacters(t *testing.T) {
 	if _, err := canonicalSuffixes([]string{"home.arpa;resolvectl"}); err == nil {
 		t.Fatal("canonicalSuffixes() error=nil")

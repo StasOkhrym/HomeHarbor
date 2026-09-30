@@ -52,6 +52,58 @@ func NewRouter(server *Server) http.Handler {
 		}
 		api.Post("/enrollment-tokens", server.requireAdmin(http.HandlerFunc(server.issueToken)).ServeHTTP)
 		api.Post("/enroll", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.enroll)).ServeHTTP)
+
+		// The resource groups make the public API discoverable. The flat routes
+		// below remain temporarily for already enrolled clients and are removed
+		// only after the versioned API migration is complete.
+		api.Route("/admin", func(admin chi.Router) {
+			admin.Use(server.requireAdmin)
+			admin.Post("/enrollment-tokens", http.HandlerFunc(server.issueToken).ServeHTTP)
+			admin.Get("/devices", http.HandlerFunc(server.listDevices).ServeHTTP)
+			if server.network != nil {
+				admin.Get("/routes", http.HandlerFunc(server.listRoutes).ServeHTTP)
+			}
+			if server.services != nil {
+				admin.Get("/services", http.HandlerFunc(server.listServices).ServeHTTP)
+				admin.Get("/access-profiles", http.HandlerFunc(server.listProfiles).ServeHTTP)
+			}
+		})
+		api.Route("/devices", func(devices chi.Router) {
+			devices.Get("/", server.requireAdmin(http.HandlerFunc(server.listDevices)).ServeHTTP)
+			devices.Delete("/{id}", server.requireAdmin(http.HandlerFunc(server.revokeDevice)).ServeHTTP)
+			devices.Post("/credentials/rotate", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.rotateCredential)).ServeHTTP)
+		})
+		api.Route("/invites", func(invites chi.Router) {
+			if server.invites == nil {
+				return
+			}
+			invites.Post("/proof", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.submitInviteProof)).ServeHTTP)
+			invites.Get("/{id}", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.getInvite)).ServeHTTP)
+			invites.Post("/{id}/approval", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.approveInvite)).ServeHTTP)
+		})
+		api.Route("/services", func(services chi.Router) {
+			if server.services == nil {
+				return
+			}
+			services.Use(server.requireAdmin)
+			services.Get("/", http.HandlerFunc(server.listServices).ServeHTTP)
+			services.Post("/", http.HandlerFunc(server.createService).ServeHTTP)
+		})
+		api.Route("/coordination", func(coordination chi.Router) {
+			if server.coordination != nil {
+				coordination.Get("/", server.coordination.ServeHTTP)
+			}
+			if server.snapshots != nil {
+				coordination.Post("/snapshots", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.publishSnapshot)).ServeHTTP)
+				coordination.Get("/snapshot", server.requireAdmin(http.HandlerFunc(server.latestSnapshot)).ServeHTTP)
+			}
+		})
+		api.Route("/relay-sessions", func(relaySessions chi.Router) {
+			if server.relayIssuer != nil {
+				relaySessions.Post("/", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.issueRelaySession)).ServeHTTP)
+			}
+		})
+
 		api.Post("/devices/credentials/rotate", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.rotateCredential)).ServeHTTP)
 		if server.relayIssuer != nil {
 			api.Post("/relay-sessions", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.issueRelaySession)).ServeHTTP)

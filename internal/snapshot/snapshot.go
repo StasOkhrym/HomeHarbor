@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
@@ -213,9 +214,53 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 		if service.ID == "" || service.Name == "" || (service.Kind != "web" && service.Kind != "native") {
 			return fmt.Errorf("%w: service identity or kind", ErrInvalidSnapshot)
 		}
-		parsed, err := url.Parse(service.URL)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-			return fmt.Errorf("%w: service %s must use HTTPS", ErrInvalidSnapshot, service.ID)
+		for field, raw := range map[string]string{"url": service.URL, "native_url": service.NativeURL, "health_url": service.HealthURL} {
+			if raw == "" {
+				if field == "url" {
+					return fmt.Errorf("%w: service %s URL is required", ErrInvalidSnapshot, service.ID)
+				}
+				continue
+			}
+			parsed, err := url.Parse(raw)
+			if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+				return fmt.Errorf("%w: service %s %s must be an HTTPS URL without credentials or fragments", ErrInvalidSnapshot, service.ID, field)
+			}
+		}
+	}
+	deviceIDs := make(map[string]struct{}, len(value.Devices))
+	for _, device := range value.Devices {
+		if device.ID == "" {
+			return fmt.Errorf("%w: device ID is required", ErrInvalidSnapshot)
+		}
+		deviceIDs[device.ID] = struct{}{}
+		if device.OverlayAddress != "" {
+			prefix, err := netip.ParsePrefix(device.OverlayAddress)
+			if err != nil || !prefix.IsValid() {
+				return fmt.Errorf("%w: device %s has invalid overlay address", ErrInvalidSnapshot, device.ID)
+			}
+		}
+	}
+	for _, gateway := range value.Gateways {
+		if _, ok := deviceIDs[gateway.DeviceID]; !ok {
+			return fmt.Errorf("%w: gateway %s references an unknown device", ErrInvalidSnapshot, gateway.DeviceID)
+		}
+	}
+	for _, route := range value.Routes {
+		if _, ok := deviceIDs[route.GatewayID]; !ok {
+			return fmt.Errorf("%w: route %s references an unknown gateway", ErrInvalidSnapshot, route.ID)
+		}
+		prefix, err := netip.ParsePrefix(route.Prefix)
+		if err != nil || !prefix.IsValid() {
+			return fmt.Errorf("%w: route %s has invalid prefix", ErrInvalidSnapshot, route.ID)
+		}
+		if prefix.Bits() == 0 {
+			return fmt.Errorf("%w: route %s cannot advertise a default route", ErrInvalidSnapshot, route.ID)
+		}
+		if route.Resolver != "" {
+			resolver, resolverErr := netip.ParseAddr(route.Resolver)
+			if resolverErr != nil || !resolver.IsValid() {
+				return fmt.Errorf("%w: route %s has invalid resolver", ErrInvalidSnapshot, route.ID)
+			}
 		}
 	}
 	for index := range value.Profiles {
@@ -225,6 +270,20 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 		}
 		slices.Sort(profile.DeviceIDs)
 		slices.Sort(profile.ServiceIDs)
+	}
+	for _, acl := range value.ACL {
+		if _, ok := deviceIDs[acl.SourceDeviceID]; !ok {
+			return fmt.Errorf("%w: ACL %s references an unknown source device", ErrInvalidSnapshot, acl.ID)
+		}
+		if _, err := netip.ParsePrefix(acl.Destination); err != nil {
+			return fmt.Errorf("%w: ACL %s has invalid destination", ErrInvalidSnapshot, acl.ID)
+		}
+		if acl.Protocol != "tcp" && acl.Protocol != "udp" {
+			return fmt.Errorf("%w: ACL %s has unsupported protocol", ErrInvalidSnapshot, acl.ID)
+		}
+		if acl.PortFrom == 0 || acl.PortTo == 0 || acl.PortFrom > acl.PortTo {
+			return fmt.Errorf("%w: ACL %s has invalid port range", ErrInvalidSnapshot, acl.ID)
+		}
 	}
 	return nil
 }

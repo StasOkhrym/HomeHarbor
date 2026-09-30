@@ -21,6 +21,7 @@ type Manager struct {
 	link     string
 	run      commandRunner
 	active   bool
+	resolver netip.Addr
 	suffixes []string
 }
 
@@ -48,27 +49,54 @@ func (m *Manager) Apply(ctx context.Context, resolver netip.Addr, suffixes []str
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	previousActive := m.active
+	previousResolver := m.resolver
+	previousSuffixes := slices.Clone(m.suffixes)
 	if err := m.run(ctx, "revert", m.link); err != nil {
 		return fmt.Errorf("reset split DNS link: %w", err)
 	}
-	args := []string{"dns", m.link, resolver.String()}
-	if err := m.run(ctx, args...); err != nil {
-		_ = m.run(context.Background(), "revert", m.link)
+	if err := m.applySettings(ctx, resolver, canonical); err != nil {
+		// Reapply the previous valid settings when an update fails. A bare
+		// revert would restore the host resolver but silently break existing
+		// private-name resolution during a transient command failure.
+		if previousActive {
+			if restoreErr := m.restoreSettings(previousResolver, previousSuffixes); restoreErr != nil {
+				m.active = false
+				m.resolver = netip.Addr{}
+				m.suffixes = nil
+			}
+		} else {
+			_ = m.run(context.Background(), "revert", m.link)
+		}
+		return err
+	}
+	m.active = true
+	m.resolver = resolver
+	m.suffixes = canonical
+	return nil
+}
+
+func (m *Manager) applySettings(ctx context.Context, resolver netip.Addr, suffixes []string) error {
+	if err := m.run(ctx, "dns", m.link, resolver.String()); err != nil {
 		return fmt.Errorf("set split DNS resolver: %w", err)
 	}
-	for _, suffix := range canonical {
+	for _, suffix := range suffixes {
 		if err := m.run(ctx, "domain", m.link, "~"+suffix); err != nil {
-			_ = m.run(context.Background(), "revert", m.link)
 			return fmt.Errorf("set split DNS suffix %s: %w", suffix, err)
 		}
 	}
 	if err := m.run(ctx, "default-route", m.link, "false"); err != nil {
-		_ = m.run(context.Background(), "revert", m.link)
 		return fmt.Errorf("disable split DNS default route: %w", err)
 	}
-	m.active = true
-	m.suffixes = canonical
 	return nil
+}
+
+func (m *Manager) restoreSettings(resolver netip.Addr, suffixes []string) error {
+	ctx := context.Background()
+	if err := m.run(ctx, "revert", m.link); err != nil {
+		return err
+	}
+	return m.applySettings(ctx, resolver, suffixes)
 }
 
 // Close restores the system resolver state for the managed link.
@@ -85,6 +113,7 @@ func (m *Manager) Close(ctx context.Context) error {
 		return fmt.Errorf("restore system DNS: %w", err)
 	}
 	m.active = false
+	m.resolver = netip.Addr{}
 	m.suffixes = nil
 	return nil
 }

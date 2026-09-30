@@ -5,3 +5,5 @@ th, td { text-align: left; padding: .8rem; border-bottom: 1px solid #28324a; }
 .revoked, .rejected { color: #ff7c8a; }
 .pending { color: #ffd166; }
 code { color: #9dc1ff; }
+a { color: #9dc1ff; }
+a:hover { color: #ffffff; }

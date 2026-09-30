@@ -55,11 +55,17 @@ contracts used by handlers, coordinators, jobs, and future extracted services.
 1. **Completed:** replace bootstrap bearer authentication with WebAuthn/passkey
    ceremonies, signed sessions, recovery codes, CSRF protection, and audit events.
 2. **Completed:** add short-lived device credential rotation with atomic replacement.
-3. Complete Linux interface, route, nftables, and systemd-resolved lifecycle
-   with rollback to the last valid snapshot.
-4. Issue relay sessions from the control plane and complete live WireGuard
-   packet transport with direct-to-relay path switching.
-5. Add PostgreSQL integration tests and Linux network-namespace acceptance tests.
+3. **In progress:** complete privileged Linux interface, route, nftables, and
+   systemd-resolved lifecycle acceptance with rollback to the last valid
+   snapshot. The Linux namespace harness now exercises the isolated route and
+   default-deny LAN policy path; it still needs to run in the provisioned Lima
+   VM and be extended through the real kernel WireGuard interface.
+4. **In progress:** relay sessions, reconnect, live snapshot delivery, and
+   encrypted packet forwarding exist. Complete kernel WireGuard service
+   reachability, STUN direct handshake, and direct-to-relay path switching.
+5. **Partially completed:** PostgreSQL integration tests and the Linux
+   namespace acceptance harness exist. Run them with `TEST_DATABASE_URL` and
+   the provisioned Linux VM before calling the local E2E gate green.
 6. Build the rough Android `VpnService` client, then finish the iOS Network Extension
    target and physical-device Packet Tunnel verification.
 
@@ -87,8 +93,9 @@ contracts used by handlers, coordinators, jobs, and future extracted services.
 - `make vm-up` provisions the Ubuntu Lima VM with Docker, nftables, TUN tools,
   and `make vm-down` stops it.
 - `make verify` runs formatting, tests, vet, and command builds.
-- `make acceptance` intentionally fails until the Linux namespace scenarios are
-  implemented; a green command must never be confused with a missing test.
+- `make acceptance` runs the portable relay test and the privileged namespace
+  scenario directly on Linux or through the `go-tunnels-vm` Lima instance on
+  macOS. The VM must be started with `make vm-up` first.
 
 ## 6. Maintainability gates
 

@@ -61,8 +61,18 @@ func main() {
 	if err == nil && *relayURL != "" {
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
+		var ticketProvider node.RelayTicketProvider
+		if *controlURL != "" {
+			ticketProvider = func(providerContext context.Context) (string, error) {
+				session, providerErr := node.IssueRelaySession(providerContext, nil, *controlURL, state.DeviceCredential, *sessionID, *destination)
+				if providerErr != nil {
+					return "", providerErr
+				}
+				return session.Ticket, nil
+			}
+		}
 		if *interfaceName == "" {
-			err = node.RunRelayBridge(ctx, node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress})
+			err = node.RunRelayBridgeLoop(ctx, node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress}, ticketProvider)
 		} else {
 			allowed, parseErr := node.ParsePrefixList(*allowedPrefixes)
 			if parseErr != nil {
@@ -71,7 +81,7 @@ func main() {
 				var routePrefixes []netip.Prefix
 				routePrefixes, parseErr = node.ParsePrefixList(*routes)
 				if parseErr == nil {
-					err = node.RunKernelRelay(ctx, node.KernelRelayConfig{RelayBridgeConfig: node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress}, InterfaceName: *interfaceName, PrivateKey: state.WireGuard.PrivateKey, ListenPort: uint16(*listenPort), OverlayAddress: *overlayAddress, PeerPublicKey: *peerPublicKey, AllowedPrefixes: allowed, Routes: routePrefixes})
+					err = node.RunKernelRelayLoop(ctx, node.KernelRelayConfig{RelayBridgeConfig: node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress}, InterfaceName: *interfaceName, PrivateKey: state.WireGuard.PrivateKey, ListenPort: uint16(*listenPort), OverlayAddress: *overlayAddress, PeerPublicKey: *peerPublicKey, AllowedPrefixes: allowed, Routes: routePrefixes}, ticketProvider)
 				} else {
 					err = parseErr
 				}

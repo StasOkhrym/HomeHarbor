@@ -25,5 +25,21 @@
       {{else}}<tr><td colspan="4">No advertised routes.</td></tr>{{end}}
     </tbody>
   </table>
+  <h2>Services</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Type</th><th>URL</th><th>Description</th></tr></thead>
+    <tbody>
+      {{range .Services}}<tr><td>{{.Name}}</td><td>{{.Kind}}</td><td><a href="{{.URL}}" rel="noopener noreferrer">{{.URL}}</a></td><td>{{.Description}}</td></tr>
+      {{else}}<tr><td colspan="4">No services in the catalog.</td></tr>{{end}}
+    </tbody>
+  </table>
+  <h2>Access profiles</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Devices</th><th>Services</th></tr></thead>
+    <tbody>
+      {{range .Profiles}}<tr><td>{{.Name}}</td><td>{{len .DeviceIDs}}</td><td>{{len .ServiceIDs}}</td></tr>
+      {{else}}<tr><td colspan="3">No access profiles.</td></tr>{{end}}
+    </tbody>
+  </table>
 </body>
 </html>

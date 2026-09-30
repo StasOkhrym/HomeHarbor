@@ -41,24 +41,25 @@ type Authorizer interface {
 // Server composes optional module capabilities at the HTTP boundary. Domain
 // services remain unaware of chi and continue to satisfy narrow interfaces.
 type Server struct {
-	devices       DeviceService
-	network       NetworkService
-	policy        PolicyService
-	authorizer    Authorizer
-	logger        *slog.Logger
-	coordination  http.Handler
-	metrics       http.Handler
-	ready         func(context.Context) error
-	apiLimiter    *RateLimiter
-	authLimiter   *RateLimiter
-	deviceLimiter *RateLimiter
-	services      ServiceCatalog
-	invites       InviteService
-	snapshots     SnapshotService
-	relayIssuer   RelaySessionIssuer
-	relayURL      string
-	relayTTL      time.Duration
-	trustedProxy  []netip.Prefix
+	devices             DeviceService
+	network             NetworkService
+	policy              PolicyService
+	authorizer          Authorizer
+	logger              *slog.Logger
+	coordination        http.Handler
+	metrics             http.Handler
+	ready               func(context.Context) error
+	apiLimiter          *RateLimiter
+	authLimiter         *RateLimiter
+	deviceLimiter       *RateLimiter
+	services            ServiceCatalog
+	invites             InviteService
+	snapshots           SnapshotService
+	snapshotBroadcaster SnapshotBroadcaster
+	relayIssuer         RelaySessionIssuer
+	relayURL            string
+	relayTTL            time.Duration
+	trustedProxy        []netip.Prefix
 }
 
 type NetworkService interface {
@@ -136,8 +137,19 @@ type SnapshotService interface {
 	Latest(context.Context) (snapshot.Envelope, error)
 }
 
+// SnapshotBroadcaster is separate from SnapshotService because persistence
+// and live delivery have different failure semantics: a committed snapshot
+// must remain available even when no coordination peer is connected.
+type SnapshotBroadcaster interface {
+	BroadcastSnapshot(context.Context, snapshot.Envelope)
+}
+
 func WithSnapshotService(service SnapshotService) ServerOption {
 	return func(server *Server) { server.snapshots = service }
+}
+
+func WithSnapshotBroadcaster(broadcaster SnapshotBroadcaster) ServerOption {
+	return func(server *Server) { server.snapshotBroadcaster = broadcaster }
 }
 
 // WithTrustedProxyCIDRs permits forwarded client addresses only when the
@@ -197,7 +209,18 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 	if s.network != nil {
 		routes, _ = s.network.List(r.Context())
 	}
-	if err := adminTemplate.Execute(w, map[string]any{"Devices": list, "Routes": routes}); err != nil {
+	services := []controlservices.Service{}
+	profiles := []controlservices.AccessProfile{}
+	if s.services != nil {
+		services, _ = s.services.List(r.Context())
+		profiles, _ = s.services.Profiles(r.Context())
+	}
+	if err := adminTemplate.Execute(w, map[string]any{
+		"Devices":  list,
+		"Routes":   routes,
+		"Services": services,
+		"Profiles": profiles,
+	}); err != nil {
 		s.logger.Error("render admin", "error", err)
 	}
 }
@@ -341,6 +364,13 @@ func (s *Server) issueRelaySession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "destination device is unavailable")
 		return
 	}
+	// MVP relay sessions connect one external client to one LAN gateway. Do
+	// not accidentally turn the relay into an unrestricted device mesh before
+	// an explicit peer-policy model exists.
+	if source.Role == destination.Role || (source.Role != devices.RoleClient && source.Role != devices.RoleGateway) {
+		writeError(w, http.StatusForbidden, "device peer role is not allowed")
+		return
+	}
 	if strings.TrimSpace(input.SessionID) == "" {
 		writeError(w, http.StatusBadRequest, "session_id is required")
 		return
@@ -432,6 +462,9 @@ func (s *Server) publishSnapshot(w http.ResponseWriter, r *http.Request) {
 	if err := s.snapshots.Publish(r.Context(), envelope); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid signed snapshot")
 		return
+	}
+	if s.snapshotBroadcaster != nil {
+		s.snapshotBroadcaster.BroadcastSnapshot(r.Context(), envelope)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
