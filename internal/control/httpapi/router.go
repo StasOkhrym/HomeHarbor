@@ -53,6 +53,9 @@ func NewRouter(server *Server) http.Handler {
 		api.Post("/enrollment-tokens", server.requireAdmin(http.HandlerFunc(server.issueToken)).ServeHTTP)
 		api.Post("/enroll", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.enroll)).ServeHTTP)
 		api.Post("/devices/credentials/rotate", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.rotateCredential)).ServeHTTP)
+		if server.relayIssuer != nil {
+			api.Post("/relay-sessions", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.issueRelaySession)).ServeHTTP)
+		}
 		if server.invites != nil {
 			api.Post("/invites/proof", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.submitInviteProof)).ServeHTTP)
 			api.Get("/invites/{id}", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.getInvite)).ServeHTTP)

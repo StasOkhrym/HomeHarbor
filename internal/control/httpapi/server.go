@@ -30,6 +30,7 @@ type DeviceService interface {
 	List(context.Context) ([]devices.Device, error)
 	Revoke(context.Context, string) error
 	Authenticate(context.Context, string) (devices.Device, error)
+	Device(context.Context, string) (devices.Device, error)
 	RotateCredential(context.Context, string, string) (string, error)
 }
 
@@ -54,6 +55,9 @@ type Server struct {
 	services      ServiceCatalog
 	invites       InviteService
 	snapshots     SnapshotService
+	relayIssuer   RelaySessionIssuer
+	relayURL      string
+	relayTTL      time.Duration
 	trustedProxy  []netip.Prefix
 }
 
@@ -64,6 +68,20 @@ type NetworkService interface {
 	List(context.Context) ([]controlnetwork.Advertisement, error)
 }
 type ServerOption func(*Server)
+
+// RelaySessionIssuer mints a short-lived ticket bound to one device and one
+// session. The relay verifies the ticket locally and never calls control.
+type RelaySessionIssuer interface {
+	Issue(sessionID, deviceID string, ttl time.Duration) (string, error)
+}
+
+func WithRelaySessionIssuer(issuer RelaySessionIssuer, relayURL string, ttl time.Duration) ServerOption {
+	return func(server *Server) {
+		server.relayIssuer = issuer
+		server.relayURL = strings.TrimRight(relayURL, "/")
+		server.relayTTL = ttl
+	}
+}
 
 func WithNetworkService(service NetworkService) ServerOption {
 	return func(server *Server) { server.network = service }
@@ -302,6 +320,48 @@ func (s *Server) rotateCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"credential": rotated})
+}
+
+func (s *Server) issueRelaySession(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		SessionID           string `json:"session_id"`
+		DestinationDeviceID string `json:"destination_device_id"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	credential := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	source, err := s.devices.Authenticate(r.Context(), credential)
+	if err != nil || source.Status != devices.StatusActive {
+		writeError(w, http.StatusUnauthorized, "device authentication required")
+		return
+	}
+	destination, err := s.devices.Device(r.Context(), strings.TrimSpace(input.DestinationDeviceID))
+	if err != nil || destination.Status != devices.StatusActive || destination.ID == source.ID {
+		writeError(w, http.StatusForbidden, "destination device is unavailable")
+		return
+	}
+	if strings.TrimSpace(input.SessionID) == "" {
+		writeError(w, http.StatusBadRequest, "session_id is required")
+		return
+	}
+	if s.relayTTL <= 0 {
+		writeError(w, http.StatusServiceUnavailable, "relay sessions are unavailable")
+		return
+	}
+	ticket, err := s.relayIssuer.Issue(input.SessionID, source.ID, s.relayTTL)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "issue relay session")
+		return
+	}
+	writeJSON(w, http.StatusCreated, struct {
+		SessionID           string `json:"session_id"`
+		DeviceID            string `json:"device_id"`
+		DestinationDeviceID string `json:"destination_device_id"`
+		RelayURL            string `json:"relay_url"`
+		Ticket              string `json:"ticket"`
+		ExpiresInSeconds    int64  `json:"expires_in_seconds"`
+	}{input.SessionID, source.ID, destination.ID, s.relayURL, ticket, int64(s.relayTTL / time.Second)})
 }
 
 func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {

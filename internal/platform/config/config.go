@@ -57,7 +57,10 @@ func (a Auth) CeremonyDuration() time.Duration {
 }
 
 type Relay struct {
-	PublicURL string `toml:"public_url"`
+	PublicURL     string `toml:"public_url"`
+	TicketKey     string `toml:"ticket_key"`
+	TicketKeyFile string `toml:"ticket_key_file"`
+	TicketTTL     string `toml:"ticket_ttl"`
 }
 
 type Networking struct {
@@ -128,6 +131,9 @@ func LoadControl(path string) (Control, error) {
 	if value := os.Getenv("GO_TUNNELS_AUTH_CEREMONY_ENCRYPTION_KEY"); value != "" {
 		cfg.Auth.CeremonyEncryptionKey = value
 	}
+	if value := os.Getenv("GO_TUNNELS_RELAY_TICKET_KEY"); value != "" {
+		cfg.Relay.TicketKey = value
+	}
 	if cfg.Database.PasswordFile != "" {
 		value, err := os.ReadFile(cfg.Database.PasswordFile)
 		if err != nil {
@@ -148,6 +154,13 @@ func LoadControl(path string) (Control, error) {
 			return Control{}, err
 		}
 		cfg.Auth.CeremonyEncryptionKey = value
+	}
+	if cfg.Relay.TicketKey == "" && cfg.Relay.TicketKeyFile != "" {
+		value, err := readSecret(cfg.Relay.TicketKeyFile, "relay ticket key")
+		if err != nil {
+			return Control{}, err
+		}
+		cfg.Relay.TicketKey = value
 	}
 	if err := cfg.validate(); err != nil {
 		return Control{}, err
@@ -183,6 +196,12 @@ func (c Control) validate() error {
 	if len(c.Auth.CeremonyEncryptionKey) != 32 {
 		return errors.New("auth.ceremony_encryption_key must be exactly 32 bytes")
 	}
+	if len(c.Relay.TicketKey) < 32 {
+		return errors.New("relay.ticket_key must be at least 32 bytes")
+	}
+	if _, err := c.RelayDuration(); err != nil {
+		return err
+	}
 	origin, err := url.Parse(c.Auth.RPOrigin)
 	if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
 		return errors.New("auth.rp_origin must be an HTTPS origin without a path")
@@ -197,6 +216,23 @@ func (c Control) validate() error {
 		return errors.New("auth.ceremony_ttl must be a positive duration")
 	}
 	return nil
+}
+
+func (c Control) RelayDuration() (time.Duration, error) {
+	duration, err := time.ParseDuration(c.Relay.TTL())
+	if err != nil || duration <= 0 {
+		return 0, errors.New("relay.ticket_ttl must be a positive duration")
+	}
+
+	return duration, nil
+}
+
+func (r Relay) TTL() string {
+	if strings.TrimSpace(r.TicketTTL) == "" {
+		return "5m"
+	}
+
+	return r.TicketTTL
 }
 
 func readSecret(path, label string) (string, error) {

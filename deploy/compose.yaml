@@ -22,7 +22,7 @@ services:
     configs:
       - source: control_config
         target: /etc/go-tunnels/control.toml
-    secrets: [postgres_password, session_signing_key, ceremony_encryption_key]
+    secrets: [postgres_password, session_signing_key, ceremony_encryption_key, relay_ticket_key]
     depends_on:
       migrate: {condition: service_completed_successfully}
     read_only: true
@@ -40,7 +40,7 @@ services:
     configs:
       - source: control_config
         target: /etc/go-tunnels/control.toml
-    secrets: [postgres_password, session_signing_key, ceremony_encryption_key]
+    secrets: [postgres_password, session_signing_key, ceremony_encryption_key, relay_ticket_key]
     depends_on:
       postgres: {condition: service_healthy}
     read_only: true

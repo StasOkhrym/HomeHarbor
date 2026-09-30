@@ -18,12 +18,23 @@ type PeerConfig struct {
 }
 
 func BuildWireGuardConfig(privateKey string, peers []PeerConfig) (wgtypes.Config, error) {
+	return BuildWireGuardConfigWithListenPort(privateKey, 0, peers)
+}
+
+// BuildWireGuardConfigWithListenPort creates the kernel configuration without
+// applying it. Keeping construction pure lets snapshot reconciliation validate
+// every key, endpoint, and allowed prefix before changing the live interface.
+func BuildWireGuardConfigWithListenPort(privateKey string, listenPort uint16, peers []PeerConfig) (wgtypes.Config, error) {
 	private, err := wgtypes.ParseKey(privateKey)
 	if err != nil {
 		return wgtypes.Config{}, fmt.Errorf("parse private key: %w", err)
 	}
 	replace := true
 	config := wgtypes.Config{PrivateKey: &private, ReplacePeers: true}
+	if listenPort != 0 {
+		port := int(listenPort)
+		config.ListenPort = &port
+	}
 	for _, peer := range peers {
 		public, parseErr := wgtypes.ParseKey(peer.PublicKey)
 		if parseErr != nil {

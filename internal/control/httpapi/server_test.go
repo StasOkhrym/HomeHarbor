@@ -19,6 +19,7 @@ import (
 	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
 	controlsnapshots "github.com/sokhrym/go-tunnels/internal/control/snapshots"
 	"github.com/sokhrym/go-tunnels/internal/invite"
+	"github.com/sokhrym/go-tunnels/internal/relay"
 	"github.com/sokhrym/go-tunnels/internal/snapshot"
 )
 
@@ -68,6 +69,55 @@ func TestEnrollmentAPIRequiresAdminAndEnrollsDevice(t *testing.T) {
 	handler.ServeHTTP(listed, listRequest)
 	if listed.Code != http.StatusOK {
 		t.Fatalf("list status = %d", listed.Code)
+	}
+}
+
+func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) {
+	deviceService := devices.NewService(devices.NewMemoryStore(), time.Now, nil)
+	tokenA, err := deviceService.IssueEnrollmentToken(context.Background(), devices.RoleClient, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceA, err := deviceService.Enroll(context.Background(), devices.EnrollRequest{Token: tokenA.Token, Name: "a", IdentityPublicKey: "a-identity", WireGuardPublicKey: "a-wireguard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenB, err := deviceService.IssueEnrollmentToken(context.Background(), devices.RoleGateway, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceB, err := deviceService.Enroll(context.Background(), devices.EnrollRequest{Token: tokenB.Token, Name: "b", IdentityPublicKey: "b-identity", WireGuardPublicKey: "b-wireguard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := relay.TicketIssuer{Key: []byte("01234567890123456789012345678901")}
+	handler := NewServer(deviceService, allowAuthorizer{}, WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/v1", time.Minute)).Handler()
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/relay-sessions", bytes.NewBufferString(`{"session_id":"session-1","destination_device_id":"`+deviceB.ID+`"}`))
+	request.Header.Set("Authorization", "Bearer "+deviceA.Credential)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		RelayURL string `json:"relay_url"`
+		Ticket   string `json:"ticket"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.RelayURL == "" || response.Ticket == "" {
+		t.Fatalf("incomplete relay response=%#v", response)
+	}
+	if claims, err := issuer.Verify(response.Ticket); err != nil || claims.DeviceID != deviceA.ID {
+		t.Fatalf("ticket claims=%#v error=%v", claims, err)
+	}
+
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/api/v1/relay-sessions", strings.NewReader(`{"session_id":"s","destination_device_id":"`+deviceB.ID+`"}`)))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status=%d", unauthorized.Code)
 	}
 }
 

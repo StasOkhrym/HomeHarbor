@@ -176,9 +176,9 @@ func (s *Service) Enroll(ctx context.Context, request EnrollRequest) (Device, er
 			return Device{}, saveErr
 		}
 	}
-	if s.publisher != nil {
-		// GoChannel events are side effects, not part of the enrollment
-		// transaction. A future durable broker should use an outbox here.
+	if s.publisher != nil && !s.durableEvents() {
+		// Memory-backed stores have no durable outbox; keep their tests and local
+		// runtime observable through the configured in-process publisher.
 		_ = s.publisher.Publish(ctx, Event{Type: "device.enrolled", AggregateID: device.ID, OccurredAt: now})
 	}
 	return device, nil
@@ -189,11 +189,28 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 	if err := s.store.RevokeDevice(ctx, id, now); err != nil {
 		return err
 	}
-	if s.publisher != nil {
+	if s.publisher != nil && !s.durableEvents() {
 		_ = s.publisher.Publish(ctx, Event{Type: "device.revoked", AggregateID: id, OccurredAt: now})
 	}
 	return nil
 }
+
+func (s *Service) durableEvents() bool {
+	_, ok := s.store.(interface{ DurableEvents() })
+	return ok
+}
+
+// Device returns the current public metadata for an active or revoked device.
+// Callers that authorize a new connection must still inspect Status rather than
+// treating existence as permission to connect.
+func (s *Service) Device(ctx context.Context, id string) (Device, error) {
+	if strings.TrimSpace(id) == "" {
+		return Device{}, ErrDeviceNotFound
+	}
+
+	return s.store.Device(ctx, id)
+}
+
 func (s *Service) List(ctx context.Context) ([]Device, error) { return s.store.ListDevices(ctx) }
 func (s *Service) Authenticate(ctx context.Context, credential string) (Device, error) {
 	if credential == "" {

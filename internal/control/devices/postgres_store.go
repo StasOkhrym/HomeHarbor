@@ -2,6 +2,7 @@ package devices
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -36,6 +37,9 @@ func (s *PostgresStore) SaveDevice(ctx context.Context, d Device) error {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO device_credentials(device_id,credential_hash,expires_at) VALUES($1,$2,$3)`, d.ID, d.CredentialHash[:], d.CreatedAt.Add(CredentialTTL)); err != nil {
+		return err
+	}
+	if err = appendEvent(ctx, tx, Event{Type: "device.enrolled", AggregateID: d.ID, OccurredAt: d.CreatedAt}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -107,6 +111,9 @@ func (s *PostgresStore) RevokeDevice(ctx context.Context, id string, at time.Tim
 	if _, err = tx.Exec(ctx, `UPDATE device_credentials SET revoked_at=COALESCE(revoked_at,$2) WHERE device_id=$1`, id, at); err != nil {
 		return err
 	}
+	if err = appendEvent(ctx, tx, Event{Type: "device.revoked", AggregateID: id, OccurredAt: at}); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -136,5 +143,22 @@ func (s *PostgresStore) RotateCredential(ctx context.Context, id string, oldHash
 	if _, err = tx.Exec(ctx, `INSERT INTO device_credentials(device_id,credential_hash,expires_at) VALUES($1,$2,$3)`, deviceID, newHash[:], expiresAt); err != nil {
 		return err
 	}
+	if err = appendEvent(ctx, tx, Event{Type: "device.credential_rotated", AggregateID: deviceID, OccurredAt: now}); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
+}
+
+// DurableEvents marks stores whose domain events are written in the same
+// transaction as the state mutation. The service skips its best-effort
+// in-process publisher for these stores; the outbox dispatcher owns delivery.
+func (s *PostgresStore) DurableEvents() {}
+
+func appendEvent(ctx context.Context, tx pgx.Tx, event Event) error {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO event_outbox(topic,payload,occurred_at) VALUES($1,$2,$3)`, event.Type, payload, event.OccurredAt)
+	return err
 }

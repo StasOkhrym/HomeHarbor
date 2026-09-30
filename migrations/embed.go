@@ -3,6 +3,7 @@ package migrations
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -63,6 +64,33 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 		if err = tx.Commit(ctx); err != nil {
 			return fmt.Errorf("commit migration %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// Ready reports whether the schema ledger exists and every embedded migration
+// has been committed. Runtime processes use this check for readiness; only the
+// dedicated migrate command is allowed to mutate schema state.
+func Ready(ctx context.Context, pool *pgxpool.Pool) error {
+	var ledgerExists bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.schema_migrations') IS NOT NULL`).Scan(&ledgerExists); err != nil {
+		return fmt.Errorf("check migration ledger: %w", err)
+	}
+	if !ledgerExists {
+		return errors.New("migration ledger does not exist")
+	}
+	names, err := Names()
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		var applied bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name=$1)`, name).Scan(&applied); err != nil {
+			return fmt.Errorf("check migration %s: %w", name, err)
+		}
+		if !applied {
+			return fmt.Errorf("migration %s is not applied", name)
 		}
 	}
 	return nil

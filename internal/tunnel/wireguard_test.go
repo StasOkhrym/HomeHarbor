@@ -23,3 +23,19 @@ func TestBuildWireGuardConfig(t *testing.T) {
 		t.Fatalf("config=%#v", config)
 	}
 }
+
+func TestBuildWireGuardConfigWithListenPort(t *testing.T) {
+	local, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := BuildWireGuardConfigWithListenPort(local.PrivateKey, 51820, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if config.ListenPort == nil || *config.ListenPort != 51820 {
+		t.Fatalf("listen port=%v", config.ListenPort)
+	}
+}

@@ -16,6 +16,8 @@ ceremony_ttl = "5m"
 
 [relay]
 public_url = "wss://relay.example.com/relay/v1"
+ticket_key_file = "/run/secrets/relay_ticket_key"
+ticket_ttl = "5m"
 
 [networking]
 network_id = "home"

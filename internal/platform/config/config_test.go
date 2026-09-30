@@ -11,6 +11,7 @@ func TestLoadControlResolvesFileSecretAndEnvironmentOverride(t *testing.T) {
 	secretPath := filepath.Join(dir, "database-password")
 	signingKeyPath := filepath.Join(dir, "session-key")
 	ceremonyKeyPath := filepath.Join(dir, "ceremony-key")
+	relayKeyPath := filepath.Join(dir, "relay-key")
 	if err := os.WriteFile(secretPath, []byte("secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -18,6 +19,9 @@ func TestLoadControlResolvesFileSecretAndEnvironmentOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(ceremonyKeyPath, []byte("abcdefghijklmnopqrstuvwxyzABCDEF\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(relayKeyPath, []byte("01234567890123456789012345678901\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(dir, "control.toml")
@@ -36,6 +40,8 @@ session_ttl = "12h"
 ceremony_ttl = "5m"
 [relay]
 public_url = "https://relay.example.com"
+ticket_key_file = "` + relayKeyPath + `"
+ticket_ttl = "5m"
 [observability]
 metrics_address = ":9090"
 `
@@ -57,7 +63,7 @@ metrics_address = ":9090"
 }
 
 func TestControlValidationRejectsUnsafeAuthenticationSettings(t *testing.T) {
-	valid := Control{Server: Server{ListenAddress: ":8080", PublicURL: "https://tunnel.example.com"}, Database: Database{URL: "postgres://db/tunnel"}, Auth: Auth{RPID: "tunnel.example.com", RPOrigin: "https://tunnel.example.com", SessionSigningKey: "01234567890123456789012345678901", CeremonyEncryptionKey: "abcdefghijklmnopqrstuvwxyzABCDEF", SessionTTL: "12h", CeremonyTTL: "5m"}, Relay: Relay{PublicURL: "wss://relay.example.com"}}
+	valid := Control{Server: Server{ListenAddress: ":8080", PublicURL: "https://tunnel.example.com"}, Database: Database{URL: "postgres://db/tunnel"}, Auth: Auth{RPID: "tunnel.example.com", RPOrigin: "https://tunnel.example.com", SessionSigningKey: "01234567890123456789012345678901", CeremonyEncryptionKey: "abcdefghijklmnopqrstuvwxyzABCDEF", SessionTTL: "12h", CeremonyTTL: "5m"}, Relay: Relay{PublicURL: "wss://relay.example.com", TicketKey: "01234567890123456789012345678901", TicketTTL: "5m"}}
 	tests := []struct {
 		name   string
 		mutate func(*Control)

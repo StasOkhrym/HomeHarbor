@@ -33,6 +33,7 @@ import (
 	"github.com/sokhrym/go-tunnels/internal/platform/config"
 	"github.com/sokhrym/go-tunnels/internal/platform/events"
 	"github.com/sokhrym/go-tunnels/internal/platform/lifecycle"
+	"github.com/sokhrym/go-tunnels/internal/relay"
 	"github.com/sokhrym/go-tunnels/migrations"
 )
 
@@ -72,10 +73,6 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	if err := pool.Ping(ctx); err != nil {
 		return closePool(errors.Join(errors.New("ping database"), err))
 	}
-	if err := migrations.Up(ctx, pool); err != nil {
-		return closePool(errors.Join(errors.New("apply migrations"), err))
-	}
-
 	bus := gochannel.NewGoChannel(gochannel.Config{}, watermill.NewSlogLogger(logger))
 	closeBusAndPool := func(err error) (*App, error) {
 		_ = bus.Close()
@@ -85,6 +82,11 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	if err := events.ConsumeDeviceAudit(ctx, bus, audit.NewPostgresSink(pool), logger, "device.enrolled", "device.revoked"); err != nil {
 		return closeBusAndPool(errors.Join(errors.New("start audit consumer"), err))
 	}
+	go func() {
+		if err := events.RunOutboxDispatcher(ctx, pool, bus, logger); err != nil && ctx.Err() == nil {
+			logger.Error("outbox dispatcher stopped", "error", err)
+		}
+	}()
 
 	deviceService := devices.NewService(devices.NewPostgresStore(pool), time.Now, nil, devices.WithPublisher(events.NewWatermillPublisher(bus)))
 	networkService := controlnetwork.NewService(controlnetwork.NewPostgresStore(pool), time.Now)
@@ -118,8 +120,18 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		httpapi.WithPolicyService(policyService),
 		httpapi.WithServiceCatalog(serviceCatalog),
 		httpapi.WithMetricsHandler(promhttp.Handler()),
-		httpapi.WithReadiness(pool.Ping),
+		httpapi.WithReadiness(func(readinessCtx context.Context) error {
+			if err := pool.Ping(readinessCtx); err != nil {
+				return err
+			}
+			return migrations.Ready(readinessCtx, pool)
+		}),
 	}
+	relayTTL, err := cfg.RelayDuration()
+	if err != nil {
+		return closeBusAndPool(errors.Join(errors.New("configure relay sessions"), err))
+	}
+	serverOptions = append(serverOptions, httpapi.WithRelaySessionIssuer(relay.TicketIssuer{Key: []byte(cfg.Relay.TicketKey)}, cfg.Relay.PublicURL, relayTTL))
 	trustedProxyCIDRs := make([]netip.Prefix, 0, len(cfg.Security.TrustedProxyCIDRs))
 	for _, value := range cfg.Security.TrustedProxyCIDRs {
 		prefix, err := netip.ParsePrefix(value)
