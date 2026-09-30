@@ -22,7 +22,7 @@ func Compile(interfaceName string, peerAddresses map[string]netip.Prefix, snapsh
 	// Emit a complete table instead of incremental mutations. Applying this
 	// script with `nft -f` swaps one validated policy revision atomically.
 	var b strings.Builder
-	fmt.Fprintf(&b, "# go-tunnels policy revision=%d\nflush table inet go_tunnels\ntable inet go_tunnels {\n  chain forward {\n    type filter hook forward priority 0; policy drop;\n    ct state established,related accept\n", snapshot.Revision)
+	fmt.Fprintf(&b, "# go-tunnels policy revision=%d\ntable inet go_tunnels {\n  chain forward {\n    type filter hook forward priority 0; policy drop;\n    ct state established,related accept\n", snapshot.Revision)
 	for _, rule := range snapshot.Rules {
 		source, ok := peerAddresses[rule.SourceDeviceID]
 		if !ok || !source.IsValid() {

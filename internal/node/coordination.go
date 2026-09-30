@@ -28,6 +28,35 @@ type SnapshotApplier interface {
 	Apply(context.Context, snapshot.NetworkSnapshot) error
 }
 
+// CompositeSnapshotApplier runs state owners in order. Gateway policy is
+// applied before WireGuard peers so a failed peer update cannot expose a new
+// decrypted path through an old firewall revision.
+type CompositeSnapshotApplier struct {
+	components []SnapshotApplier
+}
+
+func NewCompositeSnapshotApplier(components ...SnapshotApplier) *CompositeSnapshotApplier {
+	filtered := make([]SnapshotApplier, 0, len(components))
+	for _, component := range components {
+		if component != nil {
+			filtered = append(filtered, component)
+		}
+	}
+	return &CompositeSnapshotApplier{components: filtered}
+}
+
+func (a *CompositeSnapshotApplier) Apply(ctx context.Context, value snapshot.NetworkSnapshot) error {
+	if a == nil || len(a.components) == 0 {
+		return errors.New("snapshot applier has no components")
+	}
+	for _, component := range a.components {
+		if err := component.Apply(ctx, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type CoordinationConfig struct {
 	URL              string
 	Credential       string

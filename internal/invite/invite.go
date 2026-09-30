@@ -55,19 +55,25 @@ type Proof struct {
 	InviteID        string `cbor:"invite_id" json:"invite_id"`
 	DeviceID        string `cbor:"device_id" json:"device_id"`
 	DevicePublicKey []byte `cbor:"device_public_key" json:"device_public_key"`
-	CodeDigest      []byte `cbor:"code_digest" json:"code_digest"`
-	Signature       []byte `cbor:"signature" json:"signature"`
-	DeviceSignature []byte `cbor:"device_signature" json:"device_signature"`
+	// WireGuardPublicKey is public-only tunnel identity material. The private
+	// key is generated and retained by the enrolling node; carrying only this
+	// public half lets control create a peer without ever handling plaintext
+	// tunnel secrets.
+	WireGuardPublicKey []byte `cbor:"wireguard_public_key" json:"wireguard_public_key"`
+	CodeDigest         []byte `cbor:"code_digest" json:"code_digest"`
+	Signature          []byte `cbor:"signature" json:"signature"`
+	DeviceSignature    []byte `cbor:"device_signature" json:"device_signature"`
 }
 
 // Approval is the exact, root-signed diff that a trusted companion allows.
 // Control accepts it only when every field equals the pending proof record.
 type Approval struct {
-	Version         uint16 `cbor:"version" json:"version"`
-	InviteID        string `cbor:"invite_id" json:"invite_id"`
-	ProfileID       string `cbor:"profile_id" json:"profile_id"`
-	DeviceID        string `cbor:"device_id" json:"device_id"`
-	DevicePublicKey []byte `cbor:"device_public_key" json:"device_public_key"`
+	Version            uint16 `cbor:"version" json:"version"`
+	InviteID           string `cbor:"invite_id" json:"invite_id"`
+	ProfileID          string `cbor:"profile_id" json:"profile_id"`
+	DeviceID           string `cbor:"device_id" json:"device_id"`
+	DevicePublicKey    []byte `cbor:"device_public_key" json:"device_public_key"`
+	WireGuardPublicKey []byte `cbor:"wireguard_public_key" json:"wireguard_public_key"`
 }
 
 type SignedApproval struct {
@@ -179,20 +185,32 @@ func PermitProfile(signed SignedPermit) (string, error) {
 	return permit.ProfileID, nil
 }
 
-func (i Invite) Proof(deviceID string, devicePrivateKey ed25519.PrivateKey, code string) (Proof, error) {
-	if len(i.privateKey) != ed25519.PrivateKeySize || deviceID == "" || len(devicePrivateKey) != ed25519.PrivateKeySize || code != i.Code {
+// PermitNetworkID extracts the network binding after decoding the signed
+// permit. Callers should still verify the permit before using the value for a
+// state transition; this helper is for selecting the already verified domain.
+func PermitNetworkID(signed SignedPermit) (string, error) {
+	var permit Permit
+	if err := cbor.Unmarshal(signed.Payload, &permit); err != nil || permit.Version != Version || strings.TrimSpace(permit.NetworkID) == "" {
+		return "", ErrInvalidPermit
+	}
+	return permit.NetworkID, nil
+}
+
+func (i Invite) Proof(deviceID string, devicePrivateKey ed25519.PrivateKey, code string, wireGuardPublicKey []byte) (Proof, error) {
+	if len(i.privateKey) != ed25519.PrivateKeySize || deviceID == "" || len(devicePrivateKey) != ed25519.PrivateKeySize || len(wireGuardPublicKey) != 32 || code != i.Code {
 		return Proof{}, ErrInvalidProof
 	}
 	devicePublicKey := devicePrivateKey.Public().(ed25519.PublicKey)
 	digest := codeDigest(code)
-	proof := Proof{Version: Version, InviteID: i.Permit.InviteID, DeviceID: deviceID, DevicePublicKey: append([]byte(nil), devicePublicKey...), CodeDigest: digest}
+	proof := Proof{Version: Version, InviteID: i.Permit.InviteID, DeviceID: deviceID, DevicePublicKey: append([]byte(nil), devicePublicKey...), WireGuardPublicKey: append([]byte(nil), wireGuardPublicKey...), CodeDigest: digest}
 	payload, err := canonicalMode.Marshal(struct {
-		Version         uint16 `cbor:"version"`
-		InviteID        string `cbor:"invite_id"`
-		DeviceID        string `cbor:"device_id"`
-		DevicePublicKey []byte `cbor:"device_public_key"`
-		CodeDigest      []byte `cbor:"code_digest"`
-	}{proof.Version, proof.InviteID, proof.DeviceID, proof.DevicePublicKey, proof.CodeDigest})
+		Version            uint16 `cbor:"version"`
+		InviteID           string `cbor:"invite_id"`
+		DeviceID           string `cbor:"device_id"`
+		DevicePublicKey    []byte `cbor:"device_public_key"`
+		WireGuardPublicKey []byte `cbor:"wireguard_public_key"`
+		CodeDigest         []byte `cbor:"code_digest"`
+	}{proof.Version, proof.InviteID, proof.DeviceID, proof.DevicePublicKey, proof.WireGuardPublicKey, proof.CodeDigest})
 	if err != nil {
 		return Proof{}, err
 	}
@@ -203,16 +221,17 @@ func (i Invite) Proof(deviceID string, devicePrivateKey ed25519.PrivateKey, code
 
 func VerifyProof(signed SignedPermit, proof Proof, profileID string, now time.Time) error {
 	var permit Permit
-	if err := cbor.Unmarshal(signed.Payload, &permit); err != nil || proof.Version != Version || proof.InviteID != permit.InviteID || proof.DeviceID == "" || permit.ProfileID != profileID || now.Unix() >= permit.ExpiresAt || len(proof.Signature) != ed25519.SignatureSize || len(proof.DeviceSignature) != ed25519.SignatureSize || len(proof.DevicePublicKey) != ed25519.PublicKeySize || len(proof.CodeDigest) != sha256.Size {
+	if err := cbor.Unmarshal(signed.Payload, &permit); err != nil || proof.Version != Version || proof.InviteID != permit.InviteID || proof.DeviceID == "" || permit.ProfileID != profileID || now.Unix() >= permit.ExpiresAt || len(proof.Signature) != ed25519.SignatureSize || len(proof.DeviceSignature) != ed25519.SignatureSize || len(proof.DevicePublicKey) != ed25519.PublicKeySize || len(proof.WireGuardPublicKey) != 32 || len(proof.CodeDigest) != sha256.Size {
 		return ErrInvalidProof
 	}
 	payload, err := canonicalMode.Marshal(struct {
-		Version         uint16 `cbor:"version"`
-		InviteID        string `cbor:"invite_id"`
-		DeviceID        string `cbor:"device_id"`
-		DevicePublicKey []byte `cbor:"device_public_key"`
-		CodeDigest      []byte `cbor:"code_digest"`
-	}{proof.Version, proof.InviteID, proof.DeviceID, proof.DevicePublicKey, proof.CodeDigest})
+		Version            uint16 `cbor:"version"`
+		InviteID           string `cbor:"invite_id"`
+		DeviceID           string `cbor:"device_id"`
+		DevicePublicKey    []byte `cbor:"device_public_key"`
+		WireGuardPublicKey []byte `cbor:"wireguard_public_key"`
+		CodeDigest         []byte `cbor:"code_digest"`
+	}{proof.Version, proof.InviteID, proof.DeviceID, proof.DevicePublicKey, proof.WireGuardPublicKey, proof.CodeDigest})
 	if err != nil || !ed25519.Verify(permit.InvitePublic, append([]byte(proofDomain), payload...), proof.Signature) || !ed25519.Verify(proof.DevicePublicKey, append([]byte(proofDomain), payload...), proof.DeviceSignature) {
 		return ErrInvalidProof
 	}
@@ -233,7 +252,7 @@ func VerifyProofWithCode(signed SignedPermit, proof Proof, profileID, code strin
 }
 
 func SignApproval(approval Approval, root ed25519.PrivateKey) (SignedApproval, error) {
-	if len(root) != ed25519.PrivateKeySize || approval.Version != Version || approval.InviteID == "" || approval.ProfileID == "" || approval.DeviceID == "" || len(approval.DevicePublicKey) != ed25519.PublicKeySize {
+	if len(root) != ed25519.PrivateKeySize || approval.Version != Version || approval.InviteID == "" || approval.ProfileID == "" || approval.DeviceID == "" || len(approval.DevicePublicKey) != ed25519.PublicKeySize || len(approval.WireGuardPublicKey) != 32 {
 		return SignedApproval{}, ErrInvalidApproval
 	}
 	payload, err := canonicalMode.Marshal(approval)
@@ -252,7 +271,7 @@ func VerifyApproval(signed SignedApproval, root ed25519.PublicKey, expected Appr
 		return ErrInvalidApproval
 	}
 	canonical, err := canonicalMode.Marshal(actual)
-	if err != nil || !bytes.Equal(canonical, signed.Payload) || actual.Version != Version || actual.InviteID != expected.InviteID || actual.ProfileID != expected.ProfileID || actual.DeviceID != expected.DeviceID || !bytes.Equal(actual.DevicePublicKey, expected.DevicePublicKey) {
+	if err != nil || !bytes.Equal(canonical, signed.Payload) || actual.Version != Version || actual.InviteID != expected.InviteID || actual.ProfileID != expected.ProfileID || actual.DeviceID != expected.DeviceID || !bytes.Equal(actual.DevicePublicKey, expected.DevicePublicKey) || !bytes.Equal(actual.WireGuardPublicKey, expected.WireGuardPublicKey) {
 		return ErrInvalidApproval
 	}
 	return nil

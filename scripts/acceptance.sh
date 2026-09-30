@@ -30,7 +30,10 @@ run_lima_namespace_acceptance() {
     binary=".local/acceptance-linux-$go_arch.test"
     GOOS=linux GOARCH="$go_arch" go test -c ./internal/acceptance -o "$binary"
     repo_path=$(pwd)
-    limactl shell "$instance" "$repo_path/$binary" -test.run='^TestLinuxNamespace.*$' -test.count=1 -test.v
+    # Namespace creation, nftables, and WireGuard device setup require
+    # CAP_NET_ADMIN. Lima's default user intentionally has no such capability,
+    # so the VM harness elevates only this disposable test process.
+    limactl shell "$instance" sudo -- "$repo_path/$binary" -test.run='^TestLinuxNamespace.*$' -test.count=1 -test.v
     exit 0
 }
 

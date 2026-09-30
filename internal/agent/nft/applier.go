@@ -77,6 +77,15 @@ func clonePeers(peers map[string]netip.Prefix) map[string]netip.Prefix {
 }
 
 func applyScript(ctx context.Context, script string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// The first policy install has no table to flush. A read-only probe lets the
+	// single nft transaction either create the table or flush its old contents;
+	// the policy update itself still succeeds or fails atomically as one script.
+	if tableExists(ctx) {
+		script = "flush table inet go_tunnels\n" + script
+	}
 	command := exec.CommandContext(ctx, "nft", "-f", "-")
 	command.Stdin = strings.NewReader(script)
 	output, err := command.CombinedOutput()
@@ -84,4 +93,9 @@ func applyScript(ctx context.Context, script string) error {
 		return fmt.Errorf("nft: %w (%s)", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func tableExists(ctx context.Context) bool {
+	command := exec.CommandContext(ctx, "nft", "list", "table", "inet", "go_tunnels")
+	return command.Run() == nil
 }

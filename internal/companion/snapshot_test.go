@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -50,6 +51,80 @@ func TestSnapshotSignerAddsOnlyOneClientToExistingProfile(t *testing.T) {
 	}
 	if len(value.Services) != 1 || value.Services[0].ID != "cloud" {
 		t.Fatalf("unrelated snapshot state changed: %#v", value.Services)
+	}
+}
+
+func TestSnapshotSignerCopiesOnlyExplicitProfileACLTemplates(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := NewSession(time.Now)
+	if err := session.Unlock(privateKey); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := snapshot.Sign(snapshot.NetworkSnapshot{
+		NetworkID: "home", Revision: 1,
+		Devices:  []snapshot.Device{{ID: "laptop", Role: "client", IdentityPublicKey: "laptop-id", WireGuardPublicKey: "laptop-wg", OverlayAddress: "10.200.0.2/32"}},
+		Profiles: []snapshot.AccessProfile{{ID: "family", Name: "Family", DeviceIDs: []string{"laptop"}, ACLRuleIDs: []string{"lan-web"}}},
+		ACL:      []snapshot.ACLRule{{ID: "lan-web", SourceDeviceID: "laptop", Destination: "10.0.0.0/24", Protocol: "tcp", PortFrom: 443, PortTo: 443}},
+	}, privateKey, "root-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewSnapshotSigner(session, "home", "root-1").SignDeviceAddition(previous, DeviceAddition{ProfileID: "family", Device: snapshot.Device{
+		ID: "phone", Role: "client", IdentityPublicKey: "phone-id", WireGuardPublicKey: "phone-wg", OverlayAddress: "10.200.0.3/32",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := snapshot.Decode(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(value.ACL) != 2 {
+		t.Fatalf("ACL rules=%#v", value.ACL)
+	}
+	var copied snapshot.ACLRule
+	for _, rule := range value.ACL {
+		if rule.SourceDeviceID == "phone" {
+			copied = rule
+		}
+	}
+	if copied.ID != "family/phone/lan-web" || copied.Destination != "10.0.0.0/24" || copied.PortFrom != 443 {
+		t.Fatalf("copied ACL=%#v", copied)
+	}
+}
+
+func TestSnapshotSignerAllocatesOverlayFromPool(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := NewSession(time.Now)
+	if err := session.Unlock(privateKey); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := snapshot.Sign(snapshot.NetworkSnapshot{
+		NetworkID: "home", Revision: 1,
+		Devices:  []snapshot.Device{{ID: "gateway", Role: "gateway", IdentityPublicKey: "gateway-id", WireGuardPublicKey: "gateway-wg", OverlayAddress: "10.200.0.1/32"}},
+		Profiles: []snapshot.AccessProfile{{ID: "family", Name: "Family"}},
+	}, privateKey, "root-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewSnapshotSigner(session, "home", "root-1").SignDeviceAdditionFromPool(previous, DeviceAddition{ProfileID: "family", Device: snapshot.Device{
+		ID: "phone", Role: "client", IdentityPublicKey: "phone-id", WireGuardPublicKey: "phone-wg",
+	}}, netip.MustParsePrefix("10.200.0.0/29"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := snapshot.Decode(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Devices[1].OverlayAddress != "10.200.0.2/32" {
+		t.Fatalf("allocated overlay=%s", value.Devices[1].OverlayAddress)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
 	controlsnapshots "github.com/sokhrym/go-tunnels/internal/control/snapshots"
 	"github.com/sokhrym/go-tunnels/internal/invite"
+	"github.com/sokhrym/go-tunnels/internal/protocol"
 	"github.com/sokhrym/go-tunnels/internal/relay"
 	"github.com/sokhrym/go-tunnels/internal/snapshot"
 )
@@ -150,6 +152,35 @@ func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
 	}
 }
 
+func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
+	deviceService := devices.NewService(devices.NewMemoryStore(), time.Now, nil)
+	clientToken, err := deviceService.IssueEnrollmentToken(context.Background(), devices.RoleClient, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := deviceService.Enroll(context.Background(), devices.EnrollRequest{Token: clientToken.Token, Name: "client", IdentityPublicKey: "client-identity", WireGuardPublicKey: "client-wireguard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gatewayToken, err := deviceService.IssueEnrollmentToken(context.Background(), devices.RoleGateway, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway, err := deviceService.Enroll(context.Background(), devices.EnrollRequest{Token: gatewayToken.Token, Name: "gateway", IdentityPublicKey: "gateway-identity", WireGuardPublicKey: "gateway-wireguard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := relay.TicketIssuer{Key: []byte("01234567890123456789012345678901")}
+	handler := NewServer(deviceService, allowAuthorizer{}, WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/v1", time.Minute), WithRelayPeerAuthorizer(func(context.Context, devices.Device, devices.Device) bool { return false })).Handler()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/relay-sessions", strings.NewReader(`{"session_id":"session-1","destination_device_id":"`+gateway.ID+`"}`))
+	request.Header.Set("Authorization", "Bearer "+client.Credential)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized peer status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestHealthEndpoints(t *testing.T) {
 	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
 	for _, path := range []string{"/healthz", "/readyz"} {
@@ -172,6 +203,20 @@ func TestReadinessAndSecurityHeaders(t *testing.T) {
 	}
 	if recorder.Header().Get("Content-Security-Policy") == "" || recorder.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Fatalf("security headers = %#v", recorder.Header())
+	}
+}
+
+func TestDecodeJSONRejectsTrailingValues(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/test", strings.NewReader(`{"name":"ok"}{"name":"unexpected"}`))
+	var value struct {
+		Name string `json:"name"`
+	}
+	if decodeJSON(recorder, request, &value) {
+		t.Fatal("decodeJSON accepted trailing JSON value")
+	}
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -260,7 +305,7 @@ func TestInviteProofAPIDoesNotRequireAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = devicePublic
-	proof, err := item.Proof("device-1", devicePrivate, item.Code)
+	proof, err := item.Proof("device-1", devicePrivate, item.Code, bytes.Repeat([]byte{1}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,6 +351,51 @@ func TestSignedSnapshotPublishDoesNotRequireAdmin(t *testing.T) {
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/coordination/snapshots", bytes.NewReader(body)))
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("publish snapshot status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
+	rootPublic, rootPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, rootPrivate, "root-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotService := controlsnapshots.NewService(controlsnapshots.NewMemoryStore(), rootPublic, "home")
+	if err := snapshotService.Publish(context.Background(), envelope); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), headerAuthorizer{}, WithSnapshotService(snapshotService), WithCompanionRootKey(rootPublic)).Handler()
+	challengeRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(challengeRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/coordination/snapshot/companion-challenge", nil))
+	if challengeRecorder.Code != http.StatusOK {
+		t.Fatalf("challenge status=%d body=%s", challengeRecorder.Code, challengeRecorder.Body.String())
+	}
+	var challenge struct {
+		Nonce string `json:"nonce"`
+	}
+	if err := json.Unmarshal(challengeRecorder.Body.Bytes(), &challenge); err != nil || challenge.Nonce == "" {
+		t.Fatalf("challenge=%s error=%v", challengeRecorder.Body.String(), err)
+	}
+	signature, err := protocol.SignCompanionRequest(http.MethodGet, companionSnapshotPath, challenge.Nonce, "root-1", rootPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, companionSnapshotPath, nil)
+	request.Header.Set("X-Go-Tunnels-Companion-Nonce", challenge.Nonce)
+	request.Header.Set("X-Go-Tunnels-Companion-Key-ID", "root-1")
+	request.Header.Set("X-Go-Tunnels-Companion-Signature", base64.RawURLEncoding.EncodeToString(signature))
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, request)
+	if first.Code != http.StatusOK || !bytes.Contains(first.Body.Bytes(), []byte(base64.StdEncoding.EncodeToString(envelope.Hash))) {
+		t.Fatalf("companion snapshot status=%d body=%s", first.Code, first.Body.String())
+	}
+	replay := httptest.NewRecorder()
+	handler.ServeHTTP(replay, request)
+	if replay.Code != http.StatusUnauthorized {
+		t.Fatalf("replayed companion request status=%d body=%s", replay.Code, replay.Body.String())
 	}
 }
 

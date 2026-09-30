@@ -1,0 +1,175 @@
+package node
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/netip"
+	"sync"
+
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+
+	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/sokhrym/go-tunnels/internal/tunnel"
+)
+
+// PeerEndpointUpdater is the narrow ownership boundary between transport
+// discovery/relay and WireGuard reconciliation. Transport code may propose an
+// endpoint, but it cannot replace keys or allowed prefixes from a snapshot.
+type PeerEndpointUpdater interface {
+	SetPeerEndpoint(context.Context, string, netip.AddrPort) error
+	ClearPeerEndpoint(context.Context, string) error
+}
+
+type wireGuardConfigApplier func(string, wgtypes.Config) error
+
+// SnapshotWireGuardReconciler owns the complete peer set for one interface.
+// Snapshot application and endpoint updates share one mutex and one kernel
+// config transaction, so a relay reconnect cannot race a policy revision.
+type SnapshotWireGuardReconciler struct {
+	mu            sync.Mutex
+	interfaceName string
+	localDeviceID string
+	privateKey    string
+	listenPort    uint16
+	apply         wireGuardConfigApplier
+	current       *snapshot.NetworkSnapshot
+	endpoints     map[string]netip.AddrPort
+}
+
+// NewSnapshotWireGuardReconciler creates an endpoint-aware reconciler. The
+// default applier talks to the Linux kernel; tests and dry-run tooling can use
+// NewSnapshotWireGuardReconcilerWithApplier with a pure capture function.
+func NewSnapshotWireGuardReconciler(interfaceName, localDeviceID, privateKey string, listenPort uint16) (*SnapshotWireGuardReconciler, error) {
+	return NewSnapshotWireGuardReconcilerWithApplier(interfaceName, localDeviceID, privateKey, listenPort, tunnel.ApplyWireGuardConfig)
+}
+
+func NewSnapshotWireGuardReconcilerWithApplier(interfaceName, localDeviceID, privateKey string, listenPort uint16, applier func(string, wgtypes.Config) error) (*SnapshotWireGuardReconciler, error) {
+	if interfaceName == "" || localDeviceID == "" || privateKey == "" || applier == nil {
+		return nil, errors.New("WireGuard interface, local device, private key, and applier are required")
+	}
+	return &SnapshotWireGuardReconciler{interfaceName: interfaceName, localDeviceID: localDeviceID, privateKey: privateKey, listenPort: listenPort, apply: applier, endpoints: make(map[string]netip.AddrPort)}, nil
+}
+
+// Apply installs a complete peer set derived from the signed snapshot. A
+// failed kernel update leaves both the previous snapshot and endpoint map
+// intact, allowing the coordination loop to retry without losing connectivity.
+func (r *SnapshotWireGuardReconciler) Apply(_ context.Context, value snapshot.NetworkSnapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	peers, err := BuildWireGuardPeerConfigs(value, r.localDeviceID)
+	if err != nil {
+		return err
+	}
+	config, err := r.configForPeers(peers)
+	if err != nil {
+		return err
+	}
+	if err := r.apply(r.interfaceName, config); err != nil {
+		return fmt.Errorf("apply WireGuard snapshot: %w", err)
+	}
+	copy := cloneNetworkSnapshot(value)
+	r.current = &copy
+	for publicKey := range r.endpoints {
+		if !peerExists(peers, publicKey) {
+			delete(r.endpoints, publicKey)
+		}
+	}
+	return nil
+}
+
+// SetPeerEndpoint updates only the endpoint of an existing or future peer.
+// Before the first snapshot it is cached; after that it is applied together
+// with the currently accepted allowed-prefix set.
+func (r *SnapshotWireGuardReconciler) SetPeerEndpoint(_ context.Context, publicKey string, endpoint netip.AddrPort) error {
+	if publicKey == "" || !endpoint.IsValid() || endpoint.Port() == 0 || endpoint.Addr().IsUnspecified() {
+		return errors.New("valid peer public key and endpoint are required")
+	}
+	if _, err := wgtypes.ParseKey(publicKey); err != nil {
+		return fmt.Errorf("invalid peer public key: %w", err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.current == nil {
+		r.endpoints[publicKey] = endpoint
+		return nil
+	}
+	peers, err := BuildWireGuardPeerConfigs(*r.current, r.localDeviceID)
+	if err != nil {
+		return err
+	}
+	if !peerExists(peers, publicKey) {
+		return fmt.Errorf("peer %s is not present in the accepted snapshot", publicKey)
+	}
+	previous, hadPrevious := r.endpoints[publicKey]
+	r.endpoints[publicKey] = endpoint
+	config, configErr := r.configForPeers(peers)
+	if configErr == nil {
+		configErr = r.apply(r.interfaceName, config)
+	}
+	if configErr != nil {
+		if hadPrevious {
+			r.endpoints[publicKey] = previous
+		} else {
+			delete(r.endpoints, publicKey)
+		}
+		return fmt.Errorf("apply WireGuard endpoint: %w", configErr)
+	}
+	return nil
+}
+
+// ClearPeerEndpoint removes a relay/direct endpoint while preserving the
+// peer's public key and allowed prefixes. A subsequent transport can safely
+// install a fresh endpoint without rebuilding policy state.
+func (r *SnapshotWireGuardReconciler) ClearPeerEndpoint(_ context.Context, publicKey string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.current == nil {
+		delete(r.endpoints, publicKey)
+		return nil
+	}
+	peers, err := BuildWireGuardPeerConfigs(*r.current, r.localDeviceID)
+	if err != nil {
+		return err
+	}
+	previous, hadPrevious := r.endpoints[publicKey]
+	delete(r.endpoints, publicKey)
+	config, configErr := r.configForPeers(peers)
+	if configErr == nil {
+		configErr = r.apply(r.interfaceName, config)
+	}
+	if configErr != nil && hadPrevious {
+		r.endpoints[publicKey] = previous
+	}
+	if configErr != nil {
+		return fmt.Errorf("clear WireGuard endpoint: %w", configErr)
+	}
+	return nil
+}
+
+func (r *SnapshotWireGuardReconciler) configForPeers(peers []tunnel.PeerConfig) (wgtypes.Config, error) {
+	for index := range peers {
+		if endpoint, ok := r.endpoints[peers[index].PublicKey]; ok {
+			peers[index].Endpoint = endpoint
+		}
+	}
+	return tunnel.BuildWireGuardConfigWithListenPort(r.privateKey, r.listenPort, peers)
+}
+
+func peerExists(peers []tunnel.PeerConfig, publicKey string) bool {
+	for _, peer := range peers {
+		if peer.PublicKey == publicKey {
+			return true
+		}
+	}
+
+	return false
+}
+
+func cloneNetworkSnapshot(value snapshot.NetworkSnapshot) snapshot.NetworkSnapshot {
+	copy := value
+	copy.Devices = append([]snapshot.Device(nil), value.Devices...)
+	copy.Gateways = append([]snapshot.Gateway(nil), value.Gateways...)
+	copy.Routes = append([]snapshot.Route(nil), value.Routes...)
+	return copy
+}

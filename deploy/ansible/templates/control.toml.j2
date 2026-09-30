@@ -13,6 +13,8 @@ session_ttl = "12h"
 ceremony_ttl = "5m"
 [relay]
 public_url = "wss://{{ relay_domain }}/relay/v1"
+ticket_key_file = "/run/secrets/relay_ticket_key"
+ticket_ttl = "5m"
 
 [networking]
 network_id = "{{ network_id | default('home') }}"

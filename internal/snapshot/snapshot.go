@@ -68,6 +68,9 @@ type AccessProfile struct {
 	Name       string   `cbor:"name"`
 	DeviceIDs  []string `cbor:"device_ids"`
 	ServiceIDs []string `cbor:"service_ids"`
+	// ACLRuleIDs identifies the explicitly compiled rules that define this
+	// profile's access. An empty list is intentionally default-deny.
+	ACLRuleIDs []string `cbor:"acl_rule_ids,omitempty"`
 }
 
 type ACLRule struct {
@@ -214,16 +217,17 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 		if service.ID == "" || service.Name == "" || (service.Kind != "web" && service.Kind != "native") {
 			return fmt.Errorf("%w: service identity or kind", ErrInvalidSnapshot)
 		}
-		for field, raw := range map[string]string{"url": service.URL, "native_url": service.NativeURL, "health_url": service.HealthURL} {
-			if raw == "" {
-				if field == "url" {
-					return fmt.Errorf("%w: service %s URL is required", ErrInvalidSnapshot, service.ID)
-				}
-				continue
+		if err := validateServiceURL(service.URL, true); err != nil {
+			return fmt.Errorf("%w: service %s url: %v", ErrInvalidSnapshot, service.ID, err)
+		}
+		if service.NativeURL != "" {
+			if err := validateServiceURL(service.NativeURL, false); err != nil {
+				return fmt.Errorf("%w: service %s native_url: %v", ErrInvalidSnapshot, service.ID, err)
 			}
-			parsed, err := url.Parse(raw)
-			if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-				return fmt.Errorf("%w: service %s %s must be an HTTPS URL without credentials or fragments", ErrInvalidSnapshot, service.ID, field)
+		}
+		if service.HealthURL != "" {
+			if err := validateServiceURL(service.HealthURL, true); err != nil {
+				return fmt.Errorf("%w: service %s health_url: %v", ErrInvalidSnapshot, service.ID, err)
 			}
 		}
 	}
@@ -235,10 +239,14 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 		deviceIDs[device.ID] = struct{}{}
 		if device.OverlayAddress != "" {
 			prefix, err := netip.ParsePrefix(device.OverlayAddress)
-			if err != nil || !prefix.IsValid() {
+			if err != nil || !prefix.IsValid() || prefix.Bits() == 0 {
 				return fmt.Errorf("%w: device %s has invalid overlay address", ErrInvalidSnapshot, device.ID)
 			}
 		}
+	}
+	serviceIDs := make(map[string]struct{}, len(value.Services))
+	for _, service := range value.Services {
+		serviceIDs[service.ID] = struct{}{}
 	}
 	for _, gateway := range value.Gateways {
 		if _, ok := deviceIDs[gateway.DeviceID]; !ok {
@@ -270,12 +278,27 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 		}
 		slices.Sort(profile.DeviceIDs)
 		slices.Sort(profile.ServiceIDs)
+		slices.Sort(profile.ACLRuleIDs)
+		profile.ACLRuleIDs = slices.Compact(profile.ACLRuleIDs)
+		for _, deviceID := range profile.DeviceIDs {
+			if _, ok := deviceIDs[deviceID]; !ok {
+				return fmt.Errorf("%w: profile %s references unknown device %s", ErrInvalidSnapshot, profile.ID, deviceID)
+			}
+		}
+		for _, serviceID := range profile.ServiceIDs {
+			if _, ok := serviceIDs[serviceID]; !ok {
+				return fmt.Errorf("%w: profile %s references unknown service %s", ErrInvalidSnapshot, profile.ID, serviceID)
+			}
+		}
 	}
+	aclIDs := make(map[string]struct{}, len(value.ACL))
 	for _, acl := range value.ACL {
+		aclIDs[acl.ID] = struct{}{}
 		if _, ok := deviceIDs[acl.SourceDeviceID]; !ok {
 			return fmt.Errorf("%w: ACL %s references an unknown source device", ErrInvalidSnapshot, acl.ID)
 		}
-		if _, err := netip.ParsePrefix(acl.Destination); err != nil {
+		destination, err := netip.ParsePrefix(acl.Destination)
+		if err != nil || !destination.IsValid() || destination.Bits() == 0 {
 			return fmt.Errorf("%w: ACL %s has invalid destination", ErrInvalidSnapshot, acl.ID)
 		}
 		if acl.Protocol != "tcp" && acl.Protocol != "udp" {
@@ -284,6 +307,28 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 		if acl.PortFrom == 0 || acl.PortTo == 0 || acl.PortFrom > acl.PortTo {
 			return fmt.Errorf("%w: ACL %s has invalid port range", ErrInvalidSnapshot, acl.ID)
 		}
+	}
+	for _, profile := range value.Profiles {
+		for _, ruleID := range profile.ACLRuleIDs {
+			if _, ok := aclIDs[ruleID]; !ok {
+				return fmt.Errorf("%w: profile %s references unknown ACL rule %s", ErrInvalidSnapshot, profile.ID, ruleID)
+			}
+		}
+	}
+	return nil
+}
+
+func validateServiceURL(raw string, requireHTTPS bool) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return errors.New("URL must have a host and must not contain credentials or fragments")
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if requireHTTPS && scheme != "https" {
+		return errors.New("URL must use HTTPS")
+	}
+	if !requireHTTPS && (scheme == "javascript" || scheme == "data" || scheme == "file" || scheme == "vbscript") {
+		return errors.New("URL uses a disallowed scheme")
 	}
 	return nil
 }

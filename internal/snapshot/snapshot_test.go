@@ -107,6 +107,27 @@ func TestSignRejectsServiceCredentialsAndFragments(t *testing.T) {
 	}
 }
 
+func TestSignValidatesOptionalServiceURLs(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := NetworkSnapshot{NetworkID: "home", Revision: 1, Services: []Service{{
+		ID: "cloud", Name: "Cloud", Kind: "native", URL: "https://cloud.home", NativeURL: "nextcloud://cloud.home", HealthURL: "https://cloud.home/health",
+	}}}
+	if _, err := Sign(valid, privateKey, "root-1"); err != nil {
+		t.Fatal(err)
+	}
+	for index, service := range []Service{
+		{ID: "cloud", Name: "Cloud", Kind: "web", URL: "https://cloud.home", NativeURL: "javascript:alert(1)"},
+		{ID: "cloud", Name: "Cloud", Kind: "web", URL: "https://cloud.home", HealthURL: "http://cloud.home/health"},
+	} {
+		if _, err := Sign(NetworkSnapshot{NetworkID: "home", Revision: 1, Services: []Service{service}}, privateKey, "root-1"); err == nil {
+			t.Errorf("case %d: unsafe optional URL accepted", index)
+		}
+	}
+}
+
 func TestSignRejectsDefaultRouteAdvertisement(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -123,5 +144,27 @@ func TestSignRejectsDefaultRouteAdvertisement(t *testing.T) {
 
 	if _, err := Sign(value, privateKey, "root-1"); err == nil {
 		t.Fatal("default route advertisement was accepted")
+	}
+}
+
+func TestSignRejectsUnboundProfileReferencesAndDefaultACL(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := NetworkSnapshot{
+		NetworkID: "home", Revision: 1,
+		Profiles: []AccessProfile{{ID: "family", Name: "Family", DeviceIDs: []string{"missing"}, ServiceIDs: []string{"missing"}}},
+	}
+	if _, err := Sign(value, privateKey, "root-1"); err == nil {
+		t.Fatal("unbound profile references were accepted")
+	}
+	value = NetworkSnapshot{
+		NetworkID: "home", Revision: 1,
+		Devices: []Device{{ID: "client", OverlayAddress: "100.64.0.2/32"}},
+		ACL:     []ACLRule{{ID: "all", SourceDeviceID: "client", Destination: "0.0.0.0/0", Protocol: "tcp", PortFrom: 443, PortTo: 443}},
+	}
+	if _, err := Sign(value, privateKey, "root-1"); err == nil {
+		t.Fatal("default ACL destination was accepted")
 	}
 }

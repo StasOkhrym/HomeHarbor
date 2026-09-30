@@ -25,12 +25,24 @@ direct UDP discovery, and an encrypted relay fallback.
 - Thin `cmd/*` entrypoints with shared `internal/app/*` runtimes and a minimal
   `Run(context.Context) error` lifecycle contract.
 - Signed invite proofs with device-key possession, trusted-companion approval,
-  PostgreSQL pending state, and age-encrypted local root-key storage.
+  PostgreSQL pending state, atomic device/profile activation, and
+  age-encrypted local root-key storage. The proof carries only the public
+  WireGuard key; private keys remain on the enrolling node.
 - Short-lived device credentials with atomic rotation and explicit trusted
   proxy handling for rate limits.
 - Relay-only encrypted packet bridge with reconnect/backoff, live signed
   snapshot broadcast, strict snapshot-chain verification, and targeted
   authorized candidate messages.
+- Signed snapshot profiles can declare explicit `ACLRuleIDs`; trusted
+  companion activation copies only those declared templates to the new device,
+  while profiles without templates remain default-deny.
+- Overlay identities can be allocated from bounded RFC1918/CGNAT pools with
+  collision, default-route, public-range, and exhaustion checks.
+- Companion onboarding is explicitly two-step: `admin approve` activates the
+  device, then repeatable `admin publish-snapshot` signs and publishes its
+  profile diff through a single-use challenge-bound endpoint.
+- Snapshot topology compilation now produces deterministic WireGuard peer
+  allowed-prefixes while keeping relay/direct endpoint ownership separate.
 - Local developer workflow: `make doctor`, `make dev-init`, `make dev-up`,
   `make dev-down`, `make vm-up`, `make relay-acceptance`, `make verify`.
 
@@ -57,7 +69,23 @@ go vet ./...
 go build ./cmd/...
 make lint       # check lint, imports, and formatting
 make lint-fix   # apply the configured safe formatting fixes
+make vulncheck  # run the Go vulnerability database scan
 ```
+
+After approval, publish the signed network diff with a configured overlay pool:
+
+```sh
+go run ./cmd/admin publish-snapshot \
+  -endpoint https://control.example \
+  -invite INVITE_ID \
+  -overlay-pool 10.200.0.0/24 \
+  -key state/root-key.age \
+  -passphrase-file state/root-passphrase
+```
+
+The publish step is retryable and requires the trusted root key. The control
+plane accepts snapshot reads only after a nonce-bound companion signature; it
+does not expose the signed snapshot as a public endpoint.
 
 The repository pins the golangci-lint v2 configuration in
 [`.golangci.yml`](.golangci.yml). `gofumpt`, `gci`, and `goimports` are configured

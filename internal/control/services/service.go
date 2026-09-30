@@ -22,9 +22,10 @@ const (
 )
 
 var (
-	ErrServiceNotFound = errors.New("service not found")
-	ErrProfileNotFound = errors.New("access profile not found")
-	ErrDuplicateID     = errors.New("service or profile ID already exists")
+	ErrServiceNotFound  = errors.New("service not found")
+	ErrProfileNotFound  = errors.New("access profile not found")
+	ErrDuplicateID      = errors.New("service or profile ID already exists")
+	ErrDeviceNotAllowed = errors.New("device is not allowed in access profile")
 )
 
 type Service struct {
@@ -53,16 +54,32 @@ type Store interface {
 	ListProfiles(context.Context) ([]AccessProfile, error)
 }
 
-type Catalog struct {
-	store Store
-	now   func() time.Time
+// DeviceActiveChecker is supplied by the composition root so this module can
+// validate profile membership without importing the devices repository or
+// exposing its tables. A profile may remain empty for an invite template.
+type DeviceActiveChecker func(context.Context, string) (bool, error)
+
+type Option func(*Catalog)
+
+func WithDeviceActiveChecker(checker DeviceActiveChecker) Option {
+	return func(catalog *Catalog) { catalog.deviceActive = checker }
 }
 
-func NewService(store Store, now func() time.Time) *Catalog {
+type Catalog struct {
+	store        Store
+	now          func() time.Time
+	deviceActive DeviceActiveChecker
+}
+
+func NewService(store Store, now func() time.Time, options ...Option) *Catalog {
 	if now == nil {
 		now = time.Now
 	}
-	return &Catalog{store: store, now: now}
+	catalog := &Catalog{store: store, now: now}
+	for _, option := range options {
+		option(catalog)
+	}
+	return catalog
 }
 
 func (c *Catalog) Create(ctx context.Context, item Service) (Service, error) {
@@ -107,6 +124,20 @@ func (c *Catalog) CreateProfile(ctx context.Context, profile AccessProfile) (Acc
 			return AccessProfile{}, fmt.Errorf("%w: %s", ErrServiceNotFound, serviceID)
 		}
 	}
+	if len(profile.DeviceIDs) > 0 {
+		if c.deviceActive == nil {
+			return AccessProfile{}, errors.New("device validation is not configured")
+		}
+		for _, deviceID := range profile.DeviceIDs {
+			active, checkErr := c.deviceActive(ctx, deviceID)
+			if checkErr != nil {
+				return AccessProfile{}, checkErr
+			}
+			if !active {
+				return AccessProfile{}, fmt.Errorf("%w: %s", ErrDeviceNotAllowed, deviceID)
+			}
+		}
+	}
 	profile.CreatedAt = c.now().UTC()
 	if err := c.store.CreateProfile(ctx, profile); err != nil {
 		return AccessProfile{}, err
@@ -125,9 +156,37 @@ func validateService(item Service) error {
 	if item.Kind != KindWeb && item.Kind != KindNative {
 		return fmt.Errorf("unsupported service kind %q", item.Kind)
 	}
-	parsed, err := url.Parse(strings.TrimSpace(item.URL))
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-		return errors.New("service URL must be HTTPS")
+
+	if err := validateURL("service URL", item.URL, true); err != nil {
+		return err
+	}
+
+	if item.NativeURL != "" {
+		if err := validateURL("native URL", item.NativeURL, false); err != nil {
+			return err
+		}
+	}
+
+	if item.HealthURL != "" {
+		if err := validateURL("health URL", item.HealthURL, true); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateURL(label, raw string, requireHTTPS bool) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return fmt.Errorf("%s must not contain credentials or fragments", label)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if requireHTTPS && scheme != "https" {
+		return fmt.Errorf("%s must be HTTPS", label)
+	}
+	if !requireHTTPS && (scheme == "javascript" || scheme == "data" || scheme == "file" || scheme == "vbscript") {
+		return fmt.Errorf("%s uses a disallowed scheme", label)
 	}
 	return nil
 }

@@ -18,6 +18,9 @@ func TestCompileUsesDefaultDropAndExplicitAllows(t *testing.T) {
 			t.Fatalf("script missing %q:\n%s", want, script)
 		}
 	}
+	if strings.Contains(script, "flush table inet go_tunnels") {
+		t.Fatalf("Compile() emitted a state-dependent flush before table existence is known:\n%s", script)
+	}
 }
 
 func TestCompileRejectsNonDenySnapshot(t *testing.T) {

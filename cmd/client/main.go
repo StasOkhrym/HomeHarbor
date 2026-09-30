@@ -31,6 +31,9 @@ func main() {
 	overlayAddress := flag.String("wg-overlay", "", "overlay CIDR assigned to this interface")
 	allowedPrefixes := flag.String("wg-allowed-prefixes", "", "comma-separated peer allowed IP prefixes")
 	routes := flag.String("wg-routes", "", "comma-separated Linux routes installed through the interface")
+	coordinationURL := flag.String("coordination", "", "control coordination WebSocket URL")
+	rootPublicKeyFile := flag.String("root-public-key", "", "trusted companion root public key file")
+	networkID := flag.String("network-id", "home", "network ID used for signed snapshot verification")
 	flag.Parse()
 	state, err := node.LoadOrCreate(*statePath)
 	if err == nil && *controlURL != "" && *token != "" {
@@ -45,6 +48,18 @@ func main() {
 	if err == nil {
 		err = state.Save(*statePath)
 	}
+	var snapshotWireGuard *node.SnapshotWireGuardReconciler
+	var clientReconciler *node.ClientReconciler
+	if err == nil && *coordinationURL != "" {
+		if *interfaceName == "" || *rootPublicKeyFile == "" {
+			err = fmt.Errorf("-wg-interface and -root-public-key are required for client coordination")
+		} else {
+			snapshotWireGuard, err = node.NewSnapshotWireGuardReconciler(*interfaceName, state.DeviceID, state.WireGuard.PrivateKey, uint16(*listenPort))
+			if err == nil {
+				clientReconciler = node.NewClientReconciler(*interfaceName, state.DeviceID)
+			}
+		}
+	}
 	if err == nil && (*relayURL != "" || *relayTicket != "") {
 		if *relayURL == "" && *relayTicket != "" {
 			err = fmt.Errorf("-relay is required when -relay-ticket is supplied")
@@ -58,9 +73,8 @@ func main() {
 			}
 		}
 	}
+	var components []func(context.Context) error
 	if err == nil && *relayURL != "" {
-		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer cancel()
 		var ticketProvider node.RelayTicketProvider
 		if *controlURL != "" {
 			ticketProvider = func(providerContext context.Context) (string, error) {
@@ -72,7 +86,9 @@ func main() {
 			}
 		}
 		if *interfaceName == "" {
-			err = node.RunRelayBridgeLoop(ctx, node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress}, ticketProvider)
+			components = append(components, func(componentContext context.Context) error {
+				return node.RunRelayBridgeLoop(componentContext, node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress}, ticketProvider)
+			})
 		} else {
 			allowed, parseErr := node.ParsePrefixList(*allowedPrefixes)
 			if parseErr != nil {
@@ -81,12 +97,29 @@ func main() {
 				var routePrefixes []netip.Prefix
 				routePrefixes, parseErr = node.ParsePrefixList(*routes)
 				if parseErr == nil {
-					err = node.RunKernelRelayLoop(ctx, node.KernelRelayConfig{RelayBridgeConfig: node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress}, InterfaceName: *interfaceName, PrivateKey: state.WireGuard.PrivateKey, ListenPort: uint16(*listenPort), OverlayAddress: *overlayAddress, PeerPublicKey: *peerPublicKey, AllowedPrefixes: allowed, Routes: routePrefixes}, ticketProvider)
+					components = append(components, func(componentContext context.Context) error {
+						return node.RunKernelRelayLoop(componentContext, node.KernelRelayConfig{RelayBridgeConfig: node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress}, InterfaceName: *interfaceName, PrivateKey: state.WireGuard.PrivateKey, ListenPort: uint16(*listenPort), OverlayAddress: *overlayAddress, PeerPublicKey: *peerPublicKey, AllowedPrefixes: allowed, Routes: routePrefixes, EndpointUpdater: snapshotWireGuard}, ticketProvider)
+					})
 				} else {
 					err = parseErr
 				}
 			}
 		}
+	}
+	if err == nil && *coordinationURL != "" {
+		rootPublicKey, keyErr := node.LoadPublicKeyFile(*rootPublicKeyFile)
+		if keyErr != nil {
+			err = keyErr
+		} else {
+			components = append(components, func(componentContext context.Context) error {
+				return node.RunCoordinationLoop(componentContext, node.CoordinationConfig{URL: *coordinationURL, Credential: state.DeviceCredential, DeviceID: state.DeviceID, NetworkID: *networkID, RootPublicKey: rootPublicKey}, node.NewCompositeSnapshotApplier(clientReconciler, snapshotWireGuard))
+			})
+		}
+	}
+	if err == nil && len(components) > 0 {
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+		err = node.RunComponents(ctx, components...)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

@@ -34,6 +34,7 @@ import (
 	"github.com/sokhrym/go-tunnels/internal/platform/events"
 	"github.com/sokhrym/go-tunnels/internal/platform/lifecycle"
 	"github.com/sokhrym/go-tunnels/internal/relay"
+	networksnapshot "github.com/sokhrym/go-tunnels/internal/snapshot"
 	"github.com/sokhrym/go-tunnels/migrations"
 )
 
@@ -91,7 +92,13 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	deviceService := devices.NewService(devices.NewPostgresStore(pool), time.Now, nil, devices.WithPublisher(events.NewWatermillPublisher(bus)))
 	networkService := controlnetwork.NewService(controlnetwork.NewPostgresStore(pool), time.Now)
 	policyService := policy.NewService(policy.NewPostgresStore(pool), policy.Compiler{})
-	serviceCatalog := controlservices.NewService(controlservices.NewPostgresStore(pool), time.Now)
+	serviceCatalog := controlservices.NewService(controlservices.NewPostgresStore(pool), time.Now, controlservices.WithDeviceActiveChecker(func(ctx context.Context, id string) (bool, error) {
+		device, err := deviceService.Device(ctx, id)
+		if err != nil {
+			return false, err
+		}
+		return device.Status == devices.StatusActive, nil
+	}))
 	peerAuthorization := func(_ context.Context, source, destination devices.Device) bool {
 		return source.Status == devices.StatusActive && destination.Status == devices.StatusActive && source.Role != destination.Role
 	}
@@ -153,10 +160,15 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 			return closeBusAndPool(errors.New("networking.network_id is required when invite verification is enabled"))
 		}
 		signedSnapshots = controlsnapshots.NewService(controlsnapshots.NewPostgresStore(pool), rootPublic, cfg.Networking.NetworkID)
+		inviteStore := controlinvites.NewPostgresStore(pool)
 		serverOptions = append(serverOptions,
-			httpapi.WithInviteService(controlinvites.NewService(controlinvites.NewPostgresStore(pool), rootPublic, cfg.Networking.NetworkID, time.Now)),
+			httpapi.WithInviteService(controlinvites.NewService(inviteStore, rootPublic, cfg.Networking.NetworkID, time.Now, controlinvites.WithActivator(inviteStore))),
 			httpapi.WithSnapshotService(signedSnapshots),
 			httpapi.WithSnapshotBroadcaster(coordinationHandler),
+			httpapi.WithCompanionRootKey(rootPublic),
+			httpapi.WithRelayPeerAuthorizer(func(ctx context.Context, source, destination devices.Device) bool {
+				return authorizeRelayPeer(ctx, signedSnapshots, source, destination)
+			}),
 		)
 		coordinationHandler = coordination.NewHandler(deviceService, signedSnapshots, []string{cfg.Auth.RPOrigin}, peerAuthorization)
 	}
@@ -180,6 +192,74 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 			IdleTimeout:       60 * time.Second,
 		},
 	}, nil
+}
+
+// authorizeRelayPeer makes relay ticket issuance depend on the same signed
+// topology consumed by nodes. A role check alone would let an authenticated
+// device ask the relay to pair with every active gateway, even when no route
+// or ACL grants that relationship.
+type signedSnapshotReader interface {
+	Latest(context.Context) (networksnapshot.Envelope, error)
+}
+
+func authorizeRelayPeer(ctx context.Context, snapshots signedSnapshotReader, source, destination devices.Device) bool {
+	if snapshots == nil {
+		return false
+	}
+	envelope, err := snapshots.Latest(ctx)
+	if err != nil {
+		return false
+	}
+	value, err := networksnapshot.Decode(envelope)
+	if err != nil {
+		return false
+	}
+	var sourceDevice, destinationDevice *networksnapshot.Device
+	for index := range value.Devices {
+		device := &value.Devices[index]
+		switch device.ID {
+		case source.ID:
+			sourceDevice = device
+		case destination.ID:
+			destinationDevice = device
+		}
+	}
+	if sourceDevice == nil || destinationDevice == nil || sourceDevice.Role != string(source.Role) || destinationDevice.Role != string(destination.Role) || sourceDevice.Role == destinationDevice.Role {
+		return false
+	}
+	clientID, gatewayID := source.ID, destination.ID
+	if source.Role == devices.RoleGateway {
+		clientID, gatewayID = destination.ID, source.ID
+	}
+	if source.Role != devices.RoleClient && source.Role != devices.RoleGateway {
+		return false
+	}
+	if destination.Role != devices.RoleClient && destination.Role != devices.RoleGateway {
+		return false
+	}
+	for _, route := range value.Routes {
+		if route.GatewayID != gatewayID {
+			continue
+		}
+		routePrefix, routeErr := netip.ParsePrefix(route.Prefix)
+		if routeErr != nil {
+			continue
+		}
+		for _, acl := range value.ACL {
+			if acl.SourceDeviceID != clientID {
+				continue
+			}
+			aclPrefix, aclErr := netip.ParsePrefix(acl.Destination)
+			if aclErr == nil && prefixesOverlap(routePrefix, aclPrefix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func prefixesOverlap(left, right netip.Prefix) bool {
+	return left.Contains(right.Addr()) || right.Contains(left.Addr())
 }
 
 func loadRootPublicKey(path string) (ed25519.PublicKey, error) {

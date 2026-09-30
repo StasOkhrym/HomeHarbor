@@ -55,18 +55,30 @@ contracts used by handlers, coordinators, jobs, and future extracted services.
 1. **Completed:** replace bootstrap bearer authentication with WebAuthn/passkey
    ceremonies, signed sessions, recovery codes, CSRF protection, and audit events.
 2. **Completed:** add short-lived device credential rotation with atomic replacement.
-3. **In progress:** complete privileged Linux interface, route, nftables, and
+3. **Completed:** make trusted-companion approval activate the device,
+   credential, profile membership, and outbox events in one PostgreSQL
+   transaction. Legacy pending invites without a WireGuard public key are
+   retained for audit but cannot be activated.
+4. **Completed:** constrain profile permission propagation to explicit signed
+   snapshot `ACLRuleIDs`; an empty template list remains default-deny.
+5. **Completed:** add bounded RFC1918/CGNAT overlay allocation with reserved
+   network/broadcast addresses and deterministic collision handling.
+6. **Completed:** add a challenge-bound, single-use companion snapshot read and
+   an explicit retryable `publish-snapshot` flow after device activation.
+7. **In progress:** snapshot topology now compiles deterministic WireGuard
+   peer allowed-prefixes with gateway route scoping. Complete privileged Linux
+   interface, route, nftables, and
    systemd-resolved lifecycle acceptance with rollback to the last valid
    snapshot. The Linux namespace harness now exercises the isolated route and
    default-deny LAN policy path; it still needs to run in the provisioned Lima
    VM and be extended through the real kernel WireGuard interface.
-4. **In progress:** relay sessions, reconnect, live snapshot delivery, and
+8. **In progress:** relay sessions, reconnect, live snapshot delivery, and
    encrypted packet forwarding exist. Complete kernel WireGuard service
    reachability, STUN direct handshake, and direct-to-relay path switching.
-5. **Partially completed:** PostgreSQL integration tests and the Linux
+9. **Partially completed:** PostgreSQL integration tests and the Linux
    namespace acceptance harness exist. Run them with `TEST_DATABASE_URL` and
    the provisioned Linux VM before calling the local E2E gate green.
-6. Build the rough Android `VpnService` client, then finish the iOS Network Extension
+10. Build the rough Android `VpnService` client, then finish the iOS Network Extension
    target and physical-device Packet Tunnel verification.
 
 ## 4. Self-documenting code standard

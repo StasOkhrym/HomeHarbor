@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -29,6 +30,8 @@ func main() {
 		err = issueInvite(os.Args[2:])
 	case "approve":
 		err = approveInvite(os.Args[2:])
+	case "publish-snapshot":
+		err = publishInviteSnapshot(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -111,6 +114,35 @@ func approveInvite(args []string) error {
 	return (companion.RemoteApprover{Endpoint: *endpoint}).Approve(context.Background(), *inviteID, strings.TrimSpace(*code), root)
 }
 
+func publishInviteSnapshot(args []string) error {
+	flags := flag.NewFlagSet("publish-snapshot", flag.ContinueOnError)
+	keyPath := flags.String("key", "state/root-key.age", "encrypted root key path")
+	passphraseFile := flags.String("passphrase-file", "", "file containing the passphrase")
+	endpoint := flags.String("endpoint", "https://control.example", "control plane URL")
+	keyID := flags.String("key-id", "root-1", "root key identifier")
+	inviteID := flags.String("invite", "", "approved invite ID")
+	overlayPool := flags.String("overlay-pool", "", "IPv4 RFC1918/CGNAT overlay pool, for example 10.200.0.0/24")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *inviteID == "" || *overlayPool == "" {
+		return errors.New("invite and overlay-pool are required")
+	}
+	pool, err := netip.ParsePrefix(*overlayPool)
+	if err != nil {
+		return fmt.Errorf("parse overlay-pool: %w", err)
+	}
+	session, err := unlockSession(*keyPath, *passphraseFile)
+	if err != nil {
+		return err
+	}
+	root, err := session.PrivateKey()
+	if err != nil {
+		return err
+	}
+	return (companion.RemoteApprover{Endpoint: *endpoint, KeyID: *keyID, OverlayPool: pool}).PublishSnapshot(context.Background(), strings.TrimSpace(*inviteID), root)
+}
+
 func unlockSession(path, passphraseFile string) (*companion.Session, error) {
 	passphrase, err := readPassphrase(passphraseFile)
 	if err != nil {
@@ -144,5 +176,5 @@ func readPassphrase(path string) (string, error) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: admin init-root|invite|approve [flags]")
+	fmt.Fprintln(os.Stderr, "usage: admin init-root|invite|approve|publish-snapshot [flags]")
 }

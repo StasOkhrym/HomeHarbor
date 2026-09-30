@@ -1,6 +1,7 @@
 package invites
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -29,7 +30,7 @@ func TestInviteProofIsPendingUntilTrustedCompanionApproves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := local.Proof("phone-1", devicePrivate, local.Code)
+	proof, err := local.Proof("phone-1", devicePrivate, local.Code, bytes.Repeat([]byte{1}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +71,7 @@ func TestSignedApprovalAcceptsOnlyPendingExactDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := local.Proof("phone-1", devicePrivate, local.Code)
+	proof, err := local.Proof("phone-1", devicePrivate, local.Code, bytes.Repeat([]byte{1}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestSignedApprovalAcceptsOnlyPendingExactDiff(t *testing.T) {
 	if err := service.SubmitProof(context.Background(), permit, proof); err != nil {
 		t.Fatal(err)
 	}
-	approval, err := invite.SignApproval(invite.Approval{Version: invite.Version, InviteID: local.Permit.InviteID, ProfileID: "family", DeviceID: "phone-1", DevicePublicKey: proof.DevicePublicKey}, rootPrivate)
+	approval, err := invite.SignApproval(invite.Approval{Version: invite.Version, InviteID: local.Permit.InviteID, ProfileID: "family", DeviceID: "phone-1", DevicePublicKey: proof.DevicePublicKey, WireGuardPublicKey: proof.WireGuardPublicKey}, rootPrivate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +87,53 @@ func TestSignedApprovalAcceptsOnlyPendingExactDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if approved.Status != StatusApproved {
-		t.Fatalf("approved status = %q", approved.Status)
+	if approved.Record.Status != StatusApproved {
+		t.Fatalf("approved status = %q", approved.Record.Status)
+	}
+}
+
+func TestSignedApprovalActivatesDeviceWithOneTimeCredential(t *testing.T) {
+	rootPublic, rootPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	local, err := invite.New("home", "family", time.Hour, now, rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permit, err := invite.SignPermit(local.Permit, rootPrivate, "root-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, devicePrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := local.Proof("phone-1", devicePrivate, local.Code, bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewMemoryStore()
+	service := NewService(store, rootPublic, "home", func() time.Time { return now }, WithActivator(store), WithRandom(bytes.NewReader(bytes.Repeat([]byte{9}, 32))))
+	if err := service.SubmitProof(context.Background(), permit, proof); err != nil {
+		t.Fatal(err)
+	}
+	approval, err := invite.SignApproval(invite.Approval{Version: invite.Version, InviteID: local.Permit.InviteID, ProfileID: "family", DeviceID: "phone-1", DevicePublicKey: proof.DevicePublicKey, WireGuardPublicKey: proof.WireGuardPublicKey}, rootPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.ApproveSigned(context.Background(), approval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Record.Status != StatusApproved || result.Device.Status != "active" || result.Device.Credential == "" {
+		t.Fatalf("activation result=%#v", result)
+	}
+	if stored := store.devices["phone-1"]; stored.Credential != "" || stored.CredentialHash == [32]byte{} {
+		t.Fatalf("store retained or missed credential hash: %#v", stored)
+	}
+	if _, err := service.ApproveSigned(context.Background(), approval); !errors.Is(err, ErrInviteConsumed) {
+		t.Fatalf("replayed approval error=%v", err)
 	}
 }

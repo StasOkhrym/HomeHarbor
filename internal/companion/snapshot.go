@@ -71,11 +71,71 @@ func (s *SnapshotSigner) SignDeviceAddition(previous snapshot.Envelope, addition
 	next.Devices = append(next.Devices, addition.Device)
 	for index := range next.Profiles {
 		if next.Profiles[index].ID == addition.ProfileID {
+			previousMembers := append([]string(nil), next.Profiles[index].DeviceIDs...)
 			next.Profiles[index].DeviceIDs = append(next.Profiles[index].DeviceIDs, addition.Device.ID)
+			if err := copyProfileACL(next.ACL, &next.ACL, addition.ProfileID, next.Profiles[index].ACLRuleIDs, previousMembers, addition.Device.ID); err != nil {
+				return snapshot.Envelope{}, err
+			}
 			break
 		}
 	}
 	return snapshot.Sign(next, privateKey, s.keyID)
+}
+
+// SignDeviceAdditionFromPool allocates a non-overlapping overlay address from
+// the trusted companion's configured pool, then applies the same constrained
+// device/profile diff as SignDeviceAddition. The caller cannot smuggle an
+// arbitrary address through this path.
+func (s *SnapshotSigner) SignDeviceAdditionFromPool(previous snapshot.Envelope, addition DeviceAddition, pool netip.Prefix) (snapshot.Envelope, error) {
+	value, err := snapshot.Decode(previous)
+	if err != nil {
+		return snapshot.Envelope{}, fmt.Errorf("decode current snapshot: %w", err)
+	}
+	used := make([]string, 0, len(value.Devices))
+	for _, device := range value.Devices {
+		used = append(used, device.OverlayAddress)
+	}
+	allocated, err := snapshot.AllocateOverlayAddress(pool, used)
+	if err != nil {
+		return snapshot.Envelope{}, err
+	}
+	addition.Device.OverlayAddress = allocated.String()
+	return s.SignDeviceAddition(previous, addition)
+}
+
+// copyProfileACL applies only ACL templates explicitly attached to the
+// profile. It refuses a missing template or a template sourced from a device
+// outside the profile, preventing membership changes from inheriting unrelated
+// access. Empty ACLRuleIDs remain default-deny.
+func copyProfileACL(existing []snapshot.ACLRule, destination *[]snapshot.ACLRule, profileID string, ruleIDs, previousMembers []string, newDeviceID string) error {
+	memberSet := make(map[string]struct{}, len(previousMembers))
+	for _, memberID := range previousMembers {
+		memberSet[memberID] = struct{}{}
+	}
+	existingIDs := make(map[string]struct{}, len(existing))
+	rulesByID := make(map[string]snapshot.ACLRule, len(existing))
+	for _, rule := range existing {
+		existingIDs[rule.ID] = struct{}{}
+		rulesByID[rule.ID] = rule
+	}
+	for _, ruleID := range ruleIDs {
+		rule, ok := rulesByID[ruleID]
+		if !ok {
+			return ErrInvalidSnapshotDiff
+		}
+		if _, ok := memberSet[rule.SourceDeviceID]; !ok {
+			return ErrInvalidSnapshotDiff
+		}
+		copied := rule
+		copied.ID = profileID + "/" + newDeviceID + "/" + ruleID
+		if _, exists := existingIDs[copied.ID]; exists {
+			return ErrInvalidSnapshotDiff
+		}
+		copied.SourceDeviceID = newDeviceID
+		*destination = append(*destination, copied)
+		existingIDs[copied.ID] = struct{}{}
+	}
+	return nil
 }
 
 func validateDeviceAddition(value snapshot.NetworkSnapshot, addition DeviceAddition) error {
@@ -121,7 +181,10 @@ func cloneSnapshot(value snapshot.NetworkSnapshot) snapshot.NetworkSnapshot {
 		copy.Profiles[index] = profile
 		copy.Profiles[index].DeviceIDs = append([]string(nil), profile.DeviceIDs...)
 		copy.Profiles[index].ServiceIDs = append([]string(nil), profile.ServiceIDs...)
+		copy.Profiles[index].ACLRuleIDs = append([]string(nil), profile.ACLRuleIDs...)
 	}
+
 	copy.ACL = append([]snapshot.ACLRule(nil), value.ACL...)
+
 	return copy
 }

@@ -6,5 +6,7 @@ if [ -z "${TEST_DATABASE_URL:-}" ]; then
     exit 2
 fi
 
-docker compose -f deploy/compose.yaml config >/dev/null
+CONTROL_DOMAIN="${CONTROL_DOMAIN:-control.localhost}" \
+RELAY_DOMAIN="${RELAY_DOMAIN:-relay.localhost}" \
+	docker compose -f deploy/compose.yaml config >/dev/null
 TEST_DATABASE_URL="$TEST_DATABASE_URL" go test ./... -run 'Integration|Postgres|Contract' -count=1

@@ -1,4 +1,4 @@
-.PHONY: doctor test race vet lint lint-fix build check verify dev-init dev-up dev-down dev-trust-ca vm-up vm-down integration relay-acceptance acceptance
+.PHONY: doctor test race vet lint lint-fix vulncheck build check verify dev-init dev-up dev-down dev-trust-ca vm-up vm-down integration relay-acceptance acceptance
 
 COMPOSE := docker compose -f deploy/compose.yaml
 
@@ -19,6 +19,9 @@ lint:
 
 lint-fix:
 	golangci-lint run --fix
+
+vulncheck:
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 build:
 	go build ./cmd/...

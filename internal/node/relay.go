@@ -92,6 +92,10 @@ type KernelRelayConfig struct {
 	PeerPublicKey   string
 	AllowedPrefixes []netip.Prefix
 	Routes          []netip.Prefix
+	// EndpointUpdater lets a snapshot reconciler retain ownership of the full
+	// peer set. When set, this relay only publishes its ephemeral local endpoint
+	// and never replaces keys or allowed prefixes itself.
+	EndpointUpdater PeerEndpointUpdater
 }
 
 // ParsePrefixList parses the comma-separated route form used by the thin CLI
@@ -195,6 +199,16 @@ func RunKernelRelay(ctx context.Context, cfg KernelRelayConfig) error {
 	bridgeEndpoint, err := netip.ParseAddrPort(bridgeAddress.String())
 	if err != nil {
 		return fmt.Errorf("parse relay bridge endpoint: %w", err)
+	}
+	if cfg.EndpointUpdater != nil {
+		if err := cfg.EndpointUpdater.SetPeerEndpoint(ctx, cfg.PeerPublicKey, bridgeEndpoint); err != nil {
+			return fmt.Errorf("publish relay endpoint: %w", err)
+		}
+		bridgeErr := bridge.Run(ctx)
+		clearContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = cfg.EndpointUpdater.ClearPeerEndpoint(clearContext, cfg.PeerPublicKey)
+		cancel()
+		return bridgeErr
 	}
 	wireGuardConfig, err := tunnel.BuildWireGuardConfigWithListenPort(cfg.PrivateKey, cfg.ListenPort, []tunnel.PeerConfig{{
 		PublicKey: cfg.PeerPublicKey, Endpoint: bridgeEndpoint, AllowedPrefixes: cfg.AllowedPrefixes, PersistentKeepalive: 25 * time.Second,

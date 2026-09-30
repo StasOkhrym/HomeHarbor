@@ -91,6 +91,9 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 	createVethTopology(t, clientNS, gatewayNS, lanNS)
 	configureTopology(t, clientNS, gatewayNS, lanNS, false)
 	configureWireGuard(t, clientNS, gatewayNS)
+	if err := runInNamespace(lanNS, "ip", "route", "replace", "10.200.0.0/24", "via", "192.168.50.1"); err != nil {
+		t.Fatal(err)
+	}
 	servers := startHTTPServers(t, lanNS)
 	t.Cleanup(func() {
 		for _, server := range servers {
@@ -253,13 +256,17 @@ func startHTTPServers(t *testing.T, namespace string) []*exec.Cmd {
 func waitForHTTP(t *testing.T, namespace, address string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
+	var lastError error
 	for time.Now().Before(deadline) {
-		if curl(namespace, address) == nil {
+		lastError = curl(namespace, address)
+		if lastError == nil {
 			return
 		}
+
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("HTTP service %s was not reachable", address)
+
+	t.Fatalf("HTTP service %s was not reachable: %v", address, lastError)
 }
 
 func curl(namespace, address string) error {

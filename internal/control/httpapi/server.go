@@ -2,10 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"crypto/ed25519"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"html/template"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -18,6 +21,7 @@ import (
 	controlnetwork "github.com/sokhrym/go-tunnels/internal/control/routes"
 	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
 	"github.com/sokhrym/go-tunnels/internal/invite"
+	"github.com/sokhrym/go-tunnels/internal/protocol"
 	"github.com/sokhrym/go-tunnels/internal/snapshot"
 )
 
@@ -56,9 +60,12 @@ type Server struct {
 	invites             InviteService
 	snapshots           SnapshotService
 	snapshotBroadcaster SnapshotBroadcaster
+	companionRoot       ed25519.PublicKey
+	companionChallenges *companionChallengeStore
 	relayIssuer         RelaySessionIssuer
 	relayURL            string
 	relayTTL            time.Duration
+	relayPeerAuthorizer RelayPeerAuthorizer
 	trustedProxy        []netip.Prefix
 }
 
@@ -76,12 +83,25 @@ type RelaySessionIssuer interface {
 	Issue(sessionID, deviceID string, ttl time.Duration) (string, error)
 }
 
+// RelayPeerAuthorizer is evaluated after both device credentials are checked.
+// The composition root can bind ticket issuance to the latest signed topology
+// without making the HTTP package depend on snapshot persistence.
+type RelayPeerAuthorizer func(context.Context, devices.Device, devices.Device) bool
+
 func WithRelaySessionIssuer(issuer RelaySessionIssuer, relayURL string, ttl time.Duration) ServerOption {
 	return func(server *Server) {
 		server.relayIssuer = issuer
 		server.relayURL = strings.TrimRight(relayURL, "/")
 		server.relayTTL = ttl
 	}
+}
+
+// WithRelayPeerAuthorizer adds a policy/topology check for relay tickets.
+// Leaving it unset preserves the lower-level role check used by isolated HTTP
+// tests and legacy deployments; production composition supplies it whenever a
+// trusted snapshot service is configured.
+func WithRelayPeerAuthorizer(authorizer RelayPeerAuthorizer) ServerOption {
+	return func(server *Server) { server.relayPeerAuthorizer = authorizer }
 }
 
 func WithNetworkService(service NetworkService) ServerOption {
@@ -125,7 +145,7 @@ type ServiceCatalog interface {
 type InviteService interface {
 	SubmitProof(context.Context, invite.SignedPermit, invite.Proof) error
 	Get(context.Context, string) (controlinvites.Record, error)
-	ApproveSigned(context.Context, invite.SignedApproval) (controlinvites.Record, error)
+	ApproveSigned(context.Context, invite.SignedApproval) (controlinvites.ActivationResult, error)
 }
 
 func WithInviteService(service InviteService) ServerOption {
@@ -150,6 +170,16 @@ func WithSnapshotService(service SnapshotService) ServerOption {
 
 func WithSnapshotBroadcaster(broadcaster SnapshotBroadcaster) ServerOption {
 	return func(server *Server) { server.snapshotBroadcaster = broadcaster }
+}
+
+// WithCompanionRootKey enables the challenge-bound snapshot read used by the
+// trusted Mac companion. It is separate from browser admin auth because the
+// companion holds the root private key, not a reusable web session.
+func WithCompanionRootKey(publicKey ed25519.PublicKey) ServerOption {
+	return func(server *Server) {
+		server.companionRoot = append(ed25519.PublicKey(nil), publicKey...)
+		server.companionChallenges = newCompanionChallengeStore()
+	}
 }
 
 // WithTrustedProxyCIDRs permits forwarded client addresses only when the
@@ -371,6 +401,10 @@ func (s *Server) issueRelaySession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "device peer role is not allowed")
 		return
 	}
+	if s.relayPeerAuthorizer != nil && !s.relayPeerAuthorizer(r.Context(), source, destination) {
+		writeError(w, http.StatusForbidden, "device peer is not authorized")
+		return
+	}
 	if strings.TrimSpace(input.SessionID) == "" {
 		writeError(w, http.StatusBadRequest, "session_id is required")
 		return
@@ -446,12 +480,15 @@ func (s *Server) approveInvite(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	record, err := s.invites.ApproveSigned(r.Context(), input.Approval)
+	result, err := s.invites.ApproveSigned(r.Context(), input.Approval)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid invite approval")
 		return
 	}
-	writeJSON(w, http.StatusOK, record)
+	// The response contains the credential exactly once. The pending proof and
+	// root approval are deliberately omitted because neither is needed by the
+	// enrolling node after the transaction commits.
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) publishSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -478,10 +515,51 @@ func (s *Server) latestSnapshot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, envelope)
 }
 
+func (s *Server) issueCompanionChallenge(w http.ResponseWriter, r *http.Request) {
+	nonce, expiresAt, err := s.companionChallenges.issue(time.Now().UTC())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "companion challenge unavailable")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"nonce": nonce, "expires_at": expiresAt})
+}
+
+func (s *Server) companionSnapshot(w http.ResponseWriter, r *http.Request) {
+	if s.companionChallenges == nil || len(s.companionRoot) != ed25519.PublicKeySize {
+		writeError(w, http.StatusNotFound, "companion access is not configured")
+		return
+	}
+	nonce := r.Header.Get("X-Go-Tunnels-Companion-Nonce")
+	keyID := r.Header.Get("X-Go-Tunnels-Companion-Key-ID")
+	signature, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-Go-Tunnels-Companion-Signature"))
+	if err != nil || protocol.VerifyCompanionRequest(http.MethodGet, companionSnapshotPath, nonce, keyID, signature, s.companionRoot) != nil || !s.companionChallenges.consume(nonce, time.Now().UTC()) {
+		writeError(w, http.StatusUnauthorized, "invalid companion request")
+		return
+	}
+	envelope, err := s.snapshots.Latest(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "signed snapshot unavailable")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, envelope)
+}
+
 func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return false
+		}
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return false
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
 		var maxBytesError *http.MaxBytesError
 		if errors.As(err, &maxBytesError) {
 			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")

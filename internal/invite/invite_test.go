@@ -1,6 +1,7 @@
 package invite
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
@@ -29,7 +30,7 @@ func TestInviteProofBindsCodeAndDevice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := invite.Proof("device-1", devicePrivate, invite.Code)
+	proof, err := invite.Proof("device-1", devicePrivate, invite.Code, bytes.Repeat([]byte{1}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +69,7 @@ func TestProofRequiresDevicePrivateKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := item.Proof("device-1", devicePrivate, item.Code)
+	proof, err := item.Proof("device-1", devicePrivate, item.Code, bytes.Repeat([]byte{1}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,27 +85,34 @@ func TestProofRejectsEmptyDeviceID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 	item, err := New("home", "family", time.Minute, now, rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	permit, err := SignPermit(item.Permit, rootPrivate, "root-1")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	_, devicePrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := item.Proof("device-1", devicePrivate, item.Code)
+
+	proof, err := item.Proof("device-1", devicePrivate, item.Code, bytes.Repeat([]byte{1}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	proof.DeviceID = ""
+
 	if err := VerifyProof(permit, proof, "family", now); !errors.Is(err, ErrInvalidProof) {
 		t.Fatalf("VerifyProof() error = %v", err)
 	}
+
 	_ = rootPublic
 }
 
@@ -140,7 +148,7 @@ func TestApprovalBindsExactDeviceDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	approval := Approval{Version: Version, InviteID: "invite-1", ProfileID: "family", DeviceID: "phone-1", DevicePublicKey: make([]byte, ed25519.PublicKeySize)}
+	approval := Approval{Version: Version, InviteID: "invite-1", ProfileID: "family", DeviceID: "phone-1", DevicePublicKey: make([]byte, ed25519.PublicKeySize), WireGuardPublicKey: make([]byte, 32)}
 	signed, err := SignApproval(approval, rootPrivate)
 	if err != nil {
 		t.Fatal(err)

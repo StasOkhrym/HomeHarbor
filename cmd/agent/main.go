@@ -51,6 +51,10 @@ func main() {
 	if err == nil {
 		err = state.Save(*statePath)
 	}
+	var snapshotWireGuard *node.SnapshotWireGuardReconciler
+	if err == nil && *coordinationURL != "" && *interfaceName != "" {
+		snapshotWireGuard, err = node.NewSnapshotWireGuardReconciler(*interfaceName, state.DeviceID, state.WireGuard.PrivateKey, uint16(*listenPort))
+	}
 	if err == nil && (*relayURL != "" || *relayTicket != "") {
 		if *relayURL == "" && *relayTicket != "" {
 			err = fmt.Errorf("-relay is required when -relay-ticket is supplied")
@@ -89,7 +93,7 @@ func main() {
 				routePrefixes, parseErr = node.ParsePrefixList(*routes)
 				if parseErr == nil {
 					components = append(components, func(componentContext context.Context) error {
-						return node.RunKernelRelayLoop(componentContext, node.KernelRelayConfig{RelayBridgeConfig: node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress}, InterfaceName: *interfaceName, PrivateKey: state.WireGuard.PrivateKey, ListenPort: uint16(*listenPort), OverlayAddress: *overlayAddress, PeerPublicKey: *peerPublicKey, AllowedPrefixes: allowed, Routes: routePrefixes}, ticketProvider)
+						return node.RunKernelRelayLoop(componentContext, node.KernelRelayConfig{RelayBridgeConfig: node.RelayBridgeConfig{RelayURL: *relayURL, Ticket: *relayTicket, SessionID: *sessionID, DeviceID: state.DeviceID, DestinationDeviceID: *destination, ListenAddress: *bridgeListen, WireGuardAddress: *wireGuardAddress}, InterfaceName: *interfaceName, PrivateKey: state.WireGuard.PrivateKey, ListenPort: uint16(*listenPort), OverlayAddress: *overlayAddress, PeerPublicKey: *peerPublicKey, AllowedPrefixes: allowed, Routes: routePrefixes, EndpointUpdater: snapshotWireGuard}, ticketProvider)
 					})
 				} else {
 					err = parseErr
@@ -116,8 +120,12 @@ func main() {
 				}
 				if err == nil {
 					reconciler := node.NewGatewayReconcilerWithOptions(*interfaceName, state.DeviceID, dnsReconciler, *enableForwarding)
+					var applier node.SnapshotApplier = reconciler
+					if snapshotWireGuard != nil {
+						applier = node.NewCompositeSnapshotApplier(reconciler, snapshotWireGuard)
+					}
 					components = append(components, func(componentContext context.Context) error {
-						return node.RunCoordinationLoop(componentContext, node.CoordinationConfig{URL: *coordinationURL, Credential: state.DeviceCredential, DeviceID: state.DeviceID, NetworkID: *networkID, RootPublicKey: rootPublicKey}, reconciler)
+						return node.RunCoordinationLoop(componentContext, node.CoordinationConfig{URL: *coordinationURL, Credential: state.DeviceCredential, DeviceID: state.DeviceID, NetworkID: *networkID, RootPublicKey: rootPublicKey}, applier)
 					})
 				}
 			}

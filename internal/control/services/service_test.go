@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -43,5 +44,50 @@ func TestProfileRejectsUnknownService(t *testing.T) {
 	service := NewService(NewMemoryStore(), time.Now)
 	if _, err := service.CreateProfile(context.Background(), AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"missing"}}); err == nil {
 		t.Fatal("profile referenced unknown service")
+	}
+}
+
+func TestServiceRejectsUnsafeOptionalURLs(t *testing.T) {
+	cases := []Service{
+		{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://user:password@cloud.example"},
+		{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://cloud.example", NativeURL: "javascript:alert(1)"},
+		{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://cloud.example", HealthURL: "http://cloud.example/health"},
+		{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://cloud.example#fragment"},
+	}
+	for index, item := range cases {
+		if _, err := NewService(NewMemoryStore(), time.Now).Create(context.Background(), item); err == nil {
+			t.Errorf("case %d: unsafe service URL accepted", index)
+		}
+	}
+}
+
+func TestServiceAllowsExplicitNativeDeepLink(t *testing.T) {
+	item, err := NewService(NewMemoryStore(), time.Now).Create(context.Background(), Service{
+		ID: "cloud", Name: "Cloud", Kind: KindNative, URL: "https://cloud.example", NativeURL: "nextcloud://cloud.example",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.NativeURL != "nextcloud://cloud.example" {
+		t.Fatalf("native URL=%q", item.NativeURL)
+	}
+}
+
+func TestProfileRequiresActiveDevicesWhenDeviceValidationIsConfigured(t *testing.T) {
+	service := NewService(NewMemoryStore(), time.Now, WithDeviceActiveChecker(func(_ context.Context, id string) (bool, error) {
+		return id == "active-phone", nil
+	}))
+	if _, err := service.Create(context.Background(), Service{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://cloud.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateProfile(context.Background(), AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}, DeviceIDs: []string{"revoked-phone"}}); !errors.Is(err, ErrDeviceNotAllowed) {
+		t.Fatalf("revoked device error=%v", err)
+	}
+	profile, err := service.CreateProfile(context.Background(), AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}, DeviceIDs: []string{"active-phone"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profile.DeviceIDs) != 1 || profile.DeviceIDs[0] != "active-phone" {
+		t.Fatalf("profile=%#v", profile)
 	}
 }

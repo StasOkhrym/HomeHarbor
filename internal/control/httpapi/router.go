@@ -15,6 +15,8 @@ import (
 
 const maxRequestBodyBytes int64 = 1 << 20
 
+const companionSnapshotPath = "/api/v1/coordination/snapshot/companion"
+
 func NewRouter(server *Server) http.Handler {
 	router := chi.NewRouter()
 	router.Use(requestIDMiddleware)
@@ -96,6 +98,10 @@ func NewRouter(server *Server) http.Handler {
 			if server.snapshots != nil {
 				coordination.Post("/snapshots", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.publishSnapshot)).ServeHTTP)
 				coordination.Get("/snapshot", server.requireAdmin(http.HandlerFunc(server.latestSnapshot)).ServeHTTP)
+				if server.companionChallenges != nil {
+					coordination.Get("/snapshot/companion-challenge", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.issueCompanionChallenge)).ServeHTTP)
+					coordination.Get("/snapshot/companion", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.companionSnapshot)).ServeHTTP)
+				}
 			}
 		})
 		api.Route("/relay-sessions", func(relaySessions chi.Router) {
@@ -116,6 +122,10 @@ func NewRouter(server *Server) http.Handler {
 		if server.snapshots != nil {
 			api.Post("/coordination/snapshots", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.publishSnapshot)).ServeHTTP)
 			api.Get("/coordination/snapshot", server.requireAdmin(http.HandlerFunc(server.latestSnapshot)).ServeHTTP)
+			if server.companionChallenges != nil {
+				api.Get("/coordination/snapshot/companion-challenge", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.issueCompanionChallenge)).ServeHTTP)
+				api.Get("/coordination/snapshot/companion", server.deviceLimiter.Middleware(server.clientKey)(http.HandlerFunc(server.companionSnapshot)).ServeHTTP)
+			}
 		}
 		api.Get("/devices", server.requireAdmin(http.HandlerFunc(server.listDevices)).ServeHTTP)
 		api.Delete("/devices/{id}", server.requireAdmin(http.HandlerFunc(server.revokeDevice)).ServeHTTP)

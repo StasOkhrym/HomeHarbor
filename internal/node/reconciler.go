@@ -23,6 +23,60 @@ type GatewayReconciler struct {
 	forwarding    bool
 }
 
+// ClientReconciler owns only the local WireGuard link address and routes. It
+// never enables forwarding or installs nftables rules: a client must consume
+// gateway routes, not become a transit router for the host network.
+type ClientReconciler struct {
+	interfaceName string
+	deviceID      string
+	ensure        func(context.Context, string, string, []netip.Prefix) error
+}
+
+// NewClientReconciler creates the production client network reconciler.
+func NewClientReconciler(interfaceName, deviceID string) *ClientReconciler {
+	return NewClientReconcilerWithEnsurer(interfaceName, deviceID, tunnel.EnsureLinuxInterface)
+}
+
+// NewClientReconcilerWithEnsurer keeps command execution behind a narrow seam
+// so snapshot selection can be tested without CAP_NET_ADMIN or a Linux host.
+func NewClientReconcilerWithEnsurer(interfaceName, deviceID string, ensure func(context.Context, string, string, []netip.Prefix) error) *ClientReconciler {
+	return &ClientReconciler{interfaceName: interfaceName, deviceID: deviceID, ensure: ensure}
+}
+
+// Apply reconciles the client's overlay address and every approved LAN route.
+// Route validation happens before the command boundary, so a malformed signed
+// snapshot cannot partially change the local interface.
+func (r *ClientReconciler) Apply(ctx context.Context, value snapshot.NetworkSnapshot) error {
+	if r == nil || r.interfaceName == "" || r.deviceID == "" || r.ensure == nil {
+		return errors.New("client reconciler is not configured")
+	}
+	var local *snapshot.Device
+	for index := range value.Devices {
+		if value.Devices[index].ID == r.deviceID {
+			local = &value.Devices[index]
+			break
+		}
+	}
+	if local == nil {
+		return fmt.Errorf("client device %s is missing from snapshot", r.deviceID)
+	}
+	if local.Role != "client" {
+		return fmt.Errorf("device %s is not a client", r.deviceID)
+	}
+	if _, err := netip.ParsePrefix(local.OverlayAddress); err != nil {
+		return fmt.Errorf("client overlay address: %w", err)
+	}
+	routes := make([]netip.Prefix, 0, len(value.Routes))
+	for _, route := range value.Routes {
+		prefix, err := netip.ParsePrefix(route.Prefix)
+		if err != nil || !prefix.IsValid() || prefix.Bits() == 0 {
+			return fmt.Errorf("route %s has invalid non-default prefix", route.ID)
+		}
+		routes = append(routes, prefix)
+	}
+	return r.ensure(ctx, r.interfaceName, local.OverlayAddress, routes)
+}
+
 // NewGatewayReconciler composes firewall and optional split-DNS ownership.
 // DNS is applied first so a failed nft transaction leaves the node retryable;
 // the next snapshot attempt can repeat the same DNS state and policy revision.
