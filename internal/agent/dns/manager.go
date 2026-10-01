@@ -143,7 +143,8 @@ func (m *Manager) Close(ctx context.Context) error {
 
 // ValidateSettings is the pure preparation boundary shared by snapshot owners.
 func ValidateSettings(resolver netip.Addr, suffixes []string) ([]string, error) {
-	if !resolver.IsValid() || resolver.IsUnspecified() || resolver.IsMulticast() || resolver.Is4In6() || resolver.Zone() != "" {
+	if !resolver.IsValid() || resolver.IsUnspecified() || resolver.IsMulticast() || resolver.Is4In6() ||
+		resolver.Zone() != "" {
 		return nil, errors.New("a concrete DNS resolver address is required")
 	}
 	if len(suffixes) == 0 {
@@ -157,7 +158,9 @@ func canonicalSuffixes(values []string) ([]string, error) {
 	result := make([]string, 0, len(values))
 	for _, value := range values {
 		value = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
-		if value == "" || strings.ContainsAny(value, "/\\:,@;\"'") || strings.HasPrefix(value, ".") || strings.HasPrefix(value, "-") || strings.HasSuffix(value, "-") {
+		if value == "" || strings.ContainsAny(value, "/\\:,@;\"'") || strings.HasPrefix(value, ".") ||
+			strings.HasPrefix(value, "-") ||
+			strings.HasSuffix(value, "-") {
 			return nil, fmt.Errorf("invalid DNS suffix %q", value)
 		}
 		for _, label := range strings.Split(value, ".") {

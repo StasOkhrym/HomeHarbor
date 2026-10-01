@@ -18,7 +18,8 @@ func TestActivationRoutesUseExplicitHandlers(t *testing.T) {
 			}
 			server := NewServer(nil, nil, WithActivationHandlers(handler, handler))
 			response := httptest.NewRecorder()
-			server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/invites/invite-1/"+action, nil))
+			server.Handler().
+				ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/invites/invite-1/"+action, nil))
 			if response.Code != http.StatusNoContent || !called {
 				t.Fatalf("explicit route missing: status=%d called=%v", response.Code, called)
 			}

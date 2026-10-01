@@ -18,11 +18,23 @@ func Enroll(ctx context.Context, httpClient *http.Client, controlURL, token, nam
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	body, err := json.Marshal(devices.EnrollRequest{Token: token, Name: name, IdentityPublicKey: state.IdentityPublicKey, WireGuardPublicKey: state.WireGuard.PublicKey})
+	body, err := json.Marshal(
+		devices.EnrollRequest{
+			Token:              token,
+			Name:               name,
+			IdentityPublicKey:  state.IdentityPublicKey,
+			WireGuardPublicKey: state.WireGuard.PublicKey,
+		},
+	)
 	if err != nil {
 		return err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(controlURL, "/")+"/api/v1/enroll", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		strings.TrimRight(controlURL, "/")+"/api/v1/enroll",
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return err
 	}
@@ -57,7 +69,12 @@ func RefreshCredential(ctx context.Context, httpClient *http.Client, controlURL 
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(controlURL, "/")+"/api/v1/devices/credentials/rotate", nil)
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		strings.TrimRight(controlURL, "/")+"/api/v1/devices/credentials/rotate",
+		nil,
+	)
 	if err != nil {
 		return err
 	}
@@ -99,8 +116,13 @@ type RelaySession struct {
 // IssueRelaySession asks control for a ticket for the current device. The
 // destination is checked by control against active device state; the node does
 // not construct or sign relay credentials locally.
-func IssueRelaySession(ctx context.Context, httpClient *http.Client, controlURL, credential, sessionID, destinationDeviceID string) (RelaySession, error) {
-	if strings.TrimSpace(credential) == "" || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(destinationDeviceID) == "" {
+func IssueRelaySession(
+	ctx context.Context,
+	httpClient *http.Client,
+	controlURL, credential, sessionID, destinationDeviceID string,
+) (RelaySession, error) {
+	if strings.TrimSpace(credential) == "" || strings.TrimSpace(sessionID) == "" ||
+		strings.TrimSpace(destinationDeviceID) == "" {
 		return RelaySession{}, errors.New("credential, session, and destination device are required")
 	}
 	if httpClient == nil {
@@ -114,7 +136,12 @@ func IssueRelaySession(ctx context.Context, httpClient *http.Client, controlURL,
 	if err != nil {
 		return RelaySession{}, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(controlURL, "/")+"/api/v1/relay-sessions", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		strings.TrimRight(controlURL, "/")+"/api/v1/relay-sessions",
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return RelaySession{}, err
 	}
@@ -132,7 +159,12 @@ func IssueRelaySession(ctx context.Context, httpClient *http.Client, controlURL,
 	if err := json.NewDecoder(response.Body).Decode(&session); err != nil {
 		return RelaySession{}, err
 	}
-	if session.Ticket == "" || !strings.HasPrefix(session.RelayURL, "wss://") || !strings.HasSuffix(session.RelayURL, "/relay/udp/v2") || session.RelayTransport != protocol.CapabilityUDPPairV2 || session.RelayUDPAddress != "" || session.SessionID != sessionID || session.DestinationDeviceID != destinationDeviceID {
+	if session.Ticket == "" || !strings.HasPrefix(session.RelayURL, "wss://") ||
+		!strings.HasSuffix(session.RelayURL, "/relay/udp/v2") ||
+		session.RelayTransport != protocol.CapabilityUDPPairV2 ||
+		session.RelayUDPAddress != "" ||
+		session.SessionID != sessionID ||
+		session.DestinationDeviceID != destinationDeviceID {
 		return RelaySession{}, errors.New("control plane returned incomplete relay session")
 	}
 	return session, nil

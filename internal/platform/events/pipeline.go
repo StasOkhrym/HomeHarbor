@@ -93,7 +93,19 @@ func (p *AuditPipeline) Run(ctx context.Context) error {
 			if err == nil {
 				writeCtx, cancel := context.WithCancel(delivery.ctx)
 				stop := context.AfterFunc(ctx, cancel)
-				err = p.sink.Write(writeCtx, audit.Event{ID: msg.UUID, OccurredAt: event.OccurredAt, ActorType: "device", ActorID: event.AggregateID, Action: event.Type, TargetType: "device", TargetID: event.AggregateID, Metadata: map[string]any{}})
+				err = p.sink.Write(
+					writeCtx,
+					audit.Event{
+						ID:         msg.UUID,
+						OccurredAt: event.OccurredAt,
+						ActorType:  "device",
+						ActorID:    event.AggregateID,
+						Action:     event.Type,
+						TargetType: "device",
+						TargetID:   event.AggregateID,
+						Metadata:   map[string]any{},
+					},
+				)
 				stop()
 				cancel()
 			}

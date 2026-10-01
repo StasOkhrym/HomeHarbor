@@ -31,7 +31,13 @@ type stagedGateway interface {
 
 func TestGatewayStagedCommitKeepsGuardAcrossOtherOwnerFailure(t *testing.T) {
 	var live string
-	r := NewGatewayReconcilerWithEnsurer("wg0", "gateway", nil, false, func(context.Context, string, string, []netip.Prefix) error { return nil })
+	r := NewGatewayReconcilerWithEnsurer(
+		"wg0",
+		"gateway",
+		nil,
+		false,
+		func(context.Context, string, string, []netip.Prefix) error { return nil },
+	)
 	r.policies = nft.NewApplierWithRunner("wg0", nil, func(_ context.Context, s string) error { live = s; return nil })
 	stage, ok := any(r).(stagedGateway)
 	if !ok {
@@ -49,7 +55,8 @@ func TestGatewayStagedCommitKeepsGuardAcrossOtherOwnerFailure(t *testing.T) {
 		if err := stage.ApplyPrepared(ctx, v); err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(live, " accept comment") || !strings.Contains(live, "iifname \"wg0\" drop") || stage.Revision() != 0 {
+		if strings.Contains(live, " accept comment") || !strings.Contains(live, "iifname \"wg0\" drop") ||
+			stage.Revision() != 0 {
 			t.Fatalf("partial revision exposed traffic: rev=%d script=%s", stage.Revision(), live)
 		}
 		// First attempt models a later WireGuard failure: parent returns
@@ -66,15 +73,21 @@ func TestGatewayStagedCommitKeepsGuardAcrossOtherOwnerFailure(t *testing.T) {
 func TestGatewayGuardBeforeEnsureFailureAndRevokedGateway(t *testing.T) {
 	var live string
 	fail := true
-	r := NewGatewayReconcilerWithEnsurer("wg0", "gateway", nil, false, func(context.Context, string, string, []netip.Prefix) error {
-		if !strings.Contains(live, "iifname \"wg0\" drop") || strings.Contains(live, " accept comment") {
-			t.Error("interface opened without deny guard")
-		}
-		if fail {
-			return errors.New("route failure")
-		}
-		return nil
-	})
+	r := NewGatewayReconcilerWithEnsurer(
+		"wg0",
+		"gateway",
+		nil,
+		false,
+		func(context.Context, string, string, []netip.Prefix) error {
+			if !strings.Contains(live, "iifname \"wg0\" drop") || strings.Contains(live, " accept comment") {
+				t.Error("interface opened without deny guard")
+			}
+			if fail {
+				return errors.New("route failure")
+			}
+			return nil
+		},
+	)
 	r.policies = nft.NewApplierWithRunner("wg0", nil, func(_ context.Context, s string) error { live = s; return nil })
 	r.routes.run = func(context.Context, ...string) error { return nil }
 	v := gatewaySnapshotForReconciler()
@@ -114,34 +127,58 @@ func TestGatewayReconcilerGuardsBeforeInterfaceAndRetriesSameRevision(t *testing
 	events := []string{}
 	dnsFailure := errors.New("resolver temporarily unavailable")
 	dnsApplier := &orderedDNSApplier{events: &events, err: dnsFailure}
-	reconciler := NewGatewayReconcilerWithEnsurer("wg0", "gateway", dnsApplier, false, func(context.Context, string, string, []netip.Prefix) error {
-		events = append(events, "interface")
-		return nil
-	})
+	reconciler := NewGatewayReconcilerWithEnsurer(
+		"wg0",
+		"gateway",
+		dnsApplier,
+		false,
+		func(context.Context, string, string, []netip.Prefix) error {
+			events = append(events, "interface")
+			return nil
+		},
+	)
 	nftCalls := 0
 	reconciler.policies = nft.NewApplierWithRunner("wg0", nil, func(context.Context, string) error {
 		nftCalls++
 		events = append(events, "nft")
+
 		return nil
 	})
+
 	value := gatewaySnapshotForReconciler()
 
 	if err := reconciler.Apply(context.Background(), value); !errors.Is(err, dnsFailure) {
 		t.Fatalf("first Apply() error=%v, want %v", err, dnsFailure)
 	}
+
 	if got, want := events, []string{"nft", "interface", "dns"}; !equalStrings(got, want) {
 		t.Fatalf("first event order=%v, want=%v", got, want)
 	}
+
 	if reconciler.policies.Revision() != 0 {
 		t.Fatal("firewall revision advanced despite failed DNS")
 	}
+
 	if err := reconciler.Apply(context.Background(), value); err != nil {
 		t.Fatalf("retry Apply() error=%v", err)
 	}
+
 	if nftCalls != 3 {
 		t.Fatalf("nft calls=%d, want guard, retry guard, commit", nftCalls)
 	}
-	if got, want := events, []string{"nft", "interface", "dns", "nft", "interface", "dns", "nft"}; !equalStrings(got, want) {
+
+	if got, want := events, []string{
+		"nft",
+		"interface",
+		"dns",
+		"nft",
+		"interface",
+		"dns",
+		"nft",
+	}; !equalStrings(
+		got,
+		want,
+	) {
 		t.Fatalf("retry event order=%v, want=%v", got, want)
 	}
 }
@@ -160,10 +197,23 @@ func TestGatewayMalformedStateDoesNotMutate(t *testing.T) {
 	} {
 		t.Run(change.name, func(t *testing.T) {
 			calls := 0
-			r := NewGatewayReconcilerWithEnsurer("wg0", "gateway", nil, false, func(context.Context, string, string, []netip.Prefix) error { calls++; return nil })
-			r.policies = nft.NewApplierWithRunner("wg0", nil, func(context.Context, string) error { calls++; return nil })
+			r := NewGatewayReconcilerWithEnsurer(
+				"wg0",
+				"gateway",
+				nil,
+				false,
+				func(context.Context, string, string, []netip.Prefix) error { calls++; return nil },
+			)
+			r.policies = nft.NewApplierWithRunner(
+				"wg0",
+				nil,
+				func(context.Context, string) error { calls++; return nil },
+			)
+
 			v := gatewaySnapshotForReconciler()
+
 			change.mutate(&v)
+
 			if err := r.Apply(context.Background(), v); err == nil || calls != 0 {
 				t.Fatalf("malformed snapshot: err=%v mutation calls=%d", err, calls)
 			}
@@ -174,7 +224,13 @@ func TestGatewayMalformedStateDoesNotMutate(t *testing.T) {
 func TestGatewayFinalFirewallFailureLeavesGuardAndRetries(t *testing.T) {
 	var live string
 	commitFailure := true
-	r := NewGatewayReconcilerWithEnsurer("wg0", "gateway", nil, false, func(context.Context, string, string, []netip.Prefix) error { return nil })
+	r := NewGatewayReconcilerWithEnsurer(
+		"wg0",
+		"gateway",
+		nil,
+		false,
+		func(context.Context, string, string, []netip.Prefix) error { return nil },
+	)
 	r.policies = nft.NewApplierWithRunner("wg0", nil, func(_ context.Context, s string) error {
 		if commitFailure && strings.Contains(s, " accept comment") {
 			return errors.New("nft commit failed")
@@ -222,8 +278,25 @@ func gatewaySnapshotForReconciler() snapshot.NetworkSnapshot {
 			{ID: "client", Role: "client", OverlayAddress: "10.200.0.2/32"},
 		},
 		Gateways: []snapshot.Gateway{{DeviceID: "gateway", Name: "Home"}},
-		Routes:   []snapshot.Route{{ID: "lan", GatewayID: "gateway", Prefix: "192.168.50.0/24", Resolver: "192.168.50.2", DomainSuffix: "home.arpa"}},
-		ACL:      []snapshot.ACLRule{{ID: "allow-http", SourceDeviceID: "client", Destination: "192.168.50.2/32", Protocol: "tcp", PortFrom: 8080, PortTo: 8080}},
+		Routes: []snapshot.Route{
+			{
+				ID:           "lan",
+				GatewayID:    "gateway",
+				Prefix:       "192.168.50.0/24",
+				Resolver:     "192.168.50.2",
+				DomainSuffix: "home.arpa",
+			},
+		},
+		ACL: []snapshot.ACLRule{
+			{
+				ID:             "allow-http",
+				SourceDeviceID: "client",
+				Destination:    "192.168.50.2/32",
+				Protocol:       "tcp",
+				PortFrom:       8080,
+				PortTo:         8080,
+			},
+		},
 	}
 }
 

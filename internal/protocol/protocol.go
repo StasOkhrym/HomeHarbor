@@ -40,10 +40,17 @@ type ProtocolError struct {
 func (e *ProtocolError) Error() string { return e.Code + ": " + e.Message }
 func Negotiate(hello Hello) (Negotiated, *ProtocolError) {
 	if !slices.Contains(hello.Versions, CurrentVersion) {
-		return Negotiated{}, &ProtocolError{Code: ErrorUpgradeRequired, Message: "client does not support protocol version 1"}
+		return Negotiated{}, &ProtocolError{
+			Code:    ErrorUpgradeRequired,
+			Message: "client does not support protocol version 1",
+		}
 	}
-	if !slices.Contains(hello.Capabilities, CapabilityRelay) && !slices.Contains(hello.Capabilities, CapabilityUDPPairV2) {
-		return Negotiated{}, &ProtocolError{Code: ErrorUpgradeRequired, Message: "a supported relay capability is required"}
+	if !slices.Contains(hello.Capabilities, CapabilityRelay) &&
+		!slices.Contains(hello.Capabilities, CapabilityUDPPairV2) {
+		return Negotiated{}, &ProtocolError{
+			Code:    ErrorUpgradeRequired,
+			Message: "a supported relay capability is required",
+		}
 	}
 	supported := []string{}
 	for _, c := range []string{CapabilityRelay, CapabilityUDPPairV2, CapabilityDirectUDP, CapabilitySplitDNS} {

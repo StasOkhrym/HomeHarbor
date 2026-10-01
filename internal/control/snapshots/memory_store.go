@@ -26,7 +26,13 @@ func cloneEnvelope(value snapshot.Envelope) snapshot.Envelope {
 	return value
 }
 
-func (s *MemoryStore) Append(_ context.Context, networkID string, expectedRevision uint64, expectedHash []byte, envelope snapshot.Envelope) error {
+func (s *MemoryStore) Append(
+	_ context.Context,
+	networkID string,
+	expectedRevision uint64,
+	expectedHash []byte,
+	envelope snapshot.Envelope,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	page := s.history[networkID]
@@ -66,7 +72,12 @@ func (s *MemoryStore) Latest(_ context.Context, networkID string) (snapshot.Enve
 	return cloneEnvelope(page[len(page)-1]), nil
 }
 
-func (s *MemoryStore) History(_ context.Context, networkID string, afterRevision uint64, limit int) ([]snapshot.Envelope, error) {
+func (s *MemoryStore) History(
+	_ context.Context,
+	networkID string,
+	afterRevision uint64,
+	limit int,
+) ([]snapshot.Envelope, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if limit < 1 || limit > MaxHistoryPageSize+1 {

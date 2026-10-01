@@ -27,13 +27,31 @@ func newUDPV2Bridge(cfg RelayBridgeConfig) (*relay.UDPPairV2Bridge, error) {
 	if err != nil {
 		return nil, err
 	}
-	return relay.NewUDPPairV2Bridge(relay.UDPPairV2BridgeConfig{ControlURL: cfg.RelayURL, Ticket: cfg.Ticket, SessionID: cfg.SessionID, DeviceID: cfg.DeviceID, DestinationDeviceID: cfg.DestinationDeviceID, ListenAddress: listen, WireGuardAddress: wg, HTTPClient: cfg.RelayHTTPClient, OnObservedEndpoint: cfg.OnObservedEndpoint})
+	return relay.NewUDPPairV2Bridge(
+		relay.UDPPairV2BridgeConfig{
+			ControlURL:          cfg.RelayURL,
+			Ticket:              cfg.Ticket,
+			SessionID:           cfg.SessionID,
+			DeviceID:            cfg.DeviceID,
+			DestinationDeviceID: cfg.DestinationDeviceID,
+			ListenAddress:       listen,
+			WireGuardAddress:    wg,
+			HTTPClient:          cfg.RelayHTTPClient,
+			OnObservedEndpoint:  cfg.OnObservedEndpoint,
+		},
+	)
 }
 
 // runUDPV2Owner retains the local endpoint through admission retries and
 // renewal outages. It owns the renewal worker and awaits it before returning.
 // A credential's lifetime schedules authentication; it never bounds Run.
-func runUDPV2Owner(ctx context.Context, cfg RelayBridgeConfig, b *relay.UDPPairV2Bridge, provider RelayTicketProvider, run func(context.Context) error) error {
+func runUDPV2Owner(
+	ctx context.Context,
+	cfg RelayBridgeConfig,
+	b *relay.UDPPairV2Bridge,
+	provider RelayTicketProvider,
+	run func(context.Context) error,
+) error {
 	defer func() { _ = b.Close() }()
 	backoff := time.Second
 	for {

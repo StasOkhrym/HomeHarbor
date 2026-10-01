@@ -59,5 +59,10 @@ func DecodePacket(data []byte) (Packet, error) {
 	if len(data)-offset > maxPacketPayload {
 		return Packet{}, errors.New("relay packet payload too large")
 	}
-	return Packet{SessionID: values[0], SourceDeviceID: values[1], DestinationDeviceID: values[2], Payload: data[offset:]}, nil
+	return Packet{
+		SessionID:           values[0],
+		SourceDeviceID:      values[1],
+		DestinationDeviceID: values[2],
+		Payload:             data[offset:],
+	}, nil
 }

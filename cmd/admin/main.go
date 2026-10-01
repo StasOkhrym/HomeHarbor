@@ -86,10 +86,17 @@ func initSnapshot(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := (companion.RemoteApprover{Endpoint: *endpoint}).PublishInitialSnapshot(context.Background(), envelope); err != nil {
+	if err := (companion.RemoteApprover{Endpoint: *endpoint}).PublishInitialSnapshot(
+		context.Background(),
+		envelope,
+	); err != nil {
 		return err
 	}
-	fmt.Printf("initial snapshot published: network=%s revision=1 hash=%s\n", manifest.NetworkID, base64.RawURLEncoding.EncodeToString(envelope.Hash))
+	fmt.Printf(
+		"initial snapshot published: network=%s revision=1 hash=%s\n",
+		manifest.NetworkID,
+		base64.RawURLEncoding.EncodeToString(envelope.Hash),
+	)
 	return nil
 }
 
@@ -192,7 +199,12 @@ func approveInvite(args []string) error {
 	if err != nil {
 		return err
 	}
-	return (companion.RemoteApprover{Endpoint: *endpoint, Attempts: attempts}).Approve(context.Background(), *inviteID, strings.TrimSpace(*code), root)
+	return (companion.RemoteApprover{Endpoint: *endpoint, Attempts: attempts}).Approve(
+		context.Background(),
+		*inviteID,
+		strings.TrimSpace(*code),
+		root,
+	)
 }
 
 func publishInviteSnapshot(args []string) error {
@@ -231,7 +243,11 @@ func publishInviteSnapshot(args []string) error {
 	if err != nil {
 		return err
 	}
-	return (companion.RemoteApprover{Endpoint: *endpoint, KeyID: *keyID, OverlayPool: pool}).PublishSnapshot(context.Background(), strings.TrimSpace(*inviteID), root)
+	return (companion.RemoteApprover{Endpoint: *endpoint, KeyID: *keyID, OverlayPool: pool}).PublishSnapshot(
+		context.Background(),
+		strings.TrimSpace(*inviteID),
+		root,
+	)
 }
 
 func revokeDeviceSnapshot(args []string) error {
@@ -264,7 +280,11 @@ func revokeDeviceSnapshot(args []string) error {
 	if err != nil {
 		return err
 	}
-	return (companion.RemoteApprover{Endpoint: *endpoint, KeyID: *keyID}).PublishDeviceRemoval(context.Background(), strings.TrimSpace(*deviceID), root)
+	return (companion.RemoteApprover{Endpoint: *endpoint, KeyID: *keyID}).PublishDeviceRemoval(
+		context.Background(),
+		strings.TrimSpace(*deviceID),
+		root,
+	)
 }
 
 func loadAdminConfig(path string) (platformconfig.Admin, error) {
@@ -333,5 +353,8 @@ func readPassphrase(path string) (string, error) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: admin init-root|init-snapshot|invite|approve|publish-snapshot|revoke-device [flags]")
+	fmt.Fprintln(
+		os.Stderr,
+		"usage: admin init-root|init-snapshot|invite|approve|publish-snapshot|revoke-device [flags]",
+	)
 }

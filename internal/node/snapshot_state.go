@@ -50,7 +50,11 @@ func loadSnapshotState(path string, root ed25519.PublicKey, networkID string) (s
 	return envelope, nil
 }
 
-func restoreSnapshotCursor(ctx context.Context, cfg CoordinationConfig, applier SnapshotApplier) (coordinationCursor, error) {
+func restoreSnapshotCursor(
+	ctx context.Context,
+	cfg CoordinationConfig,
+	applier SnapshotApplier,
+) (coordinationCursor, error) {
 	if cfg.StatePath == "" {
 		return coordinationCursor{}, nil
 	}

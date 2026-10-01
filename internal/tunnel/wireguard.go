@@ -24,7 +24,11 @@ func BuildWireGuardConfig(privateKey string, peers []PeerConfig) (wgtypes.Config
 // BuildWireGuardConfigWithListenPort creates the kernel configuration without
 // applying it. Keeping construction pure lets snapshot reconciliation validate
 // every key, endpoint, and allowed prefix before changing the live interface.
-func BuildWireGuardConfigWithListenPort(privateKey string, listenPort uint16, peers []PeerConfig) (wgtypes.Config, error) {
+func BuildWireGuardConfigWithListenPort(
+	privateKey string,
+	listenPort uint16,
+	peers []PeerConfig,
+) (wgtypes.Config, error) {
 	private, err := wgtypes.ParseKey(privateKey)
 	if err != nil {
 		return wgtypes.Config{}, fmt.Errorf("parse private key: %w", err)
@@ -47,11 +51,25 @@ func BuildWireGuardConfigWithListenPort(privateKey string, listenPort uint16, pe
 			}
 			bits := prefix.Bits()
 			address := prefix.Addr()
-			allowed = append(allowed, net.IPNet{IP: net.IP(address.AsSlice()), Mask: net.CIDRMask(bits, address.BitLen())})
+			allowed = append(
+				allowed,
+				net.IPNet{IP: net.IP(address.AsSlice()), Mask: net.CIDRMask(bits, address.BitLen())},
+			)
 		}
 		endpoint := net.UDPAddrFromAddrPort(peer.Endpoint)
 		keepalive := peer.PersistentKeepalive
-		config.Peers = append(config.Peers, wgtypes.PeerConfig{PublicKey: public, Remove: false, UpdateOnly: false, Endpoint: endpoint, PersistentKeepaliveInterval: &keepalive, ReplaceAllowedIPs: replace, AllowedIPs: allowed})
+		config.Peers = append(
+			config.Peers,
+			wgtypes.PeerConfig{
+				PublicKey:                   public,
+				Remove:                      false,
+				UpdateOnly:                  false,
+				Endpoint:                    endpoint,
+				PersistentKeepaliveInterval: &keepalive,
+				ReplaceAllowedIPs:           replace,
+				AllowedIPs:                  allowed,
+			},
+		)
 	}
 	return config, nil
 }

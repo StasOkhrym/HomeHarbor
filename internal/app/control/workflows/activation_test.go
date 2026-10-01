@@ -36,13 +36,36 @@ func TestClaimProofBindsInviteDeviceNetworkAndOneTimeChallenge(t *testing.T) {
 	root, private, _ := ed25519.GenerateKey(rand.Reader)
 	device, devicePrivate, _ := ed25519.GenerateKey(rand.Reader)
 	now := time.Now().UTC()
-	r := invites.Record{InviteID: "invite", ProfileID: "family", DeviceID: "linux", DevicePublic: device, WireGuardPublicKey: bytes.Repeat([]byte{7}, 32), Status: invites.StatusApproved}
+	r := invites.Record{
+		InviteID:           "invite",
+		ProfileID:          "family",
+		DeviceID:           "linux",
+		DevicePublic:       device,
+		WireGuardPublicKey: bytes.Repeat([]byte{7}, 32),
+		Status:             invites.StatusApproved,
+	}
 	store := invites.NewMemoryStore()
 	if err := store.Save(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	snap := &latest{}
-	snap.envelope, _ = snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1, Devices: []snapshot.Device{{ID: "linux", Role: "client", IdentityPublicKey: base64.RawURLEncoding.EncodeToString(device), WireGuardPublicKey: base64.StdEncoding.EncodeToString(r.WireGuardPublicKey)}}, Profiles: []snapshot.AccessProfile{{ID: "family", Name: "Family", DeviceIDs: []string{"linux"}}}}, private, "root-1")
+	snap.envelope, _ = snapshot.Sign(
+		snapshot.NetworkSnapshot{
+			NetworkID: "home",
+			Revision:  1,
+			Devices: []snapshot.Device{
+				{
+					ID:                 "linux",
+					Role:               "client",
+					IdentityPublicKey:  base64.RawURLEncoding.EncodeToString(device),
+					WireGuardPublicKey: base64.StdEncoding.EncodeToString(r.WireGuardPublicKey),
+				},
+			},
+			Profiles: []snapshot.AccessProfile{{ID: "family", Name: "Family", DeviceIDs: []string{"linux"}}},
+		},
+		private,
+		"root-1",
+	)
 	security := &challenges{values: map[string][]byte{}}
 	// Proof validation happens before a credential transaction is opened.
 	s := workflows.NewActivation(nil, store, snap, security, root, "home", func() time.Time { return now }, rand.Reader)
@@ -97,12 +120,31 @@ func TestChallengeRequiresExactRootSignedSnapshot(t *testing.T) {
 	otherRoot, otherPrivate, _ := ed25519.GenerateKey(rand.Reader)
 	_ = otherRoot
 	device, _, _ := ed25519.GenerateKey(rand.Reader)
-	r := invites.Record{InviteID: "i", ProfileID: "p", DeviceID: "d", DevicePublic: device, WireGuardPublicKey: bytes.Repeat([]byte{4}, 32), Status: invites.StatusApproved}
+	r := invites.Record{
+		InviteID:           "i",
+		ProfileID:          "p",
+		DeviceID:           "d",
+		DevicePublic:       device,
+		WireGuardPublicKey: bytes.Repeat([]byte{4}, 32),
+		Status:             invites.StatusApproved,
+	}
 	store := invites.NewMemoryStore()
 	_ = store.Save(ctx, r)
 	for _, kind := range []string{"unsigned", "wrong-root", "wrong-network", "wrong-wg", "wrong-identity", "wrong-profile", "missing-device", "pending"} {
 		t.Run(kind, func(t *testing.T) {
-			value := snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1, Devices: []snapshot.Device{{ID: "d", Role: "client", IdentityPublicKey: base64.RawURLEncoding.EncodeToString(device), WireGuardPublicKey: base64.StdEncoding.EncodeToString(r.WireGuardPublicKey)}}, Profiles: []snapshot.AccessProfile{{ID: "p", Name: "Profile", DeviceIDs: []string{"d"}}}}
+			value := snapshot.NetworkSnapshot{
+				NetworkID: "home",
+				Revision:  1,
+				Devices: []snapshot.Device{
+					{
+						ID:                 "d",
+						Role:               "client",
+						IdentityPublicKey:  base64.RawURLEncoding.EncodeToString(device),
+						WireGuardPublicKey: base64.StdEncoding.EncodeToString(r.WireGuardPublicKey),
+					},
+				},
+				Profiles: []snapshot.AccessProfile{{ID: "p", Name: "Profile", DeviceIDs: []string{"d"}}},
+			}
 			key := private
 			switch kind {
 			case "wrong-root":
@@ -131,7 +173,16 @@ func TestChallengeRequiresExactRootSignedSnapshot(t *testing.T) {
 			if kind == "unsigned" {
 				envelope.Signature = nil
 			}
-			s := workflows.NewActivation(nil, store, &latest{envelope}, &challenges{values: map[string][]byte{}}, root, "home", nil, nil)
+			s := workflows.NewActivation(
+				nil,
+				store,
+				&latest{envelope},
+				&challenges{values: map[string][]byte{}},
+				root,
+				"home",
+				nil,
+				nil,
+			)
 			if _, err := s.Challenge(ctx, "i"); err == nil {
 				t.Fatal("unapproved snapshot accepted")
 			}

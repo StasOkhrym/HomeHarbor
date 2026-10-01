@@ -1,0 +1,23 @@
+{{define "field"}}
+  <div class="field">
+    <label for="{{.Name}}">{{.Label}}</label>
+    <input id="{{.Name}}"
+           name="{{.Name}}"
+           value="{{.Value}}"
+           type="{{.Type}}"
+           {{if .Required}}required{{end}}
+           {{if .Error}}aria-invalid="true"
+           aria-describedby="{{.Name}}-error"
+           {{end}}>
+    {{if .Error}}
+      <p id="{{.Name}}-error" class="field-error">{{.Error}}</p>
+    {{end}}
+  </div>
+{{end}}
+{{define "record-id"}}
+  <details class="advanced" {{if index .FieldErrors "id"}}open{{end}}>
+    <summary>Advanced · record ID</summary>
+    {{template "field" (.Field "id" "Record ID" "text" true)}}
+    <p class="help">Generated for this form. Override only when needed, using letters, numbers, hyphens or underscores.</p>
+  </details>
+{{end}}

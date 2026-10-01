@@ -1,0 +1,215 @@
+{{define "access"}}
+  {{if .Preview}}
+    <section class="panel">
+      <h2>Review policy replacement</h2>
+      <p>Based on saved revision {{.Preview.Revision}}. Unmatched traffic remains denied.</p>
+      <ul class="resource-list">
+        {{range .Preview.Changes}}
+          <li>
+            <strong>{{.Kind}}</strong>
+            {{with .Before}}
+              <p>Before: {{$.DeviceName .SourceDeviceID}} → <code>{{.Destination}}</code> · {{.Protocol}} · {{.PortFrom}}–{{.PortTo}}</p>
+            {{end}}
+            {{with .After}}
+              <p>After: {{$.DeviceName .SourceDeviceID}} → <code>{{.Destination}}</code> · {{.Protocol}} · {{.PortFrom}}–{{.PortTo}}</p>
+            {{end}}
+          </li>
+        {{else}}
+          <li class="empty-state">No rule changes.</li>
+        {{end}}
+      </ul>
+      <details class="advanced">
+        <summary>Advanced · complete before / after JSON</summary>
+        <h3>Before</h3>
+        <pre>{{.Preview.Before}}</pre>
+        <h3>After</h3>
+        <pre>{{.Preview.After}}</pre>
+      </details>
+      <form method="post" action="/admin/policy">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <input type="hidden" name="return_to" value="access">
+        <input type="hidden" name="revision" value="{{.Preview.Revision}}">
+        <input type="hidden" name="proof" value="{{.Preview.Proof}}">
+        <input type="hidden" name="rules" value="{{.Preview.RulesJSON}}">
+        <div class="check-list">
+          <label>
+            <input type="checkbox"
+                   name="confirmed"
+                   value="yes"
+                   required>I reviewed these changes and want to replace the saved policy.
+          </label>
+        </div>
+        <div class="actions">
+          <button type="submit">Confirm replacement</button><a href="/admin/access">Cancel</a>
+        </div>
+      </form>
+    </section>
+  {{else}}
+    <section class="panel">
+      <h2>Access profiles</h2>
+      {{if .Profiles.Ready}}
+        <ul class="resource-list">
+          {{range .Profiles.Items}}
+            <li>
+              <strong>{{.Name}}</strong>
+              <p class="help">Devices: {{range .DeviceIDs}}{{$.DeviceName .}}; {{else}}None yet (invite template){{end}}</p>
+              <p class="help">Services: {{range .ServiceIDs}}{{$.ServiceName .}}; {{end}}</p>
+              <details class="advanced">
+                <summary>Advanced · profile and membership IDs</summary>
+                <p>Profile: <code>{{.ID}}</code></p>
+                <p>Devices: {{range .DeviceIDs}}<code>{{.}}</code> {{end}}</p>
+                <p>Services: {{range .ServiceIDs}}<code>{{.}}</code> {{end}}</p>
+              </details>
+            </li>
+          {{else}}
+            <li class="empty-state">No access profiles.</li>
+          {{end}}
+        </ul>
+      {{else}}
+        <p class="alert alert-error" role="alert">{{.Profiles.Error}}</p>
+      {{end}}
+    </section>
+    {{if and .Services.Ready .Profiles.Ready .Devices.Ready}}
+      <section class="panel">
+        <h2>Create an access profile</h2>
+        <form method="post" action="/admin/access-profiles">
+          <input type="hidden" name="_csrf" value="{{.CSRF}}">
+          <input type="hidden" name="return_to" value="access">
+          {{template "field" (.Field "name" "Profile name (for example Family)" "text" true)}}
+          <fieldset>
+            <legend>Devices</legend>
+            <p class="help">Leave empty to prepare a profile for a future signed invite.</p>
+            <div class="check-list">
+              {{range .Devices.Items}}{{if eq .Status "active"}}
+                <label>
+                  <input type="checkbox"
+                         name="device_ids"
+                         value="{{.ID}}"
+                         {{if $.Selected "device_ids" .ID}}checked{{end}}>{{.Name}} · {{.Role}}
+                </label>
+              {{end}}{{end}}
+            </div>
+            {{with index .FieldErrors "device_ids"}}
+              <p class="field-error">{{.}}</p>
+            {{end}}
+          </fieldset>
+          <fieldset>
+            <legend>Services</legend>
+            <div class="check-list">
+              {{range .Services.Items}}
+                <label>
+                  <input type="checkbox"
+                         name="service_ids"
+                         value="{{.ID}}"
+                         {{if $.Selected "service_ids" .ID}}checked{{end}}>{{.Name}}
+                </label>
+              {{else}}
+                <p class="help">Add a catalog service first.</p>
+              {{end}}
+            </div>
+            {{with index .FieldErrors "service_ids"}}
+              <p class="field-error">{{.}}</p>
+            {{end}}
+          </fieldset>
+          {{template "record-id" .}}
+          <button type="submit">Save profile</button>
+        </form>
+      </section>
+    {{end}}
+    <section class="panel">
+      <h2>Default-deny policy</h2>
+      {{if .PolicyReady}}
+        <p>Saved revision {{.Policy.Revision}} · default action deny</p>
+        {{if .Devices.Ready}}
+          <p class="help">Review all rules before replacing the policy. Remove a row to remove that allow rule. Blank rows are ignored.</p>
+          <form method="post" action="/admin/policy/preview" data-policy-editor>
+            <input type="hidden" name="_csrf" value="{{.CSRF}}">
+            <input type="hidden" name="editor" value="structured">
+            <div data-policy-rows>{{range .PolicyRows}}{{template "policy-row" ($.PolicyRow .)}}{{end}}</div>
+            <template data-policy-template>{{template "policy-row" (.PolicyRow .BlankPolicyRow)}}</template>
+            <div class="actions">
+              <button class="secondary" type="button" data-add-rule hidden>Add rule</button>
+              <button type="submit">Preview replacement</button>
+            </div>
+            {{with index .FieldErrors "rules"}}
+              <p class="field-error">{{.}}</p>
+            {{end}}
+          </form>
+        {{else}}
+          <p class="alert alert-error" role="alert">{{.Devices.Error}}</p>
+        {{end}}
+        <details class="advanced">
+          <summary>Advanced · JSON editor</summary>
+          <form method="post" action="/admin/policy/preview">
+            <input type="hidden" name="_csrf" value="{{.CSRF}}">
+            <input type="hidden" name="editor" value="json">
+            <div class="field">
+              <label for="rules">Complete rule array</label>
+              <textarea id="rules"
+                        name="rules"
+                        rows="12"
+                        required
+                        {{if index .FieldErrors "rules"}}aria-invalid="true"
+                        {{end}}>{{.Value "rules"}}</textarea>
+            </div>
+            <button class="secondary" type="submit">Preview JSON replacement</button>
+          </form>
+        </details>
+      {{else}}
+        <p class="alert alert-error" role="alert">{{.PolicyError}}</p>
+      {{end}}
+    </section>
+  {{end}}
+  <p class="help">Saved profiles and rules are not signed network grants. Gateway application is unknown.</p>
+{{end}}
+{{define "policy-row"}}
+  <fieldset class="policy-row" data-policy-row>
+    <legend>Allow rule</legend>
+    <div class="form-grid">
+      <label class="field">
+        Source device
+        <select name="source_device_id">
+          {{if .Source}}
+            <option value="{{.Source}}" selected>{{.SourceName}}</option>
+          {{else}}
+            <option value="">Choose a device</option>
+          {{end}}
+          {{range .Devices}}{{if and (eq .Status "active") (ne .ID $.Source)}}
+            <option value="{{.ID}}">{{.Name}}</option>
+          {{end}}{{end}}
+        </select>
+      </label>
+      <label class="field">
+        Destination CIDR
+        <input name="destination"
+               value="{{.Destination}}"
+               placeholder="192.168.50.2/32">
+      </label>
+      <label class="field wide">
+        Protocol
+        <select name="protocol">
+          <option value="tcp" {{if eq .Protocol "tcp"}}selected{{end}}>TCP</option>
+          <option value="udp" {{if eq .Protocol "udp"}}selected{{end}}>UDP</option>
+        </select>
+      </label>
+      <label class="field">
+        Start port
+        <input type="number" min="1" max="65535" name="port_from" value="{{.From}}">
+      </label>
+      <label class="field">
+        End port
+        <input type="number" min="1" max="65535" name="port_to" value="{{.To}}">
+      </label>
+    </div>
+    <details class="advanced">
+      <summary>Advanced · rule ID</summary>
+      {{if .Source}}
+        <p class="help">Source device ID: <code>{{.Source}}</code></p>
+      {{end}}
+      <label class="field">
+        Rule ID (generated if empty)<input name="rule_id" value="{{.ID}}">
+      </label>
+    </details>
+    <button class="secondary" type="button" data-remove-rule hidden>Remove rule</button>
+  </fieldset>
+{{end}}

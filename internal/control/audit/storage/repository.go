@@ -23,7 +23,18 @@ func (s *Repository) Write(ctx context.Context, event audit.Event) error {
 	if event.ID != "" {
 		eventID = &event.ID
 	}
-	_, err = s.pool.Exec(ctx, `INSERT INTO audit_events(event_id,occurred_at,actor_type,actor_id,action,target_type,target_id,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(event_id) DO NOTHING`, eventID, event.OccurredAt, event.ActorType, event.ActorID, event.Action, event.TargetType, event.TargetID, metadata)
+	_, err = s.pool.Exec(
+		ctx,
+		`INSERT INTO audit_events(event_id,occurred_at,actor_type,actor_id,action,target_type,target_id,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(event_id) DO NOTHING`,
+		eventID,
+		event.OccurredAt,
+		event.ActorType,
+		event.ActorID,
+		event.Action,
+		event.TargetType,
+		event.TargetID,
+		metadata,
+	)
 	return err
 }
 
@@ -47,7 +58,15 @@ func (s *Repository) List(ctx context.Context, limit int) ([]audit.Event, error)
 	entries := make([]audit.Event, 0, limit)
 	for rows.Next() {
 		var event audit.Event
-		if err := rows.Scan(&event.OccurredAt, &event.ActorType, &event.ActorID, &event.Action, &event.TargetType, &event.TargetID, &event.Metadata); err != nil {
+		if err := rows.Scan(
+			&event.OccurredAt,
+			&event.ActorType,
+			&event.ActorID,
+			&event.Action,
+			&event.TargetType,
+			&event.TargetID,
+			&event.Metadata,
+		); err != nil {
 			return nil, err
 		}
 		entries = append(entries, event)

@@ -46,7 +46,10 @@ func TestAuditPipelineAcknowledgesOnlyDurableWrites(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("consumer never subscribed")
 	}
-	msg := message.NewMessage("outbox:42", []byte(`{"type":"device.enrolled","aggregate_id":"device-1","occurred_at":"2026-09-30T12:00:00Z"}`))
+	msg := message.NewMessage(
+		"outbox:42",
+		[]byte(`{"type":"device.enrolled","aggregate_id":"device-1","occurred_at":"2026-09-30T12:00:00Z"}`),
+	)
 	published := make(chan error, 1)
 	go func() { published <- pipeline.Publish(ctx, "device.enrolled", msg) }()
 	var event audit.Event
@@ -88,7 +91,14 @@ func TestAuditPipelineDoesNotLoseEventsBeforeSubscription(t *testing.T) {
 	pipeline := NewAuditPipeline(bus, &recordingAuditSink{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := pipeline.Publish(ctx, "device.enrolled", message.NewMessage("pending", nil)); !errors.Is(err, context.Canceled) {
+	if err := pipeline.Publish(
+		ctx,
+		"device.enrolled",
+		message.NewMessage("pending", nil),
+	); !errors.Is(
+		err,
+		context.Canceled,
+	) {
 		t.Fatalf("unstarted consumer discarded event: %v", err)
 	}
 }

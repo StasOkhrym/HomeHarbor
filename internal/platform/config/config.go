@@ -260,7 +260,8 @@ func LoadControl(path string) (Control, error) {
 	}
 	if cfg.Redis.URL != "" {
 		endpoint, err := url.Parse(cfg.Redis.URL)
-		if err != nil || endpoint.Host == "" || (endpoint.Scheme != "redis" && endpoint.Scheme != "rediss") || endpoint.User != nil {
+		if err != nil || endpoint.Host == "" || (endpoint.Scheme != "redis" && endpoint.Scheme != "rediss") ||
+			endpoint.User != nil {
 			return Control{}, errors.New("redis.url must be a redis/rediss endpoint without embedded credentials")
 		}
 	}
@@ -370,7 +371,9 @@ func (c Control) validate() error {
 		return err
 	}
 	origin, err := url.Parse(c.Auth.RPOrigin)
-	if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
+	if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.Path != "" ||
+		origin.RawQuery != "" ||
+		origin.Fragment != "" {
 		return errors.New("auth.rp_origin must be an HTTPS origin without a path")
 	}
 	if !strings.EqualFold(origin.Hostname(), c.Auth.RPID) {

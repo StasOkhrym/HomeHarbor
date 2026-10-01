@@ -23,7 +23,9 @@ func Compile(interfaceName string, peerAddresses map[string]netip.Prefix, snapsh
 	for id, prefix := range peerAddresses {
 		// WireGuard binds a key to exactly one overlay host. A subnet or
 		// duplicate identity here would let one peer impersonate another ACL source.
-		if id == "" || !prefix.IsValid() || prefix.Bits() != prefix.Addr().BitLen() || prefix.Addr().IsUnspecified() || prefix.Addr().IsMulticast() || prefix.Addr().Is4In6() {
+		if id == "" || !prefix.IsValid() || prefix.Bits() != prefix.Addr().BitLen() || prefix.Addr().IsUnspecified() ||
+			prefix.Addr().IsMulticast() ||
+			prefix.Addr().Is4In6() {
 			return "", fmt.Errorf("device %s requires a concrete overlay host prefix", id)
 		}
 		if previous, ok := seenAddresses[prefix.Addr()]; ok {
@@ -41,7 +43,12 @@ func Compile(interfaceName string, peerAddresses map[string]netip.Prefix, snapsh
 	// This table owns only decrypted traffic on this interface. Other host
 	// firewall owners retain their own hooks; an accept here cannot override
 	// their drops. Gateway-local services are a separate default-deny boundary.
-	fmt.Fprintf(&b, "# go-tunnels policy revision=%d\ntable inet go_tunnels {\n  chain input {\n    type filter hook input priority -10; policy accept;\n    iifname %q drop\n  }\n  chain forward {\n    type filter hook forward priority -10; policy accept;\n", snapshot.Revision, interfaceName)
+	fmt.Fprintf(
+		&b,
+		"# go-tunnels policy revision=%d\ntable inet go_tunnels {\n  chain input {\n    type filter hook input priority -10; policy accept;\n    iifname %q drop\n  }\n  chain forward {\n    type filter hook forward priority -10; policy accept;\n",
+		snapshot.Revision,
+		interfaceName,
+	)
 	for _, rule := range validated.Rules {
 		source, ok := peerAddresses[rule.SourceDeviceID]
 		if !ok || !source.IsValid() {
@@ -58,7 +65,17 @@ func Compile(interfaceName string, peerAddresses map[string]netip.Prefix, snapsh
 		if family != destinationFamily {
 			return "", fmt.Errorf("address family mismatch in rule %s", rule.ID)
 		}
-		fmt.Fprintf(&b, "    iifname %q %s saddr %s %s daddr %s %s dport %d", interfaceName, family, source, destinationFamily, rule.Destination, rule.Protocol, rule.PortFrom)
+		fmt.Fprintf(
+			&b,
+			"    iifname %q %s saddr %s %s daddr %s %s dport %d",
+			interfaceName,
+			family,
+			source,
+			destinationFamily,
+			rule.Destination,
+			rule.Protocol,
+			rule.PortFrom,
+		)
 		if rule.PortTo != rule.PortFrom {
 			fmt.Fprintf(&b, "-%d", rule.PortTo)
 		}
@@ -66,7 +83,17 @@ func Compile(interfaceName string, peerAddresses map[string]netip.Prefix, snapsh
 		// Established is evidence of a reply, never authorization. Recheck
 		// the CURRENT ACL against conntrack's original tuple on every reply.
 		// No broad related acceptance: ICMP helpers must not open another path.
-		fmt.Fprintf(&b, "    oifname %q ct direction reply ct state established meta l4proto %s ct original %s saddr %s ct original %s daddr %s ct original proto-dst %d", interfaceName, rule.Protocol, family, source, destinationFamily, rule.Destination, rule.PortFrom)
+		fmt.Fprintf(
+			&b,
+			"    oifname %q ct direction reply ct state established meta l4proto %s ct original %s saddr %s ct original %s daddr %s ct original proto-dst %d",
+			interfaceName,
+			rule.Protocol,
+			family,
+			source,
+			destinationFamily,
+			rule.Destination,
+			rule.PortFrom,
+		)
 		if rule.PortTo != rule.PortFrom {
 			fmt.Fprintf(&b, "-%d", rule.PortTo)
 		}

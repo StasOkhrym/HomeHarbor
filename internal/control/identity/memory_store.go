@@ -18,7 +18,12 @@ type MemoryStore struct {
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{recoveryCodes: make(map[[32]byte]RecoveryCode), sessions: make(map[[32]byte]Session), ceremonies: make(map[[32]byte]Ceremony), credentials: make(map[string][]webauthn.Credential)}
+	return &MemoryStore{
+		recoveryCodes: make(map[[32]byte]RecoveryCode),
+		sessions:      make(map[[32]byte]Session),
+		ceremonies:    make(map[[32]byte]Ceremony),
+		credentials:   make(map[string][]webauthn.Credential),
+	}
 }
 
 func (s *MemoryStore) SaveRecoveryCodes(_ context.Context, codes []RecoveryCode) error {
@@ -133,7 +138,8 @@ func (s *MemoryStore) UpdateCredential(_ context.Context, userHandle []byte, cre
 	defer s.mu.Unlock()
 	for index, stored := range s.credentials[string(userHandle)] {
 		if bytes.Equal(stored.ID, credential.ID) {
-			if stored.Authenticator.SignCount > 0 && credential.Authenticator.SignCount <= stored.Authenticator.SignCount {
+			if stored.Authenticator.SignCount > 0 &&
+				credential.Authenticator.SignCount <= stored.Authenticator.SignCount {
 				return ErrInvalidCredential
 			}
 			s.credentials[string(userHandle)][index] = credential

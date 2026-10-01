@@ -19,7 +19,10 @@ func TestPostgresRecoveryCodeConcurrentConsume(t *testing.T) {
 	pool := identityTestPool(t)
 	store := New(pool)
 	hash := sha256.Sum256([]byte("single-use-code"))
-	if err := store.SaveRecoveryCodes(context.Background(), []identity.RecoveryCode{{Hash: hash, CreatedAt: time.Now().UTC()}}); err != nil {
+	if err := store.SaveRecoveryCodes(
+		context.Background(),
+		[]identity.RecoveryCode{{Hash: hash, CreatedAt: time.Now().UTC()}},
+	); err != nil {
 		t.Fatal(err)
 	}
 

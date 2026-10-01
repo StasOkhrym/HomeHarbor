@@ -55,29 +55,89 @@ func parseFlags(cfg *config.Node, args []string, output io.Writer) (string, erro
 	path := flags.String("config", "", "TOML node configuration path")
 	flags.StringVar(&cfg.Identity.StatePath, "state", cfg.Identity.StatePath, "private node state file")
 	flags.StringVar(&cfg.Identity.ControlURL, "control", cfg.Identity.ControlURL, "control plane URL")
-	flags.StringVar(&cfg.Identity.Token, "token", cfg.Identity.Token, "legacy enrollment token; prefer TOML enrollment_token_file")
+	flags.StringVar(
+		&cfg.Identity.Token,
+		"token",
+		cfg.Identity.Token,
+		"legacy enrollment token; prefer TOML enrollment_token_file",
+	)
 	flags.BoolVar(&cfg.Identity.Refresh, "refresh", cfg.Identity.Refresh, "rotate the current credential")
 	flags.StringVar(&cfg.Identity.Name, "name", cfg.Identity.Name, "device name")
 	flags.StringVar(&cfg.Relay.WebSocketURL, "relay", cfg.Relay.WebSocketURL, "authenticated relay control URL")
 	flags.StringVar(&cfg.Relay.UDPAddress, "relay-udp", cfg.Relay.UDPAddress, "legacy UDP relay endpoint")
 	flags.StringVar(&cfg.Relay.Ticket, "relay-ticket", cfg.Relay.Ticket, "legacy relay ticket; prefer TOML ticket_file")
 	flags.StringVar(&cfg.Relay.SessionID, "relay-session", cfg.Relay.SessionID, "relay session ID")
-	flags.StringVar(&cfg.Relay.DestinationDevice, "relay-destination", cfg.Relay.DestinationDevice, "destination device ID")
-	flags.StringVar(&cfg.Relay.ListenAddress, "bridge-listen", cfg.Relay.ListenAddress, "local relay bridge UDP endpoint")
-	flags.StringVar(&cfg.Relay.WireGuardAddress, "wireguard-address", cfg.Relay.WireGuardAddress, "local WireGuard UDP endpoint")
+	flags.StringVar(
+		&cfg.Relay.DestinationDevice,
+		"relay-destination",
+		cfg.Relay.DestinationDevice,
+		"destination device ID",
+	)
+	flags.StringVar(
+		&cfg.Relay.ListenAddress,
+		"bridge-listen",
+		cfg.Relay.ListenAddress,
+		"local relay bridge UDP endpoint",
+	)
+	flags.StringVar(
+		&cfg.Relay.WireGuardAddress,
+		"wireguard-address",
+		cfg.Relay.WireGuardAddress,
+		"local WireGuard UDP endpoint",
+	)
 	flags.StringVar(&cfg.Relay.STUNServer, "stun", cfg.Relay.STUNServer, "optional UDP STUN URI")
-	flags.StringVar(&cfg.WireGuard.InterfaceName, "wg-interface", cfg.WireGuard.InterfaceName, "Linux WireGuard interface; blank selects bridge-only mode")
+	flags.StringVar(
+		&cfg.WireGuard.InterfaceName,
+		"wg-interface",
+		cfg.WireGuard.InterfaceName,
+		"Linux WireGuard interface; blank selects bridge-only mode",
+	)
 	flags.UintVar(&cfg.WireGuard.ListenPort, "wg-port", cfg.WireGuard.ListenPort, "WireGuard listen port")
-	flags.StringVar(&cfg.WireGuard.PeerPublicKey, "wg-peer-key", cfg.WireGuard.PeerPublicKey, "peer WireGuard public key")
+	flags.StringVar(
+		&cfg.WireGuard.PeerPublicKey,
+		"wg-peer-key",
+		cfg.WireGuard.PeerPublicKey,
+		"peer WireGuard public key",
+	)
 	flags.StringVar(&cfg.WireGuard.OverlayAddress, "wg-overlay", cfg.WireGuard.OverlayAddress, "overlay CIDR")
-	flags.StringVar(&cfg.WireGuard.AllowedPrefixes, "wg-allowed-prefixes", cfg.WireGuard.AllowedPrefixes, "comma-separated peer prefixes")
+	flags.StringVar(
+		&cfg.WireGuard.AllowedPrefixes,
+		"wg-allowed-prefixes",
+		cfg.WireGuard.AllowedPrefixes,
+		"comma-separated peer prefixes",
+	)
 	flags.StringVar(&cfg.WireGuard.Routes, "wg-routes", cfg.WireGuard.Routes, "comma-separated tunnel routes")
-	flags.StringVar(&cfg.Coordination.URL, "coordination", cfg.Coordination.URL, "authenticated coordination WebSocket URL")
-	flags.StringVar(&cfg.Coordination.RootPublicKeyFile, "root-public-key", cfg.Coordination.RootPublicKeyFile, "trusted companion root public key file")
+	flags.StringVar(
+		&cfg.Coordination.URL,
+		"coordination",
+		cfg.Coordination.URL,
+		"authenticated coordination WebSocket URL",
+	)
+	flags.StringVar(
+		&cfg.Coordination.RootPublicKeyFile,
+		"root-public-key",
+		cfg.Coordination.RootPublicKeyFile,
+		"trusted companion root public key file",
+	)
 	flags.StringVar(&cfg.Coordination.NetworkID, "network-id", cfg.Coordination.NetworkID, "signed network ID")
-	flags.StringVar(&cfg.Direct.Candidates, "direct-candidates", cfg.Direct.Candidates, "comma-separated direct UDP candidates")
-	flags.StringVar(&cfg.DNS.Link, "dns-link", cfg.DNS.Link, "systemd-resolved link; blank disables host DNS integration")
-	flags.BoolVar(&cfg.DNS.EnableForwarding, "enable-forwarding", cfg.DNS.EnableForwarding, "explicitly enable host IP forwarding")
+	flags.StringVar(
+		&cfg.Direct.Candidates,
+		"direct-candidates",
+		cfg.Direct.Candidates,
+		"comma-separated direct UDP candidates",
+	)
+	flags.StringVar(
+		&cfg.DNS.Link,
+		"dns-link",
+		cfg.DNS.Link,
+		"systemd-resolved link; blank disables host DNS integration",
+	)
+	flags.BoolVar(
+		&cfg.DNS.EnableForwarding,
+		"enable-forwarding",
+		cfg.DNS.EnableForwarding,
+		"explicitly enable host IP forwarding",
+	)
 	err := parseNodeFlags(flags, args)
 	return *path, err
 }

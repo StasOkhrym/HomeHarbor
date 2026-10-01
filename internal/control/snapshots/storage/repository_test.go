@@ -110,7 +110,11 @@ func TestPostgresHistoryScopesNetworkAndRejectsStaleHash(t *testing.T) {
 	service := snapshots.NewService(repository, public, "home")
 	var previous []byte
 	for revision := uint64(1); revision <= 4; revision++ {
-		envelope, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: revision, PreviousHash: previous}, private, "root")
+		envelope, err := snapshot.Sign(
+			snapshot.NetworkSnapshot{NetworkID: "home", Revision: revision, PreviousHash: previous},
+			private,
+			"root",
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -136,11 +140,24 @@ func TestPostgresHistoryScopesNetworkAndRejectsStaleHash(t *testing.T) {
 	if err != nil || len(other) != 0 {
 		t.Fatalf("other history len=%d err=%v", len(other), err)
 	}
-	next, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 5, PreviousHash: previous}, private, "root")
+	next, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 5, PreviousHash: previous},
+		private,
+		"root",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.Append(context.Background(), "home", 4, make([]byte, 32), next); !errors.Is(err, snapshots.ErrSnapshotConflict) {
+	if err := repository.Append(
+		context.Background(),
+		"home",
+		4,
+		make([]byte, 32),
+		next,
+	); !errors.Is(
+		err,
+		snapshots.ErrSnapshotConflict,
+	) {
 		t.Fatalf("wrong expected hash: %v", err)
 	}
 	latest, err := repository.Latest(context.Background(), "home")

@@ -53,7 +53,13 @@ func (s *companionChallengeStore) issue(ctx context.Context, now time.Time) (str
 	nonce := base64.RawURLEncoding.EncodeToString(raw)
 	expiresAt := now.Add(companionChallengeTTL)
 	if s.shared != nil {
-		if err := s.shared.PutChallenge(ctx, "companion-read", nonce, []byte("read"), companionChallengeTTL); err != nil {
+		if err := s.shared.PutChallenge(
+			ctx,
+			"companion-read",
+			nonce,
+			[]byte("read"),
+			companionChallengeTTL,
+		); err != nil {
 			return "", time.Time{}, err
 		}
 		return nonce, expiresAt, nil

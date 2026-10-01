@@ -23,8 +23,11 @@ func NewRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error) {
 		return nil, errors.New("invalid node role")
 	}
 	kernel := cfg.WireGuard.InterfaceName != "" || cfg.Coordination.URL != ""
-	if kernel && (cfg.WireGuard.InterfaceName == "" || cfg.Coordination.URL == "" || cfg.Coordination.RootPublicKeyFile == "") {
-		return nil, errors.New("kernel node requires signed coordination: -wg-interface, -coordination and -root-public-key")
+	if kernel &&
+		(cfg.WireGuard.InterfaceName == "" || cfg.Coordination.URL == "" || cfg.Coordination.RootPublicKeyFile == "") {
+		return nil, errors.New(
+			"kernel node requires signed coordination: -wg-interface, -coordination and -root-public-key",
+		)
 	}
 	if cfg.WireGuard.ListenPort > 65535 {
 		return nil, errors.New("WireGuard port exceeds 65535")
@@ -44,7 +47,12 @@ func NewRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error) {
 	var peers *node.SnapshotWireGuardReconciler
 	var paths *protocol.PathSelector
 	if kernel {
-		peers, err = node.NewSnapshotWireGuardReconciler(cfg.WireGuard.InterfaceName, state.DeviceID, state.WireGuard.PrivateKey, uint16(cfg.WireGuard.ListenPort))
+		peers, err = node.NewSnapshotWireGuardReconciler(
+			cfg.WireGuard.InterfaceName,
+			state.DeviceID,
+			state.WireGuard.PrivateKey,
+			uint16(cfg.WireGuard.ListenPort),
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -101,7 +109,12 @@ type candidateBindings struct {
 	provide func(context.Context) ([]protocol.CandidateUpdate, error)
 }
 
-func prepareCandidates(cfg config.Node, state node.State, peers *node.SnapshotWireGuardReconciler, paths *protocol.PathSelector) (candidateBindings, error) {
+func prepareCandidates(
+	cfg config.Node,
+	state node.State,
+	peers *node.SnapshotWireGuardReconciler,
+	paths *protocol.PathSelector,
+) (candidateBindings, error) {
 	if peers == nil || cfg.WireGuard.PeerPublicKey == "" || cfg.Relay.DestinationDevice == "" {
 		return candidateBindings{}, nil
 	}
@@ -113,21 +126,41 @@ func prepareCandidates(cfg config.Node, state node.State, peers *node.SnapshotWi
 	if err != nil {
 		return candidateBindings{}, err
 	}
-	manager, err := node.NewCandidatePathManager(state.DeviceID, cfg.Relay.DestinationDevice, cfg.WireGuard.PeerPublicKey, peers, paths, prober)
+	manager, err := node.NewCandidatePathManager(
+		state.DeviceID,
+		cfg.Relay.DestinationDevice,
+		cfg.WireGuard.PeerPublicKey,
+		peers,
+		paths,
+		prober,
+	)
 	if err != nil {
 		return candidateBindings{}, err
 	}
 	set := node.NewCandidateSet(endpoints)
-	return candidateBindings{set: set, handle: manager.HandleCandidateUpdate, provide: func(context.Context) ([]protocol.CandidateUpdate, error) {
-		current := set.Snapshot()
-		if len(current) == 0 {
-			return nil, nil
-		}
-		return []protocol.CandidateUpdate{{DestinationDeviceID: cfg.Relay.DestinationDevice, Candidates: current}}, nil
-	}}, nil
+	return candidateBindings{
+		set:    set,
+		handle: manager.HandleCandidateUpdate,
+		provide: func(context.Context) ([]protocol.CandidateUpdate, error) {
+			current := set.Snapshot()
+			if len(current) == 0 {
+				return nil, nil
+			}
+			return []protocol.CandidateUpdate{
+				{DestinationDeviceID: cfg.Relay.DestinationDevice, Candidates: current},
+			}, nil
+		},
+	}, nil
 }
 
-func prepareRelay(ctx context.Context, cfg config.Node, state node.State, peers *node.SnapshotWireGuardReconciler, paths *protocol.PathSelector, candidates *node.CandidateSet) (lifecycle.Component, error) {
+func prepareRelay(
+	ctx context.Context,
+	cfg config.Node,
+	state node.State,
+	peers *node.SnapshotWireGuardReconciler,
+	paths *protocol.PathSelector,
+	candidates *node.CandidateSet,
+) (lifecycle.Component, error) {
 	if cfg.Relay.SessionID == "" || cfg.Relay.DestinationDevice == "" {
 		return nil, errors.New("-relay-session and -relay-destination are required for relay mode")
 	}
@@ -149,14 +182,28 @@ func prepareRelay(ctx context.Context, cfg config.Node, state node.State, peers 
 	var renew node.RelayTicketProvider
 	if cfg.Identity.ControlURL != "" {
 		renew = func(ctx context.Context) (string, error) {
-			session, err := node.IssueRelaySession(ctx, nil, cfg.Identity.ControlURL, state.DeviceCredential, cfg.Relay.SessionID, cfg.Relay.DestinationDevice)
+			session, err := node.IssueRelaySession(
+				ctx,
+				nil,
+				cfg.Identity.ControlURL,
+				state.DeviceCredential,
+				cfg.Relay.SessionID,
+				cfg.Relay.DestinationDevice,
+			)
 			return session.Ticket, err
 		}
 	}
 	if bridge.Ticket == "" {
 		operation, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		session, err := node.IssueRelaySession(operation, nil, cfg.Identity.ControlURL, state.DeviceCredential, cfg.Relay.SessionID, cfg.Relay.DestinationDevice)
+		session, err := node.IssueRelaySession(
+			operation,
+			nil,
+			cfg.Identity.ControlURL,
+			state.DeviceCredential,
+			cfg.Relay.SessionID,
+			cfg.Relay.DestinationDevice,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -164,7 +211,9 @@ func prepareRelay(ctx context.Context, cfg config.Node, state node.State, peers 
 		bridge.TicketLifetime = time.Duration(session.ExpiresInSeconds) * time.Second
 	}
 	if cfg.WireGuard.InterfaceName == "" {
-		return lifecycle.Func(func(ctx context.Context) error { return node.RunRelayBridgeLoop(ctx, bridge, renew) }), nil
+		return lifecycle.Func(
+			func(ctx context.Context) error { return node.RunRelayBridgeLoop(ctx, bridge, renew) },
+		), nil
 	}
 	allowed, err := node.ParsePrefixList(cfg.WireGuard.AllowedPrefixes)
 	if err != nil {
@@ -183,7 +232,14 @@ func prepareRelay(ctx context.Context, cfg config.Node, state node.State, peers 
 	return lifecycle.Func(func(ctx context.Context) error { return node.RunKernelRelayLoop(ctx, tunnel, renew) }), nil
 }
 
-func prepareCoordination(role Role, cfg config.Node, state node.State, root ed25519.PublicKey, peers *node.SnapshotWireGuardReconciler, candidates candidateBindings) (lifecycle.Component, lifecycle.Component, error) {
+func prepareCoordination(
+	role Role,
+	cfg config.Node,
+	state node.State,
+	root ed25519.PublicKey,
+	peers *node.SnapshotWireGuardReconciler,
+	candidates candidateBindings,
+) (lifecycle.Component, lifecycle.Component, error) {
 	connection := node.CoordinationConfig{
 		URL: cfg.Coordination.URL, Credential: state.DeviceCredential, DeviceID: state.DeviceID,
 		NetworkID: cfg.Coordination.NetworkID, RootPublicKey: root,
@@ -194,8 +250,14 @@ func prepareCoordination(role Role, cfg config.Node, state node.State, root ed25
 		connection.CandidateChanges = candidates.set.Changes()
 	}
 	if role == Client {
-		applier := node.NewCompositeSnapshotApplier(nil, node.NewClientReconciler(cfg.WireGuard.InterfaceName, state.DeviceID), peers)
-		return lifecycle.Func(func(ctx context.Context) error { return node.RunCoordinationLoop(ctx, connection, applier) }), nil, nil
+		applier := node.NewCompositeSnapshotApplier(
+			nil,
+			node.NewClientReconciler(cfg.WireGuard.InterfaceName, state.DeviceID),
+			peers,
+		)
+		return lifecycle.Func(
+			func(ctx context.Context) error { return node.RunCoordinationLoop(ctx, connection, applier) },
+		), nil, nil
 	}
 	var managedDNS *dns.Manager
 	var resolver *node.DNSReconciler
@@ -207,7 +269,12 @@ func prepareCoordination(role Role, cfg config.Node, state node.State, root ed25
 		}
 		resolver = node.NewDNSReconciler(managedDNS)
 	}
-	gateway := node.NewGatewayReconcilerWithOptions(cfg.WireGuard.InterfaceName, state.DeviceID, resolver, cfg.DNS.EnableForwarding)
+	gateway := node.NewGatewayReconcilerWithOptions(
+		cfg.WireGuard.InterfaceName,
+		state.DeviceID,
+		resolver,
+		cfg.DNS.EnableForwarding,
+	)
 	applier := node.NewCompositeSnapshotApplier(gateway, peers)
 	worker := lifecycle.Func(func(ctx context.Context) error {
 		err := node.RunCoordinationLoop(ctx, connection, applier)

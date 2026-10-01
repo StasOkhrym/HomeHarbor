@@ -80,7 +80,9 @@ func TestPeerTicketBindsDestination(t *testing.T) {
 }
 
 func TestPacketRoundTrip(t *testing.T) {
-	encoded, err := EncodePacket(Packet{SessionID: "session-1", SourceDeviceID: "a", DestinationDeviceID: "b", Payload: []byte{1, 2, 3}})
+	encoded, err := EncodePacket(
+		Packet{SessionID: "session-1", SourceDeviceID: "a", DestinationDeviceID: "b", Payload: []byte{1, 2, 3}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

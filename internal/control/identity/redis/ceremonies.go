@@ -33,9 +33,17 @@ func (c *Ceremonies) SaveCeremony(ctx context.Context, value identity.Ceremony) 
 	if err != nil {
 		return err
 	}
-	if err := c.store.PutChallenge(ctx, "webauthn", hex.EncodeToString(value.IDHash[:]), payload, value.ExpiresAt.Sub(c.now())); err != nil {
+
+	if err := c.store.PutChallenge(
+		ctx,
+		"webauthn",
+		hex.EncodeToString(value.IDHash[:]),
+		payload,
+		value.ExpiresAt.Sub(c.now()),
+	); err != nil {
 		return fmt.Errorf("%w: save ceremony", identity.ErrSecurityStateUnavailable)
 	}
+
 	return nil
 }
 

@@ -83,8 +83,16 @@ func NewClientReconciler(interfaceName, deviceID string) *ClientReconciler {
 
 // NewClientReconcilerWithEnsurer keeps command execution behind a narrow seam
 // so snapshot selection can be tested without CAP_NET_ADMIN or a Linux host.
-func NewClientReconcilerWithEnsurer(interfaceName, deviceID string, ensure func(context.Context, string, string, []netip.Prefix) error) *ClientReconciler {
-	return &ClientReconciler{interfaceName: interfaceName, deviceID: deviceID, ensure: ensure, routes: newRouteOwnership()}
+func NewClientReconcilerWithEnsurer(
+	interfaceName, deviceID string,
+	ensure func(context.Context, string, string, []netip.Prefix) error,
+) *ClientReconciler {
+	return &ClientReconciler{
+		interfaceName: interfaceName,
+		deviceID:      deviceID,
+		ensure:        ensure,
+		routes:        newRouteOwnership(),
+	}
 }
 
 // Apply reconciles the client's overlay address and every approved LAN route.
@@ -126,7 +134,12 @@ func (r *ClientReconciler) Apply(ctx context.Context, value snapshot.NetworkSnap
 		}
 		routes = append(routes, prefix)
 	}
-	return r.routes.reconcile(ctx, r.interfaceName, routes, func() error { return r.ensure(ctx, r.interfaceName, local.OverlayAddress, routes) })
+	return r.routes.reconcile(
+		ctx,
+		r.interfaceName,
+		routes,
+		func() error { return r.ensure(ctx, r.interfaceName, local.OverlayAddress, routes) },
+	)
 }
 
 func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSnapshot) error {
@@ -152,7 +165,8 @@ func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSn
 		peers[d.ID] = p
 		if d.ID == r.deviceID {
 			found = true
-			if err != nil || !p.IsValid() || p.Bits() != p.Addr().BitLen() || p.Addr().IsUnspecified() || d.Role != "client" {
+			if err != nil || !p.IsValid() || p.Bits() != p.Addr().BitLen() || p.Addr().IsUnspecified() ||
+				d.Role != "client" {
 				return errors.New("invalid client overlay identity")
 			}
 		}
@@ -187,20 +201,44 @@ func NewGatewayReconciler(interfaceName, deviceID string, dnsReconcilers ...*DNS
 // NewGatewayReconcilerWithOptions exposes host-wide forwarding as an explicit
 // deployment choice. The default constructor remains fail-safe for developers
 // and hosts where another network manager owns sysctl state.
-func NewGatewayReconcilerWithOptions(interfaceName, deviceID string, dnsReconciler *DNSReconciler, enableForwarding bool) *GatewayReconciler {
+func NewGatewayReconcilerWithOptions(
+	interfaceName, deviceID string,
+	dnsReconciler *DNSReconciler,
+	enableForwarding bool,
+) *GatewayReconciler {
 	var owner DNSApplier
 	if dnsReconciler != nil {
 		owner = dnsReconciler
 	}
-	return NewGatewayReconcilerWithEnsurer(interfaceName, deviceID, owner, enableForwarding, tunnel.EnsureLinuxInterface)
+
+	return NewGatewayReconcilerWithEnsurer(
+		interfaceName,
+		deviceID,
+		owner,
+		enableForwarding,
+		tunnel.EnsureLinuxInterface,
+	)
 }
 
 // NewGatewayReconcilerWithEnsurer exposes the host-interface boundary for
 // platform tests. The production constructor above always uses the Linux
 // implementation, while tests can verify policy/DNS transaction ordering
 // without creating a real tunnel device.
-func NewGatewayReconcilerWithEnsurer(interfaceName, deviceID string, dnsReconciler DNSApplier, enableForwarding bool, ensure func(context.Context, string, string, []netip.Prefix) error) *GatewayReconciler {
-	return &GatewayReconciler{interfaceName: interfaceName, deviceID: deviceID, policies: nft.NewApplier(interfaceName, nil), dns: dnsReconciler, forwarding: enableForwarding, ensure: ensure, routes: newRouteOwnership()}
+func NewGatewayReconcilerWithEnsurer(
+	interfaceName, deviceID string,
+	dnsReconciler DNSApplier,
+	enableForwarding bool,
+	ensure func(context.Context, string, string, []netip.Prefix) error,
+) *GatewayReconciler {
+	return &GatewayReconciler{
+		interfaceName: interfaceName,
+		deviceID:      deviceID,
+		policies:      nft.NewApplier(interfaceName, nil),
+		dns:           dnsReconciler,
+		forwarding:    enableForwarding,
+		ensure:        ensure,
+		routes:        newRouteOwnership(),
+	}
 }
 
 func (r *GatewayReconciler) Apply(ctx context.Context, value snapshot.NetworkSnapshot) error {
@@ -326,21 +364,45 @@ func (r *GatewayReconciler) prepare(ctx context.Context, value snapshot.NetworkS
 			return fmt.Errorf("ACL %s has invalid destination: %w", acl.ID, parseErr)
 		}
 		protocol := policy.Protocol(acl.Protocol)
-		rules = append(rules, policy.Rule{ID: acl.ID, SourceDeviceID: acl.SourceDeviceID, Destination: destination, Protocol: protocol, PortFrom: acl.PortFrom, PortTo: acl.PortTo})
+		rules = append(
+			rules,
+			policy.Rule{
+				ID:             acl.ID,
+				SourceDeviceID: acl.SourceDeviceID,
+				Destination:    destination,
+				Protocol:       protocol,
+				PortFrom:       acl.PortFrom,
+				PortTo:         acl.PortTo,
+			},
+		)
 	}
 	// Validate even an unapproved local gateway's ACL before any mutation;
 	// its final policy is nevertheless empty so revocation cannot retain allows.
-	if _, err := nft.Compile(r.interfaceName, peers, policy.Snapshot{Revision: value.Revision, DefaultAction: policy.ActionDeny, Rules: rules}); err != nil {
+	if _, err := nft.Compile(
+		r.interfaceName,
+		peers,
+		policy.Snapshot{Revision: value.Revision, DefaultAction: policy.ActionDeny, Rules: rules},
+	); err != nil {
 		return err
 	}
 	if !isGateway {
 		rules = nil
 	}
-	prepared, err := r.policies.Prepare(peers, policy.Snapshot{Revision: value.Revision, DefaultAction: policy.ActionDeny, Rules: rules})
+	prepared, err := r.policies.Prepare(
+		peers,
+		policy.Snapshot{Revision: value.Revision, DefaultAction: policy.ActionDeny, Rules: rules},
+	)
 	if err != nil {
 		return err
 	}
-	r.prepared = &gatewayPlan{fingerprint: snapshotFingerprint(value), value: cloneNetworkSnapshot(value), policy: prepared, overlay: local.OverlayAddress, routes: uniquePrefixes(routes), approved: isGateway}
+	r.prepared = &gatewayPlan{
+		fingerprint: snapshotFingerprint(value),
+		value:       cloneNetworkSnapshot(value),
+		policy:      prepared,
+		overlay:     local.OverlayAddress,
+		routes:      uniquePrefixes(routes),
+		approved:    isGateway,
+	}
 	r.staged = false
 	return nil
 }

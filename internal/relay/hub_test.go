@@ -30,7 +30,14 @@ func TestHubForwardsOnlyWithinSession(t *testing.T) {
 }
 
 func TestPacketRejectsOversizedPayload(t *testing.T) {
-	if _, err := EncodePacket(Packet{SessionID: "s", SourceDeviceID: "a", DestinationDeviceID: "b", Payload: make([]byte, maxPacketPayload+1)}); err == nil {
+	if _, err := EncodePacket(
+		Packet{
+			SessionID:           "s",
+			SourceDeviceID:      "a",
+			DestinationDeviceID: "b",
+			Payload:             make([]byte, maxPacketPayload+1),
+		},
+	); err == nil {
 		t.Fatal("oversized payload encoded")
 	}
 }

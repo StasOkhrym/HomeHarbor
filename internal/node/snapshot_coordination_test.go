@@ -126,7 +126,17 @@ func TestSnapshotLiveAndReconnectHeadsFetchMissingHistory(t *testing.T) {
 				if err := wsjson.Read(r.Context(), connection, &hello); err != nil {
 					return
 				}
-				if err := wsjson.Write(r.Context(), connection, map[string]any{"type": "welcome", "protocol": controlprotocol.Negotiated{Version: controlprotocol.CurrentVersion, Capabilities: []string{controlprotocol.CapabilityRelay}}}); err != nil {
+				if err := wsjson.Write(
+					r.Context(),
+					connection,
+					map[string]any{
+						"type": "welcome",
+						"protocol": controlprotocol.Negotiated{
+							Version:      controlprotocol.CurrentVersion,
+							Capabilities: []string{controlprotocol.CapabilityRelay},
+						},
+					},
+				); err != nil {
 					return
 				}
 				count := connections.Add(1)
@@ -140,7 +150,11 @@ func TestSnapshotLiveAndReconnectHeadsFetchMissingHistory(t *testing.T) {
 				}
 				for _, head := range heads {
 					payload, _ := json.Marshal(head)
-					if err := wsjson.Write(r.Context(), connection, controlprotocol.Message{Type: "network.snapshot", Payload: payload}); err != nil {
+					if err := wsjson.Write(
+						r.Context(),
+						connection,
+						controlprotocol.Message{Type: "network.snapshot", Payload: payload},
+					); err != nil {
 						return
 					}
 				}
@@ -159,7 +173,19 @@ func TestSnapshotLiveAndReconnectHeadsFetchMissingHistory(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			applier := &cursorRecorder{cancel: cancel}
-			err := RunCoordinationLoop(ctx, CoordinationConfig{URL: "ws" + server.URL[len("http"):] + "/ws", Credential: "credential", DeviceID: "device-1", NetworkID: "home", RootPublicKey: public, ReconnectInitial: time.Millisecond, ReconnectMax: 2 * time.Millisecond}, applier)
+			err := RunCoordinationLoop(
+				ctx,
+				CoordinationConfig{
+					URL:              "ws" + server.URL[len("http"):] + "/ws",
+					Credential:       "credential",
+					DeviceID:         "device-1",
+					NetworkID:        "home",
+					RootPublicKey:    public,
+					ReconnectInitial: time.Millisecond,
+					ReconnectMax:     2 * time.Millisecond,
+				},
+				applier,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -199,7 +225,12 @@ func TestSnapshotHistoryRejectsOversizedBodiesRedirectsAndUntrustedTLS(t *testin
 			server := httptest.NewServer(test.handler)
 			defer server.Close()
 			a, cursor := &stateApplier{}, &coordinationCursor{}
-			cfg := CoordinationConfig{URL: "ws" + server.URL[len("http"):], Credential: "credential", NetworkID: "home", RootPublicKey: public}
+			cfg := CoordinationConfig{
+				URL:           "ws" + server.URL[len("http"):],
+				Credential:    "credential",
+				NetworkID:     "home",
+				RootPublicKey: public,
+			}
 			if err := reconcileSnapshotHead(context.Background(), cfg, a, cursor, history[0]); err == nil {
 				t.Fatal("unbounded/redirected history accepted")
 			}
@@ -209,9 +240,16 @@ func TestSnapshotHistoryRejectsOversizedBodiesRedirectsAndUntrustedTLS(t *testin
 		})
 	}
 	t.Run("TLS", func(t *testing.T) {
-		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(history) }))
+		server := httptest.NewTLSServer(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(history) }),
+		)
 		defer server.Close()
-		cfg := CoordinationConfig{URL: "wss" + server.URL[len("https"):], Credential: "credential", NetworkID: "home", RootPublicKey: public}
+		cfg := CoordinationConfig{
+			URL:           "wss" + server.URL[len("https"):],
+			Credential:    "credential",
+			NetworkID:     "home",
+			RootPublicKey: public,
+		}
 		if _, err := fetchSnapshotHistory(context.Background(), cfg, 0, nil); err == nil {
 			t.Fatal("untrusted TLS server accepted")
 		}

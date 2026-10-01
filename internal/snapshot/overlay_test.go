@@ -25,14 +25,24 @@ func TestAllocateOverlayAddressRejectsPublicAndDefaultPools(t *testing.T) {
 			t.Fatalf("pool %s error=%v", pool, err)
 		}
 	}
-	if address, err := AllocateOverlayAddress(netip.MustParsePrefix("100.64.0.0/30"), nil); err != nil || address.String() != "100.64.0.1/32" {
+	if address, err := AllocateOverlayAddress(
+		netip.MustParsePrefix("100.64.0.0/30"),
+		nil,
+	); err != nil ||
+		address.String() != "100.64.0.1/32" {
 		t.Fatalf("CGNAT pool address=%s error=%v", address, err)
 	}
 }
 
 func TestAllocateOverlayAddressReportsExhaustionAndInvalidUsedState(t *testing.T) {
 	pool := netip.MustParsePrefix("10.0.0.0/30")
-	if _, err := AllocateOverlayAddress(pool, []string{"10.0.0.1/32", "10.0.0.2/32"}); !errors.Is(err, ErrOverlayPoolExhausted) {
+	if _, err := AllocateOverlayAddress(
+		pool,
+		[]string{"10.0.0.1/32", "10.0.0.2/32"},
+	); !errors.Is(
+		err,
+		ErrOverlayPoolExhausted,
+	) {
 		t.Fatalf("exhaustion error=%v", err)
 	}
 	if _, err := AllocateOverlayAddress(pool, []string{"not-an-address"}); !errors.Is(err, ErrInvalidOverlayPool) {

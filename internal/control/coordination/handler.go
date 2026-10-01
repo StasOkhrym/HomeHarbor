@@ -60,15 +60,36 @@ func (h *Handler) BroadcastSnapshot(ctx context.Context, envelope snapshot.Envel
 // NewHandler creates the coordination endpoint. Peer authorization is an
 // explicit option because candidate exchange is security-sensitive; without
 // it the handler refuses candidate updates instead of guessing a mesh policy.
-func NewHandler(auth Authenticator, reader DeviceReader, snapshots SnapshotProvider, allowedOrigins []string, authorizePeer func(context.Context, devices.Device, devices.Device) bool) *Handler {
-	return &Handler{Auth: auth, devices: reader, Snapshots: snapshots, AllowedOrigins: append([]string(nil), allowedOrigins...), AuthorizePeer: authorizePeer, hub: newHub(), sessions: newSessionOwner()}
+func NewHandler(
+	auth Authenticator,
+	reader DeviceReader,
+	snapshots SnapshotProvider,
+	allowedOrigins []string,
+	authorizePeer func(context.Context, devices.Device, devices.Device) bool,
+) *Handler {
+	return &Handler{
+		Auth:           auth,
+		devices:        reader,
+		Snapshots:      snapshots,
+		AllowedOrigins: append([]string(nil), allowedOrigins...),
+		AuthorizePeer:  authorizePeer,
+		hub:            newHub(),
+		sessions:       newSessionOwner(),
+	}
 }
 
 // NewHandlerWithHistory explicitly supplies the signed history dependency used
 // by ServeHistory, alongside the latest snapshot used by the WebSocket endpoint.
-func NewHandlerWithHistory(auth Authenticator, reader DeviceReader, snapshots SnapshotHistoryProvider, allowedOrigins []string, authorizePeer func(context.Context, devices.Device, devices.Device) bool) *Handler {
+func NewHandlerWithHistory(
+	auth Authenticator,
+	reader DeviceReader,
+	snapshots SnapshotHistoryProvider,
+	allowedOrigins []string,
+	authorizePeer func(context.Context, devices.Device, devices.Device) bool,
+) *Handler {
 	handler := NewHandler(auth, reader, snapshots, allowedOrigins, authorizePeer)
 	handler.History = snapshots
+
 	return handler
 }
 
@@ -125,7 +146,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.hub.remove(peer.id)
-	if err = writeJSONWithTimeout(r.Context(), connection, map[string]any{"type": "welcome", "protocol": negotiated}); err != nil {
+	if err = writeJSONWithTimeout(
+		r.Context(),
+		connection,
+		map[string]any{"type": "welcome", "protocol": negotiated},
+	); err != nil {
 		return
 	}
 	if h.Snapshots == nil {
@@ -183,7 +208,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if marshalErr != nil {
 				continue
 			}
-			h.hub.sendCandidate(r.Context(), destination.ID, controlprotocol.Message{Type: "candidate.update", Payload: payload})
+			h.hub.sendCandidate(
+				r.Context(),
+				destination.ID,
+				controlprotocol.Message{Type: "candidate.update", Payload: payload},
+			)
 		case "heartbeat":
 			_ = writePayload(r.Context(), connection, "heartbeat.ack", map[string]any{"at": time.Now().UTC()})
 		}

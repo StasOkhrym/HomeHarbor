@@ -14,18 +14,26 @@ import (
 func TestClientReconcilerUsesLocalOverlayAndApprovedRoutes(t *testing.T) {
 	var gotInterface, gotOverlay string
 	var gotRoutes []netip.Prefix
-	reconciler := NewClientReconcilerWithEnsurer("wg0", "client", func(_ context.Context, interfaceName, overlay string, routes []netip.Prefix) error {
-		gotInterface, gotOverlay, gotRoutes = interfaceName, overlay, routes
-		return nil
-	})
+	reconciler := NewClientReconcilerWithEnsurer(
+		"wg0",
+		"client",
+		func(_ context.Context, interfaceName, overlay string, routes []netip.Prefix) error {
+			gotInterface, gotOverlay, gotRoutes = interfaceName, overlay, routes
+			return nil
+		},
+	)
 	value := snapshot.NetworkSnapshot{
-		Devices: []snapshot.Device{{ID: "gateway", Role: "gateway", OverlayAddress: "100.64.0.1/32"}, {ID: "client", Role: "client", OverlayAddress: "100.64.0.2/32"}},
-		Routes:  []snapshot.Route{{ID: "lan", GatewayID: "gateway", Prefix: "192.168.50.0/24"}},
+		Devices: []snapshot.Device{
+			{ID: "gateway", Role: "gateway", OverlayAddress: "100.64.0.1/32"},
+			{ID: "client", Role: "client", OverlayAddress: "100.64.0.2/32"},
+		},
+		Routes: []snapshot.Route{{ID: "lan", GatewayID: "gateway", Prefix: "192.168.50.0/24"}},
 	}
 	if err := reconciler.Apply(context.Background(), value); err != nil {
 		t.Fatal(err)
 	}
-	if gotInterface != "wg0" || gotOverlay != "100.64.0.2/32" || !reflect.DeepEqual(gotRoutes, []netip.Prefix{netip.MustParsePrefix("192.168.50.0/24")}) {
+	if gotInterface != "wg0" || gotOverlay != "100.64.0.2/32" ||
+		!reflect.DeepEqual(gotRoutes, []netip.Prefix{netip.MustParsePrefix("192.168.50.0/24")}) {
 		t.Fatalf("reconciled interface=%q overlay=%q routes=%v", gotInterface, gotOverlay, gotRoutes)
 	}
 }
@@ -33,7 +41,11 @@ func TestClientReconcilerUsesLocalOverlayAndApprovedRoutes(t *testing.T) {
 func TestClientReconcilerRemovesRevokedRoutesAndRetriesFailedRemoval(t *testing.T) {
 	var commands [][]string
 	failDelete := true
-	r := NewClientReconcilerWithEnsurer("wg0", "client", func(context.Context, string, string, []netip.Prefix) error { return nil })
+	r := NewClientReconcilerWithEnsurer(
+		"wg0",
+		"client",
+		func(context.Context, string, string, []netip.Prefix) error { return nil },
+	)
 	r.routes.run = func(_ context.Context, args ...string) error {
 		commands = append(commands, append([]string(nil), args...))
 		if failDelete {
@@ -41,7 +53,10 @@ func TestClientReconcilerRemovesRevokedRoutesAndRetriesFailedRemoval(t *testing.
 		}
 		return nil
 	}
-	v := snapshot.NetworkSnapshot{Devices: []snapshot.Device{{ID: "client", Role: "client", OverlayAddress: "100.64.0.2/32"}}, Routes: []snapshot.Route{{ID: "lan", GatewayID: "gateway", Prefix: "192.168.50.0/24"}}}
+	v := snapshot.NetworkSnapshot{
+		Devices: []snapshot.Device{{ID: "client", Role: "client", OverlayAddress: "100.64.0.2/32"}},
+		Routes:  []snapshot.Route{{ID: "lan", GatewayID: "gateway", Prefix: "192.168.50.0/24"}},
+	}
 	ctx := context.Background()
 	if err := r.Apply(ctx, v); err != nil {
 		t.Fatal(err)
@@ -62,7 +77,13 @@ func TestClientReconcilerRemovesRevokedRoutesAndRetriesFailedRemoval(t *testing.
 
 func TestGatewayRoutesExcludeLocallyServedLAN(t *testing.T) {
 	var routes []netip.Prefix
-	r := NewGatewayReconcilerWithEnsurer("wg0", "gateway", nil, false, func(_ context.Context, _, _ string, p []netip.Prefix) error { routes = p; return nil })
+	r := NewGatewayReconcilerWithEnsurer(
+		"wg0",
+		"gateway",
+		nil,
+		false,
+		func(_ context.Context, _, _ string, p []netip.Prefix) error { routes = p; return nil },
+	)
 	r.policies = nft.NewApplierWithRunner("wg0", nil, func(context.Context, string) error { return nil })
 	if err := r.Apply(context.Background(), gatewaySnapshotForReconciler()); err != nil {
 		t.Fatal(err)
@@ -74,14 +95,20 @@ func TestGatewayRoutesExcludeLocallyServedLAN(t *testing.T) {
 
 func TestClientReconcilerRejectsDefaultRouteBeforeEnsure(t *testing.T) {
 	called := false
-	reconciler := NewClientReconcilerWithEnsurer("wg0", "client", func(context.Context, string, string, []netip.Prefix) error {
-		called = true
-		return nil
-	})
+	reconciler := NewClientReconcilerWithEnsurer(
+		"wg0",
+		"client",
+		func(context.Context, string, string, []netip.Prefix) error {
+			called = true
+			return nil
+		},
+	)
+
 	err := reconciler.Apply(context.Background(), snapshot.NetworkSnapshot{
 		Devices: []snapshot.Device{{ID: "client", Role: "client", OverlayAddress: "100.64.0.2/32"}},
 		Routes:  []snapshot.Route{{ID: "default", GatewayID: "gateway", Prefix: "0.0.0.0/0"}},
 	})
+
 	if err == nil || called {
 		t.Fatalf("default route err=%v ensure called=%v", err, called)
 	}

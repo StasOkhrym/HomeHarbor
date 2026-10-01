@@ -26,7 +26,11 @@ func TestUDPPairBridgeDiscoversReflexiveEndpointOnOwnedSocket(t *testing.T) {
 		if stunErr := request.UnmarshalBinary(buffer[:n]); stunErr != nil {
 			return
 		}
-		response := stun.MustBuild(stun.NewTransactionIDSetter(request.TransactionID), stun.BindingSuccess, &stun.XORMappedAddress{IP: net.ParseIP("203.0.113.10"), Port: 45678})
+		response := stun.MustBuild(
+			stun.NewTransactionIDSetter(request.TransactionID),
+			stun.BindingSuccess,
+			&stun.XORMappedAddress{IP: net.ParseIP("203.0.113.10"), Port: 45678},
+		)
 		_, _ = stunServer.WriteToUDP(response.Raw, source)
 	}()
 
@@ -76,11 +80,26 @@ func TestUDPPairBridgesForwardOpaquePayloadThroughRelay(t *testing.T) {
 		t.Fatal(err)
 	}
 	observed := make(chan netip.AddrPort, 1)
-	bridgeA, err := NewUDPPairBridge(UDPPairBridgeConfig{Ticket: ticketA, RelayAddress: relayAddress, ListenAddress: &net.UDPAddr{IP: net.ParseIP("127.0.0.1")}, WireGuardAddress: wireGuardA.LocalAddr().(*net.UDPAddr), OnObservedEndpoint: func(endpoint netip.AddrPort) { observed <- endpoint }})
+	bridgeA, err := NewUDPPairBridge(
+		UDPPairBridgeConfig{
+			Ticket:             ticketA,
+			RelayAddress:       relayAddress,
+			ListenAddress:      &net.UDPAddr{IP: net.ParseIP("127.0.0.1")},
+			WireGuardAddress:   wireGuardA.LocalAddr().(*net.UDPAddr),
+			OnObservedEndpoint: func(endpoint netip.AddrPort) { observed <- endpoint },
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bridgeB, err := NewUDPPairBridge(UDPPairBridgeConfig{Ticket: ticketB, RelayAddress: relayAddress, ListenAddress: &net.UDPAddr{IP: net.ParseIP("127.0.0.1")}, WireGuardAddress: wireGuardB.LocalAddr().(*net.UDPAddr)})
+	bridgeB, err := NewUDPPairBridge(
+		UDPPairBridgeConfig{
+			Ticket:           ticketB,
+			RelayAddress:     relayAddress,
+			ListenAddress:    &net.UDPAddr{IP: net.ParseIP("127.0.0.1")},
+			WireGuardAddress: wireGuardB.LocalAddr().(*net.UDPAddr),
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

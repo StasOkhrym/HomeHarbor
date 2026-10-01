@@ -88,7 +88,24 @@ password_file = "` + passwordPath + `"
 }
 
 func TestControlValidationRejectsUnsafeAuthenticationSettings(t *testing.T) {
-	valid := Control{Server: Server{ListenAddress: ":8080", PublicURL: "https://tunnel.example.com"}, Database: Database{URL: "postgres://db/tunnel"}, Auth: Auth{RPID: "tunnel.example.com", RPOrigin: "https://tunnel.example.com", SessionSigningKey: "01234567890123456789012345678901", CeremonyEncryptionKey: "abcdefghijklmnopqrstuvwxyzABCDEF", SessionTTL: "12h", CeremonyTTL: "5m"}, Relay: Relay{PublicURL: "wss://relay.example.com", TicketKey: "01234567890123456789012345678901", TicketTTL: "5m"}, Security: ControlSecurity{RootPublicKeyFile: "/run/secrets/root_public_key"}}
+	valid := Control{
+		Server:   Server{ListenAddress: ":8080", PublicURL: "https://tunnel.example.com"},
+		Database: Database{URL: "postgres://db/tunnel"},
+		Auth: Auth{
+			RPID:                  "tunnel.example.com",
+			RPOrigin:              "https://tunnel.example.com",
+			SessionSigningKey:     "01234567890123456789012345678901",
+			CeremonyEncryptionKey: "abcdefghijklmnopqrstuvwxyzABCDEF",
+			SessionTTL:            "12h",
+			CeremonyTTL:           "5m",
+		},
+		Relay: Relay{
+			PublicURL: "wss://relay.example.com",
+			TicketKey: "01234567890123456789012345678901",
+			TicketTTL: "5m",
+		},
+		Security: ControlSecurity{RootPublicKeyFile: "/run/secrets/root_public_key"},
+	}
 	tests := []struct {
 		name   string
 		mutate func(*Control)
@@ -113,7 +130,23 @@ func TestControlValidationRejectsUnsafeAuthenticationSettings(t *testing.T) {
 }
 
 func TestControlValidationRequiresTrustedRootPublicKey(t *testing.T) {
-	cfg := Control{Server: Server{ListenAddress: ":8080", PublicURL: "https://tunnel.example.com"}, Database: Database{URL: "postgres://db/tunnel"}, Auth: Auth{RPID: "tunnel.example.com", RPOrigin: "https://tunnel.example.com", SessionSigningKey: "01234567890123456789012345678901", CeremonyEncryptionKey: "abcdefghijklmnopqrstuvwxyzABCDEF", SessionTTL: "12h", CeremonyTTL: "5m"}, Relay: Relay{PublicURL: "wss://relay.example.com", TicketKey: "01234567890123456789012345678901", TicketTTL: "5m"}}
+	cfg := Control{
+		Server:   Server{ListenAddress: ":8080", PublicURL: "https://tunnel.example.com"},
+		Database: Database{URL: "postgres://db/tunnel"},
+		Auth: Auth{
+			RPID:                  "tunnel.example.com",
+			RPOrigin:              "https://tunnel.example.com",
+			SessionSigningKey:     "01234567890123456789012345678901",
+			CeremonyEncryptionKey: "abcdefghijklmnopqrstuvwxyzABCDEF",
+			SessionTTL:            "12h",
+			CeremonyTTL:           "5m",
+		},
+		Relay: Relay{
+			PublicURL: "wss://relay.example.com",
+			TicketKey: "01234567890123456789012345678901",
+			TicketTTL: "5m",
+		},
+	}
 	if err := cfg.validate(); err == nil {
 		t.Fatal("validate() accepted control configuration without trusted root public key")
 	}
@@ -131,7 +164,11 @@ func TestLoadControlRejectsMissingRequiredValues(t *testing.T) {
 
 func TestLoadRelayServerEnvironmentSecretOverridesMissingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relay.toml")
-	if err := os.WriteFile(path, []byte("[server]\nlisten_address = \"127.0.0.1:0\"\n[security]\nticket_key_file = \"/missing/relay-ticket\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		path,
+		[]byte("[server]\nlisten_address = \"127.0.0.1:0\"\n[security]\nticket_key_file = \"/missing/relay-ticket\"\n"),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GO_TUNNELS_RELAY_TICKET_KEY", "01234567890123456789012345678901")
@@ -183,7 +220,10 @@ candidates = "203.0.113.2:51820"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Identity.StatePath != "state/custom-client.json" || cfg.Identity.Token != "invite-token" || cfg.Relay.Ticket != "relay-ticket" || cfg.WireGuard.ListenPort != 51830 || cfg.Direct.Candidates != "203.0.113.2:51820" {
+	if cfg.Identity.StatePath != "state/custom-client.json" || cfg.Identity.Token != "invite-token" ||
+		cfg.Relay.Ticket != "relay-ticket" ||
+		cfg.WireGuard.ListenPort != 51830 ||
+		cfg.Direct.Candidates != "203.0.113.2:51820" {
 		t.Fatalf("unexpected client config: %#v", cfg)
 	}
 }
@@ -197,7 +237,11 @@ func TestLoadAgentAppliesSafeDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Identity.Name != "linux-gateway" || cfg.Identity.StatePath != "state/agent.json" || cfg.Relay.ListenAddress != "127.0.0.1:51821" || cfg.Relay.WireGuardAddress != "127.0.0.1:51820" || cfg.WireGuard.ListenPort != 51820 || cfg.Coordination.NetworkID != "home" {
+	if cfg.Identity.Name != "linux-gateway" || cfg.Identity.StatePath != "state/agent.json" ||
+		cfg.Relay.ListenAddress != "127.0.0.1:51821" ||
+		cfg.Relay.WireGuardAddress != "127.0.0.1:51820" ||
+		cfg.WireGuard.ListenPort != 51820 ||
+		cfg.Coordination.NetworkID != "home" {
 		t.Fatalf("unexpected defaults: %#v", cfg)
 	}
 }
@@ -225,7 +269,9 @@ overlay_pool = "10.200.0.0/24"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Endpoint != "https://control.example" || cfg.KeyID != "root-2026" || cfg.Passphrase != "correct horse battery staple" || cfg.OverlayPool != "10.200.0.0/24" {
+	if cfg.Endpoint != "https://control.example" || cfg.KeyID != "root-2026" ||
+		cfg.Passphrase != "correct horse battery staple" ||
+		cfg.OverlayPool != "10.200.0.0/24" {
 		t.Fatalf("unexpected admin config: %#v", cfg)
 	}
 }

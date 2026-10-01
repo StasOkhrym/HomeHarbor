@@ -26,7 +26,8 @@ func TestLinuxNamespaceDefaultDenyLANAccess(t *testing.T) {
 	lanNS := "gt-lan-" + suffix
 	for _, namespace := range []string{clientNS, gatewayNS, lanNS} {
 		if err := run("ip", "netns", "add", namespace); err != nil {
-			if strings.Contains(err.Error(), "Operation not permitted") || strings.Contains(err.Error(), "Permission denied") {
+			if strings.Contains(err.Error(), "Operation not permitted") ||
+				strings.Contains(err.Error(), "Permission denied") {
 				t.Fatalf("mandatory network namespace acceptance unavailable: %v", err)
 			}
 			t.Fatal(err)
@@ -93,7 +94,8 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 	lanNS := "gt-lan-" + suffix
 	for _, namespace := range []string{clientNS, gatewayNS, lanNS} {
 		if err := run("ip", "netns", "add", namespace); err != nil {
-			if strings.Contains(err.Error(), "Operation not permitted") || strings.Contains(err.Error(), "Permission denied") {
+			if strings.Contains(err.Error(), "Operation not permitted") ||
+				strings.Contains(err.Error(), "Permission denied") {
 				t.Fatalf("mandatory network namespace acceptance unavailable: %v", err)
 			}
 			t.Fatal(err)
@@ -174,7 +176,12 @@ func requireNetworkTools(t *testing.T, wireGuard bool) {
 	}
 }
 
-func applyDefaultDenyPolicy(t *testing.T, namespace, interfaceName string, peers map[string]netip.Prefix, rules policy.Snapshot) {
+func applyDefaultDenyPolicy(
+	t *testing.T,
+	namespace, interfaceName string,
+	peers map[string]netip.Prefix,
+	rules policy.Snapshot,
+) {
 	t.Helper()
 	script, err := nft.Compile(interfaceName, peers, rules)
 	if err != nil {
@@ -190,13 +197,27 @@ func applyDefaultDenyPolicy(t *testing.T, namespace, interfaceName string, peers
 
 func verifyGatewayInputDenied(t *testing.T, clientNS, gatewayNS string) {
 	t.Helper()
-	server := exec.Command("ip", "netns", "exec", gatewayNS, "python3", "-m", "http.server", "8082", "--bind", "100.64.0.1")
+	server := exec.Command(
+		"ip",
+		"netns",
+		"exec",
+		gatewayNS,
+		"python3",
+		"-m",
+		"http.server",
+		"8082",
+		"--bind",
+		"100.64.0.1",
+	)
 	server.Stdout, server.Stderr = io.Discard, io.Discard
+
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() { _ = server.Process.Kill(); _ = server.Wait() })
 	waitForHTTP(t, gatewayNS, "http://100.64.0.1:8082")
+
 	if err := curl(clientNS, "http://100.64.0.1:8082"); err == nil {
 		t.Fatal("tunnel accessed a gateway-local service without input authorization")
 	}
@@ -213,6 +234,7 @@ func verifyUnrelatedForwarding(t *testing.T, clientNS, gatewayNS, lanNS string) 
 			t.Fatal(err)
 		}
 	}
+
 	for _, command := range [][]string{
 		{clientNS, "ip", "addr", "add", "172.20.0.2/24", "dev", "gt-other-peer"},
 		{gatewayNS, "ip", "addr", "add", "172.20.0.1/24", "dev", "other0"},
@@ -226,7 +248,18 @@ func verifyUnrelatedForwarding(t *testing.T, clientNS, gatewayNS, lanNS string) 
 			t.Fatal(err)
 		}
 	}
-	if err := runInNamespace(clientNS, "curl", "--interface", "172.20.0.2", "--fail", "--silent", "--max-time", "2", "http://192.168.50.2:8081"); err != nil {
+
+	if err := runInNamespace(
+		clientNS,
+		"curl",
+		"--interface",
+		"172.20.0.2",
+		"--fail",
+		"--silent",
+		"--max-time",
+		"2",
+		"http://192.168.50.2:8081",
+	); err != nil {
 		t.Fatalf("tunnel firewall blocked unrelated forwarding: %v", err)
 	}
 }
@@ -252,7 +285,20 @@ while True:
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = server.Process.Kill(); _ = server.Wait() })
-	allow := policy.Snapshot{Revision: 2, DefaultAction: policy.ActionDeny, Rules: []policy.Rule{{ID: "echo", SourceDeviceID: "client", Destination: netip.MustParsePrefix("192.168.50.2/32"), Protocol: policy.ProtocolTCP, PortFrom: 9090, PortTo: 9090}}}
+	allow := policy.Snapshot{
+		Revision:      2,
+		DefaultAction: policy.ActionDeny,
+		Rules: []policy.Rule{
+			{
+				ID:             "echo",
+				SourceDeviceID: "client",
+				Destination:    netip.MustParsePrefix("192.168.50.2/32"),
+				Protocol:       policy.ProtocolTCP,
+				PortFrom:       9090,
+				PortTo:         9090,
+			},
+		},
+	}
 	applyDefaultDenyPolicy(t, gatewayNS, link, peers, allow)
 	const client = `import socket,sys,time
 deadline=time.monotonic()+5
@@ -297,7 +343,17 @@ with s:
 		t.Fatalf("established TCP flow survived ACL revoke: %q", scanner.Text())
 	}
 	// Empty ACL and the staged guard must both preserve unrelated forwarding.
-	if err := runInNamespace(clientNS, "curl", "--interface", "172.20.0.2", "--fail", "--silent", "--max-time", "2", "http://192.168.50.2:8081"); err != nil {
+	if err := runInNamespace(
+		clientNS,
+		"curl",
+		"--interface",
+		"172.20.0.2",
+		"--fail",
+		"--silent",
+		"--max-time",
+		"2",
+		"http://192.168.50.2:8081",
+	); err != nil {
 		t.Fatalf("revocation blocked unrelated forwarding: %v", err)
 	}
 }
@@ -319,10 +375,46 @@ func configureWireGuard(t *testing.T, clientNS, gatewayNS string) {
 			t.Fatal(err)
 		}
 	}
-	if err := runWithInput(gatewayNS, gatewayPrivate+"\n", "wg", "set", "wg0", "private-key", "/dev/stdin", "listen-port", "51820", "peer", clientPublic, "allowed-ips", "10.200.0.2/32", "endpoint", "100.64.0.2:51820", "persistent-keepalive", "25"); err != nil {
+	if err := runWithInput(
+		gatewayNS,
+		gatewayPrivate+"\n",
+		"wg",
+		"set",
+		"wg0",
+		"private-key",
+		"/dev/stdin",
+		"listen-port",
+		"51820",
+		"peer",
+		clientPublic,
+		"allowed-ips",
+		"10.200.0.2/32",
+		"endpoint",
+		"100.64.0.2:51820",
+		"persistent-keepalive",
+		"25",
+	); err != nil {
 		t.Fatal(err)
 	}
-	if err := runWithInput(clientNS, clientPrivate+"\n", "wg", "set", "wg0", "private-key", "/dev/stdin", "listen-port", "51820", "peer", gatewayPublic, "allowed-ips", "192.168.50.0/24", "endpoint", "100.64.0.1:51820", "persistent-keepalive", "25"); err != nil {
+	if err := runWithInput(
+		clientNS,
+		clientPrivate+"\n",
+		"wg",
+		"set",
+		"wg0",
+		"private-key",
+		"/dev/stdin",
+		"listen-port",
+		"51820",
+		"peer",
+		gatewayPublic,
+		"allowed-ips",
+		"192.168.50.0/24",
+		"endpoint",
+		"100.64.0.1:51820",
+		"persistent-keepalive",
+		"25",
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err := runInNamespace(gatewayNS, "ip", "route", "add", "10.200.0.2/32", "dev", "wg0"); err != nil {
@@ -394,14 +486,28 @@ func startHTTPServers(t *testing.T, namespace string) []*exec.Cmd {
 	t.Helper()
 	servers := make([]*exec.Cmd, 0, 2)
 	for _, port := range []string{"8080", "8081"} {
-		server := exec.Command("ip", "netns", "exec", namespace, "python3", "-m", "http.server", port, "--bind", "192.168.50.2")
+		server := exec.Command(
+			"ip",
+			"netns",
+			"exec",
+			namespace,
+			"python3",
+			"-m",
+			"http.server",
+			port,
+			"--bind",
+			"192.168.50.2",
+		)
 		server.Stdout = io.Discard
 		server.Stderr = io.Discard
+
 		if err := server.Start(); err != nil {
 			t.Fatal(err)
 		}
+
 		servers = append(servers, server)
 	}
+
 	return servers
 }
 
@@ -418,14 +524,27 @@ while True:
  finally: c.close()`
 	servers := make([]*exec.Cmd, 0, len(ports))
 	for _, port := range ports {
-		server := exec.Command("ip", "netns", "exec", namespace, "python3", "-c", serverScript, "192.168.50.2", fmt.Sprint(port))
+		server := exec.Command(
+			"ip",
+			"netns",
+			"exec",
+			namespace,
+			"python3",
+			"-c",
+			serverScript,
+			"192.168.50.2",
+			fmt.Sprint(port),
+		)
 		server.Stdout = io.Discard
 		server.Stderr = io.Discard
+
 		if err := server.Start(); err != nil {
 			t.Fatal(err)
 		}
+
 		servers = append(servers, server)
 	}
+
 	return servers
 }
 
@@ -446,7 +565,18 @@ func waitForHTTP(t *testing.T, namespace, address string) {
 }
 
 func curl(namespace, address string) error {
-	return runInNamespace(namespace, "curl", "--fail", "--silent", "--show-error", "--connect-timeout", "1", "--max-time", "1", address)
+	return runInNamespace(
+		namespace,
+		"curl",
+		"--fail",
+		"--silent",
+		"--show-error",
+		"--connect-timeout",
+		"1",
+		"--max-time",
+		"1",
+		address,
+	)
 }
 
 func waitForTCPBanner(t *testing.T, namespace, address string, port int) {
@@ -491,10 +621,18 @@ func runInNamespace(namespace string, command ...string) error {
 
 func run(command string, arguments ...string) error {
 	process := exec.Command(command, arguments...)
+
 	output, err := process.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s %s: %w (%s)", command, strings.Join(arguments, " "), err, strings.TrimSpace(string(output)))
+		return fmt.Errorf(
+			"%s %s: %w (%s)",
+			command,
+			strings.Join(arguments, " "),
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
+
 	return nil
 }
 

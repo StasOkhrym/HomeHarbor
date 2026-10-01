@@ -112,7 +112,10 @@ func TestCompositeFailureLeavesGuardUntilCompleteRetry(t *testing.T) {
 	if guard.denied || guard.revision != 2 {
 		t.Fatalf("retry did not commit: %#v", guard)
 	}
-	if !reflect.DeepEqual(calls, []string{"validate-gateway", "validate-peer", "deny", "apply-gateway", "apply-peer", "commit"}) {
+	if !reflect.DeepEqual(
+		calls,
+		[]string{"validate-gateway", "validate-peer", "deny", "apply-gateway", "apply-peer", "commit"},
+	) {
 		t.Fatalf("unsafe order: %v", calls)
 	}
 }

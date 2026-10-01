@@ -26,20 +26,36 @@ func Bind(tx pgx.Tx) *Repository { return &Repository{db: tx} }
 func New(pool *pgxpool.Pool) *Repository { return &Repository{db: pool} }
 
 func (s *Repository) Save(ctx context.Context, record invites.Record) error {
-	tag, err := s.db.Exec(ctx, `
+	tag, err := s.db.Exec(
+		ctx,
+		`
 		INSERT INTO invite_records(
 			invite_id, profile_id, device_id, device_public_key, wireguard_public_key,
 			permit_version, permit_key_id, permit_payload, permit_signature,
 			proof_version, proof_device_public_key, proof_code_digest, proof_signature, proof_device_signature,
 			status, created_at
 		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT(invite_id) DO NOTHING`,
-		record.InviteID, record.ProfileID, record.DeviceID, record.DevicePublic, record.WireGuardPublicKey,
-		record.Permit.Version, record.Permit.KeyID, record.Permit.Payload, record.Permit.Signature,
-		record.Proof.Version, record.Proof.DevicePublicKey, record.Proof.CodeDigest, record.Proof.Signature, record.Proof.DeviceSignature,
-		record.Status, record.CreatedAt)
+		record.InviteID,
+		record.ProfileID,
+		record.DeviceID,
+		record.DevicePublic,
+		record.WireGuardPublicKey,
+		record.Permit.Version,
+		record.Permit.KeyID,
+		record.Permit.Payload,
+		record.Permit.Signature,
+		record.Proof.Version,
+		record.Proof.DevicePublicKey,
+		record.Proof.CodeDigest,
+		record.Proof.Signature,
+		record.Proof.DeviceSignature,
+		record.Status,
+		record.CreatedAt,
+	)
 	if err != nil {
 		return err
 	}
+
 	if tag.RowsAffected() == 0 {
 		current, err := s.Get(ctx, record.InviteID)
 		if err != nil {
@@ -52,6 +68,7 @@ func (s *Repository) Save(ctx context.Context, record invites.Record) error {
 			return invites.ErrInviteConsumed
 		}
 	}
+
 	return nil
 }
 

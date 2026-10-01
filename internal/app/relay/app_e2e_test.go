@@ -132,18 +132,27 @@ func waitForRelayReady(t *testing.T, address string, client *http.Client) {
 	t.Fatal("production relay readiness did not become healthy")
 }
 
-func waitForRelayUDP(t *testing.T, sender *net.UDPConn, bridgeAddress *net.UDPAddr, receiver *net.UDPConn, payload []byte) {
+func waitForRelayUDP(
+	t *testing.T,
+	sender *net.UDPConn,
+	bridgeAddress *net.UDPAddr,
+	receiver *net.UDPConn,
+	payload []byte,
+) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	buffer := make([]byte, 256)
 	for time.Now().Before(deadline) {
 		_, _ = sender.WriteToUDP(payload, bridgeAddress)
+
 		_ = receiver.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+
 		n, _, readErr := receiver.ReadFromUDP(buffer)
 		if readErr == nil && string(buffer[:n]) == string(payload) {
 			return
 		}
 	}
+
 	t.Fatalf("did not receive UDP payload %q", payload)
 }
 

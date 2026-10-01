@@ -40,6 +40,16 @@ func NewRouter(server *Server) http.Handler {
 		w.Header().Set("Cache-Control", "public, max-age=3600, immutable")
 		_, _ = w.Write(adminCSS)
 	})
+	router.Get("/assets/admin.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=3600, immutable")
+		_, _ = w.Write(adminScript)
+	})
+	router.Get("/assets/htmx-2.0.11.min.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		_, _ = w.Write(htmxScript)
+	})
 	router.Get("/readyz", func(w http.ResponseWriter, request *http.Request) {
 		if server.ready != nil {
 			if err := server.ready(request.Context()); err != nil {
@@ -105,7 +115,8 @@ func clientAddress(request *http.Request, trusted []netip.Prefix) string {
 
 func securityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		w.Header().
+			Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -123,12 +134,25 @@ func accessLogMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 			started := time.Now()
 			writer := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(writer, request)
-			logger.Info("http request", "method", request.Method, "path", request.URL.Path, "status", writer.status, "duration_ms", time.Since(started).Milliseconds(), "request_id", w.Header().Get("X-Request-ID"))
+			logger.Info(
+				"http request",
+				"method",
+				request.Method,
+				"path",
+				request.URL.Path,
+				"status",
+				writer.status,
+				"duration_ms",
+				time.Since(started).Milliseconds(),
+				"request_id",
+				w.Header().Get("X-Request-ID"),
+			)
 		})
 	}
 }
@@ -194,10 +218,16 @@ func validRequestID(value string) bool {
 	if value == "" || len(value) > maxRequestIDLength {
 		return false
 	}
+
 	for _, character := range value {
-		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') && (character < '0' || character > '9') && character != '-' && character != '_' && character != '.' {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') &&
+			character != '-' &&
+			character != '_' &&
+			character != '.' {
 			return false
 		}
 	}
+
 	return true
 }

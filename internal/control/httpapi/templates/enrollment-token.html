@@ -1,20 +1,24 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width">
-  <title>Enrollment invite</title>
-  <link rel="stylesheet" href="/assets/admin.css">
-</head>
-<body>
-  <main>
-    <h1>Enrollment invite created</h1>
-    <p>Copy this token into the separate secure invite channel. It is shown only on this page.</p>
-    <p><strong>Role:</strong> {{.Role}}</p>
-    <p><strong>Expires:</strong> {{.ExpiresAt}}</p>
-    <label for="token">One-time token</label>
-    <textarea id="token" rows="4" readonly>{{.Token}}</textarea>
-    <p><a href="/admin/">Return to admin</a></p>
-  </main>
-</body>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>One-time enrollment token · Go Tunnels</title>
+    <link rel="stylesheet" href="/assets/admin.css?v=ui-2">
+    <script src="/assets/admin.js?v=ui-2" defer></script>
+  </head>
+  <body class="auth-page" data-secret-page>
+    <main class="auth-card">
+      <h1>Save your one-time token</h1>
+      <p>Copy it now into your secure enrollment channel. It cannot be shown again after you leave this page.</p>
+      <p><strong>Role:</strong> {{.Role}}</p>
+      <p><strong>Expires:</strong> {{.ExpiresAt.UTC.Format "02 Jan 2006, 15:04 UTC"}}</p>
+      <div class="field">
+        <label for="token">One-time token</label>
+        <textarea id="token" rows="4" readonly data-secret-value>{{.Token}}</textarea>
+      </div>
+      <p class="help">This token registers a device; it does not grant signed LAN access.</p>
+      <a class="button secondary" href="/admin/invites">Done · return to invites</a>
+    </main>
+  </body>
 </html>

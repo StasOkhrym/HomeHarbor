@@ -23,7 +23,15 @@ func TestPostgresRotationLocksDeviceBeforeCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	ipk, wpk := validPostgresPublicKeys(t)
-	d, err := service.Enroll(ctx, devices.EnrollRequest{Token: token.Token, Name: uniqueIntegrationLabel(), IdentityPublicKey: ipk, WireGuardPublicKey: wpk})
+	d, err := service.Enroll(
+		ctx,
+		devices.EnrollRequest{
+			Token:              token.Token,
+			Name:               uniqueIntegrationLabel(),
+			IdentityPublicKey:  ipk,
+			WireGuardPublicKey: wpk,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +72,8 @@ func TestPostgresRotationLocksDeviceBeforeCredential(t *testing.T) {
 	defer ticker.Stop()
 	for {
 		var blocked bool
-		if err := pool.QueryRow(ctx, `SELECT COALESCE(wait_event_type='Lock',false) FROM pg_stat_activity WHERE pid=$1`, pid).Scan(&blocked); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT COALESCE(wait_event_type='Lock',false) FROM pg_stat_activity WHERE pid=$1`, pid).
+			Scan(&blocked); err != nil {
 			t.Fatal(err)
 		}
 		if blocked {
@@ -76,7 +85,11 @@ func TestPostgresRotationLocksDeviceBeforeCredential(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	if _, err := claim.Exec(ctx, `SELECT device_id FROM device_credentials WHERE device_id=$1 AND revoked_at IS NULL FOR UPDATE NOWAIT`, d.ID); err != nil {
+	if _, err := claim.Exec(
+		ctx,
+		`SELECT device_id FROM device_credentials WHERE device_id=$1 AND revoked_at IS NULL FOR UPDATE NOWAIT`,
+		d.ID,
+	); err != nil {
 		t.Fatalf("rotation acquired a credential lock before the device: %v", err)
 	}
 }

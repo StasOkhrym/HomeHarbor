@@ -104,7 +104,14 @@ func TestProofRejectsZeroWireGuardPublicKey(t *testing.T) {
 	}
 	// Keep the verification assertion explicit as well: an attacker cannot
 	// bypass the constructor and submit a hand-built zero-key proof.
-	proof = Proof{Version: Version, InviteID: item.Permit.InviteID, DeviceID: "device-1", DevicePublicKey: devicePrivate.Public().(ed25519.PublicKey), WireGuardPublicKey: zeroKey, CodeDigest: codeDigest(item.Code)}
+	proof = Proof{
+		Version:            Version,
+		InviteID:           item.Permit.InviteID,
+		DeviceID:           "device-1",
+		DevicePublicKey:    devicePrivate.Public().(ed25519.PublicKey),
+		WireGuardPublicKey: zeroKey,
+		CodeDigest:         codeDigest(item.Code),
+	}
 	proofPayload, err := canonicalMode.Marshal(struct {
 		Version            uint16 `cbor:"version"`
 		InviteID           string `cbor:"invite_id"`
@@ -195,16 +202,29 @@ func TestApprovalBindsExactDeviceDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	approval := Approval{Version: Version, InviteID: "invite-1", ProfileID: "family", DeviceID: "phone-1", DevicePublicKey: make([]byte, ed25519.PublicKeySize), WireGuardPublicKey: make([]byte, 32)}
+
+	approval := Approval{
+		Version:            Version,
+		InviteID:           "invite-1",
+		ProfileID:          "family",
+		DeviceID:           "phone-1",
+		DevicePublicKey:    make([]byte, ed25519.PublicKeySize),
+		WireGuardPublicKey: make([]byte, 32),
+	}
+
 	signed, err := SignApproval(approval, rootPrivate)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	publicKey := rootPrivate.Public().(ed25519.PublicKey)
+
 	if err := VerifyApproval(signed, publicKey, approval); err != nil {
 		t.Fatal(err)
 	}
+
 	approval.DeviceID = "other-phone"
+
 	if err := VerifyApproval(signed, publicKey, approval); !errors.Is(err, ErrInvalidApproval) {
 		t.Fatalf("modified approval error = %v", err)
 	}

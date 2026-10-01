@@ -72,7 +72,9 @@ func TestPostgresOutboxKeepsUnacknowledgedRowsForStableRedelivery(t *testing.T) 
 		t.Fatalf("error = %v", err)
 	}
 	var pending bool
-	if err := pool.QueryRow(ctx, `SELECT published_at IS NULL FROM event_outbox`).Scan(&pending); err != nil || !pending {
+	if err := pool.QueryRow(ctx, `SELECT published_at IS NULL FROM event_outbox`).
+		Scan(&pending); err != nil ||
+		!pending {
 		t.Fatalf("unacknowledged row lost: pending=%v error=%v", pending, err)
 	}
 	probe.failure = nil
@@ -82,7 +84,9 @@ func TestPostgresOutboxKeepsUnacknowledgedRowsForStableRedelivery(t *testing.T) 
 	if len(probe.ids) != 2 || probe.ids[0] != probe.ids[1] || probe.ids[0] != "outbox:1" {
 		t.Fatalf("retry identity changed: %v", probe.ids)
 	}
-	if err := pool.QueryRow(ctx, `SELECT published_at IS NULL FROM event_outbox`).Scan(&pending); err != nil || pending {
+	if err := pool.QueryRow(ctx, `SELECT published_at IS NULL FROM event_outbox`).
+		Scan(&pending); err != nil ||
+		pending {
 		t.Fatalf("acknowledged row not marked: pending=%v error=%v", pending, err)
 	}
 }

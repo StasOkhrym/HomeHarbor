@@ -27,9 +27,15 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("lock migrations: %w", err)
 	}
 	defer func() {
-		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtextextended('go_tunnels:migrations', 0))`)
+		_, _ = conn.Exec(
+			context.Background(),
+			`SELECT pg_advisory_unlock(hashtextextended('go_tunnels:migrations', 0))`,
+		)
 	}()
-	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations(name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
+	if _, err := conn.Exec(
+		ctx,
+		`CREATE TABLE IF NOT EXISTS schema_migrations(name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`,
+	); err != nil {
 		return fmt.Errorf("create migration ledger: %w", err)
 	}
 	entries, err := fs.Glob(files, "*.up.sql")
@@ -39,7 +45,8 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 	sort.Strings(entries)
 	for _, name := range entries {
 		var applied bool
-		if err = conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name=$1)`, name).Scan(&applied); err != nil {
+		if err = conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name=$1)`, name).
+			Scan(&applied); err != nil {
 			return err
 		}
 		if applied {
@@ -74,25 +81,34 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 // dedicated migrate command is allowed to mutate schema state.
 func Ready(ctx context.Context, pool *pgxpool.Pool) error {
 	var ledgerExists bool
-	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.schema_migrations') IS NOT NULL`).Scan(&ledgerExists); err != nil {
+
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.schema_migrations') IS NOT NULL`).
+		Scan(&ledgerExists); err != nil {
 		return fmt.Errorf("check migration ledger: %w", err)
 	}
+
 	if !ledgerExists {
 		return errors.New("migration ledger does not exist")
 	}
+
 	names, err := Names()
 	if err != nil {
 		return err
 	}
+
 	for _, name := range names {
 		var applied bool
-		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name=$1)`, name).Scan(&applied); err != nil {
+
+		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name=$1)`, name).
+			Scan(&applied); err != nil {
 			return fmt.Errorf("check migration %s: %w", name, err)
 		}
+
 		if !applied {
 			return fmt.Errorf("migration %s is not applied", name)
 		}
 	}
+
 	return nil
 }
 

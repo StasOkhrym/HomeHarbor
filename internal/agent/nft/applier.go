@@ -102,10 +102,15 @@ func NewApplier(interfaceName string, peers map[string]netip.Prefix) *Applier {
 // NewApplierWithRunner creates an applier with an explicit nft execution
 // boundary. Production uses the real command runner; tests and future
 // platform adapters can verify revision semantics without requiring CAP_NET_ADMIN.
-func NewApplierWithRunner(interfaceName string, peers map[string]netip.Prefix, runner func(context.Context, string) error) *Applier {
+func NewApplierWithRunner(
+	interfaceName string,
+	peers map[string]netip.Prefix,
+	runner func(context.Context, string) error,
+) *Applier {
 	if runner == nil {
 		runner = applyScript
 	}
+
 	return &Applier{interfaceName: interfaceName, peers: clonePeers(peers), run: runner}
 }
 

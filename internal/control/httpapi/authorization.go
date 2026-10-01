@@ -26,6 +26,17 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 			return
 		}
 		if !authorized {
+			// Only normal browser reads redirect. API clients retain typed 401
+			// responses, and expired POSTs are never replayed after a new login.
+			if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/admin") &&
+				!strings.HasPrefix(r.URL.Path, "/api/") {
+				if r.Header.Get("HX-Request") == "true" {
+					w.Header().Set("HX-Redirect", "/admin/login")
+				} else {
+					http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+					return
+				}
+			}
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}

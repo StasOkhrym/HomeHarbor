@@ -18,12 +18,31 @@ func (s *Repository) Save(ctx context.Context, item routes.Advertisement) error 
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err = tx.Exec(ctx, `INSERT INTO advertised_routes(id,gateway_device_id,prefix,status,created_at) VALUES($1,$2,$3,$4,$5)`, item.ID, item.GatewayDeviceID, item.Prefix.String(), item.Status, item.CreatedAt); err != nil {
+
+	if _, err = tx.Exec(
+		ctx,
+		`INSERT INTO advertised_routes(id,gateway_device_id,prefix,status,created_at) VALUES($1,$2,$3,$4,$5)`,
+		item.ID,
+		item.GatewayDeviceID,
+		item.Prefix.String(),
+		item.Status,
+		item.CreatedAt,
+	); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO dns_routes(id,gateway_device_id,domain_suffix,resolver,status) VALUES($1,$2,$3,$4,$5)`, item.ID, item.GatewayDeviceID, item.DomainSuffix, item.Resolver.String(), item.Status); err != nil {
+
+	if _, err = tx.Exec(
+		ctx,
+		`INSERT INTO dns_routes(id,gateway_device_id,domain_suffix,resolver,status) VALUES($1,$2,$3,$4,$5)`,
+		item.ID,
+		item.GatewayDeviceID,
+		item.DomainSuffix,
+		item.Resolver.String(),
+		item.Status,
+	); err != nil {
 		return err
 	}
+
 	return tx.Commit(ctx)
 }
 
@@ -65,7 +84,15 @@ func (s *Repository) List(ctx context.Context, status *routes.Status) ([]routes.
 	for rows.Next() {
 		var item routes.Advertisement
 		var prefix, resolver string
-		if err = rows.Scan(&item.ID, &item.GatewayDeviceID, &prefix, &resolver, &item.DomainSuffix, &item.Status, &item.CreatedAt); err != nil {
+		if err = rows.Scan(
+			&item.ID,
+			&item.GatewayDeviceID,
+			&prefix,
+			&resolver,
+			&item.DomainSuffix,
+			&item.Status,
+			&item.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		item.Prefix, err = netip.ParsePrefix(prefix)

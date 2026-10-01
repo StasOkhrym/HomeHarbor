@@ -38,7 +38,10 @@ type CandidateSet struct {
 // NewCandidateSet creates a candidate store and copies the initial list so a
 // CLI flag slice cannot be mutated concurrently with coordination publishing.
 func NewCandidateSet(candidates []controlprotocol.Candidate) *CandidateSet {
-	return &CandidateSet{static: append([]controlprotocol.Candidate(nil), candidates...), changes: make(chan struct{}, 1)}
+	return &CandidateSet{
+		static:  append([]controlprotocol.Candidate(nil), candidates...),
+		changes: make(chan struct{}, 1),
+	}
 }
 
 // SetObservedEndpoint records a relay-observed endpoint for future candidate
@@ -82,8 +85,10 @@ func (s *CandidateSet) Snapshot() []controlprotocol.Candidate {
 	if s == nil {
 		return nil
 	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	candidates := append([]controlprotocol.Candidate(nil), s.static...)
 	if s.reflexive.IsValid() {
 		address := s.reflexive.String()
@@ -94,10 +99,19 @@ func (s *CandidateSet) Snapshot() []controlprotocol.Candidate {
 				break
 			}
 		}
+
 		if !duplicate {
-			candidates = append(candidates, controlprotocol.Candidate{Type: controlprotocol.CandidateServerReflexive, Address: address, Priority: 200})
+			candidates = append(
+				candidates,
+				controlprotocol.Candidate{
+					Type:     controlprotocol.CandidateServerReflexive,
+					Address:  address,
+					Priority: 200,
+				},
+			)
 		}
 	}
+
 	return candidates
 }
 
@@ -186,7 +200,14 @@ func ParseDirectCandidates(value string) ([]controlprotocol.Candidate, error) {
 		if err != nil || !address.IsValid() || address.Port() == 0 || address.Addr().IsUnspecified() {
 			return nil, fmt.Errorf("candidate %q is invalid", part)
 		}
-		candidates = append(candidates, controlprotocol.Candidate{Type: controlprotocol.CandidateHost, Address: address.String(), Priority: uint32(len(parts) - index)})
+		candidates = append(
+			candidates,
+			controlprotocol.Candidate{
+				Type:     controlprotocol.CandidateHost,
+				Address:  address.String(),
+				Priority: uint32(len(parts) - index),
+			},
+		)
 	}
 	return candidates, nil
 }
@@ -207,26 +228,48 @@ type CandidatePathManager struct {
 // NewCandidatePathManager creates a direct-path selector for one authenticated
 // peer pair. A failed direct probe is a normal network outcome and transitions
 // the selector to relay; it is not returned as a coordination-stream error.
-func NewCandidatePathManager(localDeviceID, peerDeviceID, peerPublicKey string, updater PeerEndpointUpdater, selector *controlprotocol.PathSelector, prober HandshakeProber) (*CandidatePathManager, error) {
-	if strings.TrimSpace(localDeviceID) == "" || strings.TrimSpace(peerDeviceID) == "" || updater == nil || selector == nil || prober == nil {
+func NewCandidatePathManager(
+	localDeviceID, peerDeviceID, peerPublicKey string,
+	updater PeerEndpointUpdater,
+	selector *controlprotocol.PathSelector,
+	prober HandshakeProber,
+) (*CandidatePathManager, error) {
+	if strings.TrimSpace(localDeviceID) == "" || strings.TrimSpace(peerDeviceID) == "" || updater == nil ||
+		selector == nil ||
+		prober == nil {
 		return nil, errors.New("local device, peer, endpoint updater, selector, and handshake prober are required")
 	}
 	if _, err := wgtypes.ParseKey(peerPublicKey); err != nil {
 		return nil, fmt.Errorf("invalid peer WireGuard public key: %w", err)
 	}
-	return &CandidatePathManager{localDeviceID: localDeviceID, peerDeviceID: peerDeviceID, peerPublicKey: peerPublicKey, updater: updater, selector: selector, prober: prober, handshakeLimit: 10 * time.Second}, nil
+	return &CandidatePathManager{
+		localDeviceID:  localDeviceID,
+		peerDeviceID:   peerDeviceID,
+		peerPublicKey:  peerPublicKey,
+		updater:        updater,
+		selector:       selector,
+		prober:         prober,
+		handshakeLimit: 10 * time.Second,
+	}, nil
 }
 
 // HandleCandidateUpdate tries direct candidates by descending priority. Every
 // candidate is installed temporarily, then must produce a handshake newer than
 // the baseline captured before the endpoint change; an old relay handshake can
 // therefore never make a dead direct endpoint look healthy.
-func (m *CandidatePathManager) HandleCandidateUpdate(ctx context.Context, update controlprotocol.CandidateUpdate) error {
+func (m *CandidatePathManager) HandleCandidateUpdate(
+	ctx context.Context,
+	update controlprotocol.CandidateUpdate,
+) error {
 	if m == nil {
 		return errors.New("candidate path manager is nil")
 	}
 	if update.DestinationDeviceID != m.localDeviceID {
-		return fmt.Errorf("candidate update targets %s, local device is %s", update.DestinationDeviceID, m.localDeviceID)
+		return fmt.Errorf(
+			"candidate update targets %s, local device is %s",
+			update.DestinationDeviceID,
+			m.localDeviceID,
+		)
 	}
 	if update.SourceDeviceID != m.peerDeviceID {
 		return fmt.Errorf("candidate update source %s is not peer %s", update.SourceDeviceID, m.peerDeviceID)

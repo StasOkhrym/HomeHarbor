@@ -37,9 +37,17 @@ func testStore(t *testing.T) *Store {
 
 func TestRedisChallengeConsumedExactlyOnce(t *testing.T) {
 	store := testStore(t)
-	if err := store.PutChallenge(t.Context(), "claim", "device-secret", []byte("encrypted-payload"), time.Minute); err != nil {
+
+	if err := store.PutChallenge(
+		t.Context(),
+		"claim",
+		"device-secret",
+		[]byte("encrypted-payload"),
+		time.Minute,
+	); err != nil {
 		t.Fatal(err)
 	}
+
 	var successes atomic.Int32
 	var wg sync.WaitGroup
 	for range 20 {
@@ -49,13 +57,16 @@ func TestRedisChallengeConsumedExactlyOnce(t *testing.T) {
 				if string(value) != "encrypted-payload" {
 					t.Error("wrong challenge payload")
 				}
+
 				successes.Add(1)
 			} else if !errors.Is(err, ErrChallengeMissing) {
 				t.Error(err)
 			}
 		})
 	}
+
 	wg.Wait()
+
 	if successes.Load() != 1 {
 		t.Fatalf("successful claims=%d", successes.Load())
 	}

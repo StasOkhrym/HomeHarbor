@@ -48,7 +48,14 @@ func TestInviteProofIsPendingUntilTrustedCompanionApproves(t *testing.T) {
 	if approved.Status != StatusApproved || approved.DeviceID != "phone-1" {
 		t.Fatalf("approved=%#v", approved)
 	}
-	if _, err = service.Approve(context.Background(), local.Permit.InviteID, local.Code); !errors.Is(err, ErrInviteConsumed) {
+	if _, err = service.Approve(
+		context.Background(),
+		local.Permit.InviteID,
+		local.Code,
+	); !errors.Is(
+		err,
+		ErrInviteConsumed,
+	) {
 		t.Fatalf("reused invite error=%v", err)
 	}
 }
@@ -84,14 +91,35 @@ func TestInviteBlocksAfterFiveInvalidCodes(t *testing.T) {
 		wrongCode = "00000001"
 	}
 	for range 4 {
-		if _, err := service.Approve(context.Background(), local.Permit.InviteID, wrongCode); !errors.Is(err, ErrInvalidCode) {
+		if _, err := service.Approve(
+			context.Background(),
+			local.Permit.InviteID,
+			wrongCode,
+		); !errors.Is(
+			err,
+			ErrInvalidCode,
+		) {
 			t.Fatalf("invalid code error=%v, want ErrInvalidCode", err)
 		}
 	}
-	if _, err := service.Approve(context.Background(), local.Permit.InviteID, wrongCode); !errors.Is(err, ErrInviteBlocked) {
+	if _, err := service.Approve(
+		context.Background(),
+		local.Permit.InviteID,
+		wrongCode,
+	); !errors.Is(
+		err,
+		ErrInviteBlocked,
+	) {
 		t.Fatalf("fifth invalid code error=%v, want ErrInviteBlocked", err)
 	}
-	if _, err := service.Approve(context.Background(), local.Permit.InviteID, local.Code); !errors.Is(err, ErrInviteBlocked) {
+	if _, err := service.Approve(
+		context.Background(),
+		local.Permit.InviteID,
+		local.Code,
+	); !errors.Is(
+		err,
+		ErrInviteBlocked,
+	) {
 		t.Fatalf("correct code after lockout error=%v, want ErrInviteBlocked", err)
 	}
 }

@@ -75,8 +75,20 @@ func (fakePasskeys) FinishLogin(context.Context, string, []byte) (webauthn.Crede
 func newBrowserAuthTest(t *testing.T) (*BrowserAuth, *fakeSessions) {
 	t.Helper()
 	expires := time.Now().Add(time.Hour).UTC()
-	sessions := &fakeSessions{session: identity.IssuedSession{Token: "opaque-session", ExpiresAt: expires}, valid: "opaque-session", recovery: "recover-me"}
-	auth, err := NewBrowserAuth(BrowserAuthConfig{Origin: "https://tunnel.example.com", SigningKey: []byte(strings.Repeat("k", 32)), SessionTTL: time.Hour}, fakePasskeys{}, sessions)
+	sessions := &fakeSessions{
+		session:  identity.IssuedSession{Token: "opaque-session", ExpiresAt: expires},
+		valid:    "opaque-session",
+		recovery: "recover-me",
+	}
+	auth, err := NewBrowserAuth(
+		BrowserAuthConfig{
+			Origin:     "https://tunnel.example.com",
+			SigningKey: []byte(strings.Repeat("k", 32)),
+			SessionTTL: time.Hour,
+		},
+		fakePasskeys{},
+		sessions,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +124,16 @@ func TestBrowserSessionOutageReturns503WithoutIssuingCookies(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			auth, sessions := newBrowserAuthTest(t)
 			sessions.failure = identity.ErrSecurityStateUnavailable
-			server := NewServer(nil, auth, WithBrowserHandlers(auth.Handler(), auth.LoginHandler(), auth.LoginAssetHandler(), auth.AuthorizeMutation))
+			server := NewServer(
+				nil,
+				auth,
+				WithBrowserHandlers(
+					auth.Handler(),
+					auth.LoginHandler(),
+					auth.LoginAssetHandler(),
+					auth.AuthorizeMutation,
+				),
+			)
 			path := "/api/v1/admin/devices"
 			body := ""
 			if method == http.MethodPost {
@@ -124,7 +145,12 @@ func TestBrowserSessionOutageReturns503WithoutIssuingCookies(t *testing.T) {
 			response := httptest.NewRecorder()
 			server.Handler().ServeHTTP(response, request)
 			if response.Code != http.StatusServiceUnavailable || len(response.Result().Cookies()) != 0 {
-				t.Fatalf("outage status=%d cookies=%v body=%s", response.Code, response.Result().Cookies(), response.Body.String())
+				t.Fatalf(
+					"outage status=%d cookies=%v body=%s",
+					response.Code,
+					response.Result().Cookies(),
+					response.Body.String(),
+				)
 			}
 		})
 	}
@@ -257,7 +283,8 @@ func TestLoginPageUsesLocalScriptAsset(t *testing.T) {
 	auth, _ := newBrowserAuthTest(t)
 	recorder := httptest.NewRecorder()
 	auth.LoginHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/login", nil))
-	if strings.Contains(recorder.Body.String(), "<script>") || !strings.Contains(recorder.Body.String(), "/assets/login.js") {
+	if strings.Contains(recorder.Body.String(), "<script>") ||
+		!strings.Contains(recorder.Body.String(), "/assets/login.js") {
 		t.Fatalf("login page contains inline or missing script: %s", recorder.Body.String())
 	}
 	asset := httptest.NewRecorder()

@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -22,7 +23,7 @@ const sessionCookieName = "__Host-go_tunnels_admin"
 //go:embed templates/login.html
 var loginPage []byte
 
-//go:embed static/login.js
+//go:embed static/auth-ui.js
 var loginScript []byte
 
 // PasskeyCeremonies is the HTTP layer's narrow view of WebAuthn state.
@@ -48,6 +49,13 @@ type BrowserAuthConfig struct {
 	SigningKey []byte
 	SessionTTL time.Duration
 	Auditor    AuthAuditor
+	SetupState PasskeyState
+}
+
+// PasskeyState reads durable setup state without starting a WebAuthn ceremony.
+// Rendering the login page must not consume Redis quota or create challenges.
+type PasskeyState interface {
+	HasCredentials(context.Context) (bool, error)
 }
 
 // AuthAuditor records outcomes without receiving credential material.
@@ -63,10 +71,15 @@ type BrowserAuth struct {
 	passkeys   PasskeyCeremonies
 	sessions   AdminSessions
 	auditor    AuthAuditor
+	setupState PasskeyState
 }
 
 // NewBrowserAuth rejects weak signing material before serving any auth route.
-func NewBrowserAuth(config BrowserAuthConfig, passkeys PasskeyCeremonies, sessions AdminSessions) (*BrowserAuth, error) {
+func NewBrowserAuth(
+	config BrowserAuthConfig,
+	passkeys PasskeyCeremonies,
+	sessions AdminSessions,
+) (*BrowserAuth, error) {
 	if len(config.SigningKey) < 32 {
 		return nil, errors.New("session signing key must be at least 32 bytes")
 	}
@@ -76,7 +89,15 @@ func NewBrowserAuth(config BrowserAuthConfig, passkeys PasskeyCeremonies, sessio
 	if config.Origin == "" {
 		return nil, errors.New("auth origin is required")
 	}
-	return &BrowserAuth{origin: strings.TrimSuffix(config.Origin, "/"), signingKey: append([]byte(nil), config.SigningKey...), sessionTTL: config.SessionTTL, passkeys: passkeys, sessions: sessions, auditor: config.Auditor}, nil
+	return &BrowserAuth{
+		origin:     strings.TrimSuffix(config.Origin, "/"),
+		signingKey: append([]byte(nil), config.SigningKey...),
+		sessionTTL: config.SessionTTL,
+		passkeys:   passkeys,
+		sessions:   sessions,
+		auditor:    config.Auditor,
+		setupState: config.SetupState,
+	}, nil
 }
 
 // Handler exposes only versioned JSON authentication endpoints.
@@ -121,6 +142,11 @@ func (a *BrowserAuth) IsAdmin(ctx context.Context, request *http.Request) (bool,
 
 // AuthorizeMutation additionally binds state-changing requests to their CSRF cookie.
 func (a *BrowserAuth) AuthorizeMutation(ctx context.Context, request *http.Request) (bool, error) {
+	// Protected HTML forms share the same Origin boundary as auth POSTs.
+	// A valid CSRF token is not permission to submit from another origin.
+	if strings.TrimSuffix(request.Header.Get("Origin"), "/") != a.origin {
+		return false, nil
+	}
 	token, ok := a.sessionToken(request)
 	if !ok || !a.validCSRF(request, token) {
 		return false, nil
@@ -152,7 +178,15 @@ func (a *BrowserAuth) sessionToken(request *http.Request) (string, bool) {
 
 func (a *BrowserAuth) sessionCookie(session identity.IssuedSession) *http.Cookie {
 	value := session.Token + "." + a.sign("session."+session.Token)
-	return &http.Cookie{Name: sessionCookieName, Value: value, Path: "/", Expires: session.ExpiresAt, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode}
+	return &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    value,
+		Path:     "/",
+		Expires:  session.ExpiresAt,
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	}
 }
 
 func (a *BrowserAuth) establishSession(w http.ResponseWriter, ctx context.Context) error {
@@ -186,9 +220,34 @@ func (a *BrowserAuth) requireOrigin(next http.Handler) http.Handler {
 	})
 }
 
-func (a *BrowserAuth) loginPage(w http.ResponseWriter, _ *http.Request) {
+type loginPageModel struct {
+	FirstRun    bool
+	Unavailable bool
+}
+
+var loginTemplate = template.Must(template.New("login").Parse(string(loginPage)))
+
+func (a *BrowserAuth) loginPage(w http.ResponseWriter, r *http.Request) {
+	model := loginPageModel{}
+	status := http.StatusOK
+	// Unknown setup state must never be interpreted as an unclaimed admin
+	// account. The ceremony still performs its own atomic bootstrap check.
+	if a.setupState == nil {
+		model.Unavailable = true
+	} else if registered, err := a.setupState.HasCredentials(r.Context()); err != nil {
+		model.Unavailable = true
+	} else {
+		model.FirstRun = !registered
+	}
+	if model.Unavailable {
+		status = http.StatusServiceUnavailable
+	}
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(loginPage)
+	w.WriteHeader(status)
+	if err := loginTemplate.Execute(w, model); err != nil {
+		slog.ErrorContext(r.Context(), "render login page", "error", err)
+	}
 }
 
 func (a *BrowserAuth) loginAsset(w http.ResponseWriter, _ *http.Request) {
@@ -335,5 +394,13 @@ func (a *BrowserAuth) audit(ctx context.Context, action string, success bool) {
 }
 
 func expiredCookie(name string) *http.Cookie {
-	return &http.Cookie{Name: name, Path: "/", MaxAge: -1, Expires: time.Unix(1, 0), Secure: true, HttpOnly: name == sessionCookieName, SameSite: http.SameSiteStrictMode}
+	return &http.Cookie{
+		Name:     name,
+		Path:     "/",
+		MaxAge:   -1,
+		Expires:  time.Unix(1, 0),
+		Secure:   true,
+		HttpOnly: name == sessionCookieName,
+		SameSite: http.SameSiteStrictMode,
+	}
 }

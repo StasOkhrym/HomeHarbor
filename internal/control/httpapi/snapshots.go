@@ -57,7 +57,15 @@ func (s *Server) companionSnapshot(w http.ResponseWriter, r *http.Request) {
 	nonce := r.Header.Get("X-Go-Tunnels-Companion-Nonce")
 	keyID := r.Header.Get("X-Go-Tunnels-Companion-Key-ID")
 	signature, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-Go-Tunnels-Companion-Signature"))
-	if err != nil || protocol.VerifyCompanionRequest(http.MethodGet, companionSnapshotPath, nonce, keyID, signature, s.companionRoot) != nil {
+	if err != nil ||
+		protocol.VerifyCompanionRequest(
+			http.MethodGet,
+			companionSnapshotPath,
+			nonce,
+			keyID,
+			signature,
+			s.companionRoot,
+		) != nil {
 		writeError(w, http.StatusUnauthorized, "invalid companion request")
 		return
 	}

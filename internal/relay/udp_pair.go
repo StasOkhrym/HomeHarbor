@@ -44,7 +44,9 @@ func EncodeUDPPairDatagram(ticket string, payload []byte) ([]byte, error) {
 }
 
 func encodeUDPPairDatagram(kind uint8, ticket string, payload []byte) ([]byte, error) {
-	if (kind != UDPPairKindData && kind != UDPPairKindBinding) || len(ticket) > maxTicketLength || len(payload) == 0 || len(payload) > maxPacketPayload || udpPairHeaderSize+len(ticket)+len(payload) > maxUDPPairDatagramSize {
+	if (kind != UDPPairKindData && kind != UDPPairKindBinding) || len(ticket) > maxTicketLength || len(payload) == 0 ||
+		len(payload) > maxPacketPayload ||
+		udpPairHeaderSize+len(ticket)+len(payload) > maxUDPPairDatagramSize {
 		return nil, errors.New("invalid UDP pair datagram size")
 	}
 	if len(ticket) > int(^uint16(0)) {
@@ -79,7 +81,11 @@ func DecodeUDPPairDatagram(data []byte) (UDPPairDatagram, error) {
 	if len(payload) == 0 || len(payload) > maxPacketPayload {
 		return UDPPairDatagram{}, errors.New("invalid UDP pair payload size")
 	}
-	return UDPPairDatagram{Kind: kind, Ticket: string(data[udpPairHeaderSize : udpPairHeaderSize+ticketLength]), Payload: append([]byte(nil), payload...)}, nil
+	return UDPPairDatagram{
+		Kind:    kind,
+		Ticket:  string(data[udpPairHeaderSize : udpPairHeaderSize+ticketLength]),
+		Payload: append([]byte(nil), payload...),
+	}, nil
 }
 
 type udpPairPeer struct {
@@ -104,7 +110,13 @@ type UDPPairRelay struct {
 // socket ownership explicit lets the app layer expose one stable ingress while
 // tests and future per-session listeners can provide their own socket.
 func NewUDPPairRelay(connection *net.UDPConn, tickets TicketIssuer) *UDPPairRelay {
-	return &UDPPairRelay{connection: connection, tickets: tickets, sessions: make(map[string]map[string]*udpPairPeer), maxSessions: defaultUDPPairMaxSessions, idleTimeout: defaultUDPPairIdleTimeout}
+	return &UDPPairRelay{
+		connection:  connection,
+		tickets:     tickets,
+		sessions:    make(map[string]map[string]*udpPairPeer),
+		maxSessions: defaultUDPPairMaxSessions,
+		idleTimeout: defaultUDPPairIdleTimeout,
+	}
 }
 
 // Run serves authenticated UDP pair datagrams until cancellation or socket
@@ -194,7 +206,11 @@ func (r *UDPPairRelay) processDatagram(data []byte, source *net.UDPAddr, now tim
 				return nil, nil, errors.New("UDP pair peers are not mutually bound")
 			}
 		}
-		peers[claims.DeviceID] = &udpPairPeer{address: cloneUDPAddr(source), destination: claims.DestinationDeviceID, lastSeen: now}
+		peers[claims.DeviceID] = &udpPairPeer{
+			address:     cloneUDPAddr(source),
+			destination: claims.DestinationDeviceID,
+			lastSeen:    now,
+		}
 	}
 	targetPeer := peers[claims.DestinationDeviceID]
 	if targetPeer == nil || targetPeer.destination != claims.DeviceID {

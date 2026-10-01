@@ -64,7 +64,14 @@ func TestPublishRejectsSkippedGenesis(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := NewService(NewMemoryStore(), public, "home").Publish(context.Background(), envelope); !errors.Is(err, snapshot.ErrRevisionGap) {
+	if err := NewService(
+		NewMemoryStore(),
+		public,
+		"home",
+	).Publish(context.Background(), envelope); !errors.Is(
+		err,
+		snapshot.ErrRevisionGap,
+	) {
 		t.Fatalf("skipped genesis = %v", err)
 	}
 }
@@ -78,7 +85,11 @@ func TestHistoryIsPagedVerifiedAndNetworkScoped(t *testing.T) {
 	service := NewService(repository, public, "home")
 	var previous []byte
 	for revision := uint64(1); revision <= 5; revision++ {
-		envelope, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: revision, PreviousHash: previous}, private, "root")
+		envelope, err := snapshot.Sign(
+			snapshot.NetworkSnapshot{NetworkID: "home", Revision: revision, PreviousHash: previous},
+			private,
+			"root",
+		)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -112,13 +112,24 @@ func NewUDPPairV2(tickets TicketIssuer, cfg UDPPairV2Config) (*UDPPairV2, error)
 	if cfg.MaxAdmissions == 0 {
 		cfg.MaxAdmissions = cfg.MaxPeers * 4
 	}
-	if cfg.BindTimeout < 0 || cfg.IdleTimeout < 0 || cfg.MaxPeers < 1 || cfg.MaxPeersPerDevice < 1 || cfg.MaxAdmissions < 1 || cfg.MaxDatagramBytes < 1 || cfg.MaxDatagramBytes > 65507 {
+	if cfg.BindTimeout < 0 || cfg.IdleTimeout < 0 || cfg.MaxPeers < 1 || cfg.MaxPeersPerDevice < 1 ||
+		cfg.MaxAdmissions < 1 ||
+		cfg.MaxDatagramBytes < 1 ||
+		cfg.MaxDatagramBytes > 65507 {
 		return nil, errors.New("invalid UDP v2 resource limits")
 	}
 	cfg.ListenIP = append(net.IP(nil), cfg.ListenIP...)
 	cfg.AllowedOrigins = append([]string(nil), cfg.AllowedOrigins...)
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &UDPPairV2{cfg: cfg, tickets: tickets, ctx: ctx, cancel: cancel, peers: make(map[v2PeerKey]*v2Peer), all: make(map[*v2Peer]struct{}), used: make(map[[32]byte]int64)}
+	r := &UDPPairV2{
+		cfg:     cfg,
+		tickets: tickets,
+		ctx:     ctx,
+		cancel:  cancel,
+		peers:   make(map[v2PeerKey]*v2Peer),
+		all:     make(map[*v2Peer]struct{}),
+		used:    make(map[[32]byte]int64),
+	}
 	return r, nil
 }
 
@@ -185,7 +196,8 @@ func (r *UDPPairV2) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	token := relayTicketFromRequest(req)
 	claims, err := r.tickets.Verify(token)
-	if err != nil || claims.TicketID == "" || claims.DestinationDeviceID == "" || claims.DeviceID == claims.DestinationDeviceID {
+	if err != nil || claims.TicketID == "" || claims.DestinationDeviceID == "" ||
+		claims.DeviceID == claims.DestinationDeviceID {
 		http.Error(w, "invalid peer admission ticket", http.StatusUnauthorized)
 		return
 	}
@@ -211,7 +223,11 @@ func (r *UDPPairV2) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		r.mu.Unlock()
 	}()
-	c, err := websocket.Accept(w, req, &websocket.AcceptOptions{OriginPatterns: r.cfg.AllowedOrigins, CompressionMode: websocket.CompressionDisabled})
+	c, err := websocket.Accept(
+		w,
+		req,
+		&websocket.AcceptOptions{OriginPatterns: r.cfg.AllowedOrigins, CompressionMode: websocket.CompressionDisabled},
+	)
 	if err != nil {
 		return
 	}
@@ -233,7 +249,15 @@ func (r *UDPPairV2) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	address := net.JoinHostPort(host, strconv.Itoa(p.udp.LocalAddr().(*net.UDPAddr).Port))
-	offer := UDPPairV2Message{Protocol: UDPPairV2Protocol, Kind: "offer", SessionID: claims.SessionID, DeviceID: claims.DeviceID, DestinationDeviceID: claims.DestinationDeviceID, UDPAddress: address, Nonce: p.nonce}
+	offer := UDPPairV2Message{
+		Protocol:            UDPPairV2Protocol,
+		Kind:                "offer",
+		SessionID:           claims.SessionID,
+		DeviceID:            claims.DeviceID,
+		DestinationDeviceID: claims.DestinationDeviceID,
+		UDPAddress:          address,
+		Nonce:               p.nonce,
+	}
 	if err := wsjson.Write(ctx, c, offer); err != nil {
 		return
 	}
@@ -246,7 +270,10 @@ func (r *UDPPairV2) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	r.mu.Lock()
 	_, alive := r.all[p]
-	valid := alive && !r.closed && time.Now().Before(p.deadline) && p.candidate != nil && confirm.Protocol == UDPPairV2Protocol && confirm.Kind == "confirm" && subtle.ConstantTimeCompare([]byte(confirm.Challenge), []byte(p.challenge)) == 1
+	valid := alive && !r.closed && time.Now().Before(p.deadline) && p.candidate != nil &&
+		confirm.Protocol == UDPPairV2Protocol &&
+		confirm.Kind == "confirm" &&
+		subtle.ConstantTimeCompare([]byte(confirm.Challenge), []byte(p.challenge)) == 1
 	if !valid {
 		r.mu.Unlock()
 		return
@@ -270,7 +297,16 @@ func (r *UDPPairV2) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.mu.Unlock()
 	// The WSS exchange intentionally ends after acknowledgement. UDP ownership
 	// belongs to the relay runtime, not the request or the admission credential.
-	_ = wsjson.Write(ctx, c, UDPPairV2Message{Protocol: UDPPairV2Protocol, Kind: "bound", ObservedEndpoint: observed, UDPAddress: boundAddress})
+	_ = wsjson.Write(
+		ctx,
+		c,
+		UDPPairV2Message{
+			Protocol:         UDPPairV2Protocol,
+			Kind:             "bound",
+			ObservedEndpoint: observed,
+			UDPAddress:       boundAddress,
+		},
+	)
 }
 
 func (r *UDPPairV2) reserve(c TicketClaims, token string) (*v2Peer, int, error) {
@@ -293,7 +329,8 @@ func (r *UDPPairV2) reserve(c TicketClaims, token string) (*v2Peer, int, error) 
 		if p.key.device == c.DeviceID {
 			deviceSessions[p.key] = struct{}{}
 		}
-		if p.key.session == c.SessionID && p.key.device != c.DeviceID && (p.key.device != c.DestinationDeviceID || p.destination != c.DeviceID) {
+		if p.key.session == c.SessionID && p.key.device != c.DeviceID &&
+			(p.key.device != c.DestinationDeviceID || p.destination != c.DeviceID) {
 			return nil, http.StatusForbidden, errors.New("not a mutual peer pair")
 		}
 		if p.key == key && (!p.bound || p.destination != c.DestinationDeviceID) {
@@ -321,7 +358,15 @@ func (r *UDPPairV2) reserve(c TicketClaims, token string) (*v2Peer, int, error) 
 			return nil, http.StatusServiceUnavailable, err
 		}
 	}
-	p := &v2Peer{key: key, destination: c.DestinationDeviceID, udp: u, nonce: nonce, challenge: challenge, deadline: time.Now().Add(r.cfg.BindTimeout), probeParent: parent}
+	p := &v2Peer{
+		key:         key,
+		destination: c.DestinationDeviceID,
+		udp:         u,
+		nonce:       nonce,
+		challenge:   challenge,
+		deadline:    time.Now().Add(r.cfg.BindTimeout),
+		probeParent: parent,
+	}
 	r.all[p] = struct{}{}
 	r.used[fingerprint] = c.ExpiresAt
 	r.startLocked()

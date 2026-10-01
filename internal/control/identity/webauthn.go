@@ -68,7 +68,13 @@ type PasskeyService struct {
 	ttl        time.Duration
 }
 
-func NewPasskeyService(config PasskeyConfig, store PasskeyRepository, ceremonies CeremonyRepository, now func() time.Time, random io.Reader) (*PasskeyService, error) {
+func NewPasskeyService(
+	config PasskeyConfig,
+	store PasskeyRepository,
+	ceremonies CeremonyRepository,
+	now func() time.Time,
+	random io.Reader,
+) (*PasskeyService, error) {
 	if store == nil || ceremonies == nil {
 		return nil, errors.New("passkey and ceremony repositories are required")
 	}
@@ -78,7 +84,17 @@ func NewPasskeyService(config PasskeyConfig, store PasskeyRepository, ceremonies
 	if config.CeremonyTTL <= 0 {
 		return nil, errors.New("WebAuthn ceremony TTL must be positive")
 	}
-	wa, err := webauthn.New(&webauthn.Config{RPID: config.RPID, RPDisplayName: "Go Tunnels", RPOrigins: []string{config.RPOrigin}, AuthenticatorSelection: protocol.AuthenticatorSelection{ResidentKey: protocol.ResidentKeyRequirementRequired, UserVerification: protocol.VerificationRequired}})
+	wa, err := webauthn.New(
+		&webauthn.Config{
+			RPID:          config.RPID,
+			RPDisplayName: "Go Tunnels",
+			RPOrigins:     []string{config.RPOrigin},
+			AuthenticatorSelection: protocol.AuthenticatorSelection{
+				ResidentKey:      protocol.ResidentKeyRequirementRequired,
+				UserVerification: protocol.VerificationRequired,
+			},
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("configure WebAuthn: %w", err)
 	}
@@ -93,7 +109,21 @@ func NewPasskeyService(config PasskeyConfig, store PasskeyRepository, ceremonies
 	if now == nil {
 		now = time.Now
 	}
-	return &PasskeyService{store: store, ceremonies: ceremonies, now: now, random: random, webAuthn: wa, aead: aead, ttl: config.CeremonyTTL}, nil
+	return &PasskeyService{
+		store:      store,
+		ceremonies: ceremonies,
+		now:        now,
+		random:     random,
+		webAuthn:   wa,
+		aead:       aead,
+		ttl:        config.CeremonyTTL,
+	}, nil
+}
+
+// HasCredentials reads setup state without allocating a one-time ceremony.
+// A false result is informational; Begin/FinishBootstrap enforce exclusivity.
+func (s *PasskeyService) HasCredentials(ctx context.Context) (bool, error) {
+	return s.store.HasCredentials(ctx)
 }
 
 func (s *PasskeyService) BeginBootstrap(ctx context.Context) (BeginCeremony, error) {
@@ -115,7 +145,11 @@ func (s *PasskeyService) BeginBootstrap(ctx context.Context) (BeginCeremony, err
 	return s.saveCeremony(ctx, "bootstrap", creation, session)
 }
 
-func (s *PasskeyService) FinishBootstrap(ctx context.Context, ceremonyID string, response []byte) (webauthn.Credential, error) {
+func (s *PasskeyService) FinishBootstrap(
+	ctx context.Context,
+	ceremonyID string,
+	response []byte,
+) (webauthn.Credential, error) {
 	ceremony, session, err := s.consumeCeremony(ctx, ceremonyID, "bootstrap")
 	_ = ceremony
 	if err != nil {
@@ -147,7 +181,11 @@ func (s *PasskeyService) BeginLogin(ctx context.Context) (BeginCeremony, error) 
 	return s.saveCeremony(ctx, "login", assertion, session)
 }
 
-func (s *PasskeyService) FinishLogin(ctx context.Context, ceremonyID string, response []byte) (webauthn.Credential, error) {
+func (s *PasskeyService) FinishLogin(
+	ctx context.Context,
+	ceremonyID string,
+	response []byte,
+) (webauthn.Credential, error) {
 	_, session, err := s.consumeCeremony(ctx, ceremonyID, "login")
 	if err != nil {
 		return webauthn.Credential{}, err
@@ -177,7 +215,12 @@ func (s *PasskeyService) FinishLogin(ctx context.Context, ceremonyID string, res
 	return *credential, nil
 }
 
-func (s *PasskeyService) saveCeremony(ctx context.Context, kind string, options any, session *webauthn.SessionData) (BeginCeremony, error) {
+func (s *PasskeyService) saveCeremony(
+	ctx context.Context,
+	kind string,
+	options any,
+	session *webauthn.SessionData,
+) (BeginCeremony, error) {
 	payload, err := json.Marshal(session)
 	if err != nil {
 		return BeginCeremony{}, err
@@ -193,7 +236,12 @@ func (s *PasskeyService) saveCeremony(ctx context.Context, kind string, options 
 	if err != nil {
 		return BeginCeremony{}, err
 	}
-	ceremony := Ceremony{IDHash: hashToken(id), Kind: kind, PayloadCiphertext: ciphertext, ExpiresAt: s.now().UTC().Add(s.ttl)}
+	ceremony := Ceremony{
+		IDHash:            hashToken(id),
+		Kind:              kind,
+		PayloadCiphertext: ciphertext,
+		ExpiresAt:         s.now().UTC().Add(s.ttl),
+	}
 	if err = s.ceremonies.SaveCeremony(ctx, ceremony); err != nil {
 		return BeginCeremony{}, err
 	}
@@ -204,7 +252,10 @@ func (s *PasskeyService) saveCeremony(ctx context.Context, kind string, options 
 	return BeginCeremony{CeremonyID: id, Options: encodedOptions}, nil
 }
 
-func (s *PasskeyService) consumeCeremony(ctx context.Context, id, expectedKind string) (Ceremony, webauthn.SessionData, error) {
+func (s *PasskeyService) consumeCeremony(
+	ctx context.Context,
+	id, expectedKind string,
+) (Ceremony, webauthn.SessionData, error) {
 	ceremony, err := s.ceremonies.ConsumeCeremony(ctx, hashToken(id), s.now().UTC())
 	if errors.Is(err, ErrSecurityStateUnavailable) {
 		return Ceremony{}, webauthn.SessionData{}, err

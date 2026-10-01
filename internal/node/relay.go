@@ -250,7 +250,9 @@ func validateRelayBridgeConfig(cfg RelayBridgeConfig) error {
 	if cfg.RelayUDPAddress != "" && !usesUDPV2(cfg) {
 		return errors.New("legacy UDP ingress disabled; udp_pair_v2 TLS control required")
 	}
-	if (cfg.RelayURL == "" && cfg.RelayUDPAddress == "") || cfg.Ticket == "" || cfg.SessionID == "" || cfg.DeviceID == "" || cfg.DestinationDeviceID == "" {
+	if (cfg.RelayURL == "" && cfg.RelayUDPAddress == "") || cfg.Ticket == "" || cfg.SessionID == "" ||
+		cfg.DeviceID == "" ||
+		cfg.DestinationDeviceID == "" {
 		return errors.New("relay URL or UDP address, ticket, session, and device identities are required")
 	}
 	if usesUDPV2(cfg) && !strings.HasPrefix(cfg.RelayURL, "wss://") {
@@ -272,7 +274,8 @@ func validateRelayBridgeConfig(cfg RelayBridgeConfig) error {
 // transport. WireGuard receives the bridge's loopback UDP address as its peer
 // endpoint; the bridge then carries the already-encrypted datagrams remotely.
 func RunKernelRelay(ctx context.Context, cfg KernelRelayConfig) error {
-	if cfg.InterfaceName == "" || cfg.PrivateKey == "" || cfg.PeerPublicKey == "" || cfg.OverlayAddress == "" || cfg.ListenPort == 0 {
+	if cfg.InterfaceName == "" || cfg.PrivateKey == "" || cfg.PeerPublicKey == "" || cfg.OverlayAddress == "" ||
+		cfg.ListenPort == 0 {
 		return errors.New("kernel relay interface, keys, overlay address, and listen port are required")
 	}
 	if err := validateRelayBridgeConfig(cfg.RelayBridgeConfig); err != nil {
@@ -316,7 +319,12 @@ func RunKernelRelay(ctx context.Context, cfg KernelRelayConfig) error {
 	return runKernelRelayBridge(ctx, cfg, bridge, bridgeEndpoint)
 }
 
-func runKernelRelayBridge(ctx context.Context, cfg KernelRelayConfig, bridge relayBridgeRunner, bridgeEndpoint netip.AddrPort) error {
+func runKernelRelayBridge(
+	ctx context.Context,
+	cfg KernelRelayConfig,
+	bridge relayBridgeRunner,
+	bridgeEndpoint netip.AddrPort,
+) error {
 	if err := tunnel.EnsureLinuxInterface(ctx, cfg.InterfaceName, cfg.OverlayAddress, cfg.Routes); err != nil {
 		return err
 	}
@@ -333,9 +341,18 @@ func runKernelRelayBridge(ctx context.Context, cfg KernelRelayConfig, bridge rel
 		cancel()
 		return bridgeErr
 	}
-	wireGuardConfig, err := tunnel.BuildWireGuardConfigWithListenPort(cfg.PrivateKey, cfg.ListenPort, []tunnel.PeerConfig{{
-		PublicKey: cfg.PeerPublicKey, Endpoint: bridgeEndpoint, AllowedPrefixes: cfg.AllowedPrefixes, PersistentKeepalive: 25 * time.Second,
-	}})
+	wireGuardConfig, err := tunnel.BuildWireGuardConfigWithListenPort(
+		cfg.PrivateKey,
+		cfg.ListenPort,
+		[]tunnel.PeerConfig{
+			{
+				PublicKey:           cfg.PeerPublicKey,
+				Endpoint:            bridgeEndpoint,
+				AllowedPrefixes:     cfg.AllowedPrefixes,
+				PersistentKeepalive: 25 * time.Second,
+			},
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -349,7 +366,12 @@ type relayBridgeRunner interface {
 	Run(context.Context) error
 }
 
-func runKernelRelayWithPathSelector(ctx context.Context, bridge relayBridgeRunner, cfg KernelRelayConfig, bridgeEndpoint netip.AddrPort) error {
+func runKernelRelayWithPathSelector(
+	ctx context.Context,
+	bridge relayBridgeRunner,
+	cfg KernelRelayConfig,
+	bridgeEndpoint netip.AddrPort,
+) error {
 	bridgeContext, cancel := context.WithCancel(ctx)
 	bridgeErrors := make(chan error, 1)
 	bridgeFinished := false
@@ -392,7 +414,8 @@ func runKernelRelayWithPathSelector(ctx context.Context, bridge relayBridgeRunne
 // the bridge owns its UDP socket, so a fresh bridge must be bound before the
 // encrypted peer can resume forwarding packets.
 func RunKernelRelayLoop(ctx context.Context, cfg KernelRelayConfig, ticketProvider RelayTicketProvider) error {
-	if cfg.InterfaceName == "" || cfg.PrivateKey == "" || cfg.PeerPublicKey == "" || cfg.OverlayAddress == "" || cfg.ListenPort == 0 {
+	if cfg.InterfaceName == "" || cfg.PrivateKey == "" || cfg.PeerPublicKey == "" || cfg.OverlayAddress == "" ||
+		cfg.ListenPort == 0 {
 		return errors.New("kernel relay interface, keys, overlay address, and listen port are required")
 	}
 	if err := validateRelayBridgeConfig(cfg.RelayBridgeConfig); err != nil {

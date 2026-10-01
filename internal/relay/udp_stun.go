@@ -70,7 +70,10 @@ func (b *UDPPairBridge) DiscoverServerReflexive(ctx context.Context, serverURI s
 			continue
 		}
 		response := stun.New()
-		if err := response.UnmarshalBinary(buffer[:n]); err != nil || response.TransactionID != request.TransactionID || response.Type != stun.BindingSuccess {
+		if err := response.UnmarshalBinary(
+			buffer[:n],
+		); err != nil || response.TransactionID != request.TransactionID ||
+			response.Type != stun.BindingSuccess {
 			continue
 		}
 		var mapped stun.XORMappedAddress

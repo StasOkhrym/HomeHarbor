@@ -1,0 +1,34 @@
+{{define "setup"}}
+  <section class="panel">
+    <h2>1. Prepare your trusted companion</h2>
+    <p>Your passkey protects this panel. The separate signing key on your Mac authorizes LAN access.</p>
+    <pre>go run ./cmd/admin init-root --config .local/admin.toml</pre>
+    <p class="help">Run this locally in your checkout only if a root key does not already exist. Never upload the private key or passphrase to this panel.</p>
+  </section>
+  <section class="panel">
+    <h2>2. Enroll your gateway</h2>
+    <p>Create a legacy gateway enrollment token, then use it with the Linux gateway. Private node keys stay on that node.</p>
+    <a href="/admin/invites#legacy-token">Create gateway token →</a>
+    <p class="help">{{.Devices.Count}} enrolled devices. Registration is not confirmation of connectivity.</p>
+  </section>
+  <section class="panel">
+    <h2>3. Review routes, DNS and access</h2>
+    <p>Approve the intended LAN route and DNS settings. Add catalog services and access profiles, then review default-deny ACL.</p>
+    <div class="actions"><a href="/admin/network">Routes &amp; DNS</a><a href="/admin/services">Services</a><a href="/admin/access">Access rules</a></div>
+    <p class="help">These are saved control records, not signed network grants.</p>
+  </section>
+  <section class="panel">
+    <h2>4. Publish your initial signed configuration</h2>
+    <p>Prepare a manifest using <code>config/initial-snapshot.example.toml</code>. Review its exact devices, routes, services, profiles and ACL locally.</p>
+    <pre>go run ./cmd/admin init-snapshot --config .local/admin.toml --manifest .local/initial-snapshot.toml</pre>
+    <p class="help">This command is for revision 1 only. Later arbitrary topology edits are not implemented by the current companion CLI. Saving forms cannot publish them.</p>
+    <p>{{.SignedState}}</p>
+  </section>
+  <section class="panel">
+    <h2>5. Connect a client and verify access</h2>
+    <p>Create a signed invite locally. Complete the device onboarding and companion approval, then publish the device addition.</p>
+    <a href="/admin/invites">Signed invite instructions →</a>
+    <p class="help">Manual verification: open the allowed service from the external client and confirm that a forbidden port remains blocked. This panel does not perform that network test.</p>
+    <span class="badge">Gateway application unknown</span>
+  </section>
+{{end}}

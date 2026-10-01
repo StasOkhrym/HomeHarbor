@@ -16,7 +16,12 @@ import (
 // RunOutboxDispatcher delivers committed domain events to Watermill with
 // at-least-once semantics. A crash after publish and before marking the row can
 // duplicate an audit event; consumers must therefore remain idempotent.
-func RunOutboxDispatcher(ctx context.Context, pool *pgxpool.Pool, publisher OutboxPublisher, logger *slog.Logger) error {
+func RunOutboxDispatcher(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	publisher OutboxPublisher,
+	logger *slog.Logger,
+) error {
 	if pool == nil || publisher == nil {
 		return errors.New("outbox dependencies are required")
 	}
@@ -51,7 +56,10 @@ func dispatchOutboxBatch(ctx context.Context, pool *pgxpool.Pool, publisher Outb
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, `SELECT id,topic,payload FROM event_outbox WHERE published_at IS NULL ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 50`)
+	rows, err := tx.Query(
+		ctx,
+		`SELECT id,topic,payload FROM event_outbox WHERE published_at IS NULL ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 50`,
+	)
 	if err != nil {
 		return err
 	}
@@ -81,7 +89,11 @@ func dispatchOutboxBatch(ctx context.Context, pool *pgxpool.Pool, publisher Outb
 			// the supervisor, not falsely "persisted" in a transaction we abort.
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE event_outbox SET published_at=now(),attempts=attempts+1,last_error=NULL WHERE id=$1`, item.id); err != nil {
+		if _, err := tx.Exec(
+			ctx,
+			`UPDATE event_outbox SET published_at=now(),attempts=attempts+1,last_error=NULL WHERE id=$1`,
+			item.id,
+		); err != nil {
 			return err
 		}
 	}
@@ -111,5 +123,16 @@ func (a *IdentityAuditor) RecordIdentity(ctx context.Context, action string, suc
 	// Authentication audit metadata is intentionally limited to outcome. Raw
 	// WebAuthn responses, recovery codes, and session tokens must never reach a
 	// durable log even when authentication fails.
-	return a.sink.Write(ctx, audit.Event{OccurredAt: a.now().UTC(), ActorType: "admin", ActorID: "admin", Action: action, TargetType: "admin_session", TargetID: "admin", Metadata: map[string]any{"success": success}})
+	return a.sink.Write(
+		ctx,
+		audit.Event{
+			OccurredAt: a.now().UTC(),
+			ActorType:  "admin",
+			ActorID:    "admin",
+			Action:     action,
+			TargetType: "admin_session",
+			TargetID:   "admin",
+			Metadata:   map[string]any{"success": success},
+		},
+	)
 }

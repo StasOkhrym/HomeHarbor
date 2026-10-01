@@ -19,11 +19,19 @@ func TestEnsureLinuxInterfaceReconcilesIdempotently(t *testing.T) {
 		if len(commands) == 1 {
 			return errors.New("interface does not exist")
 		}
+
 		return nil
 	}
-	if err := EnsureLinuxInterface(context.Background(), "gt0", "100.64.0.1/32", []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}); err != nil {
+
+	if err := EnsureLinuxInterface(
+		context.Background(),
+		"gt0",
+		"100.64.0.1/32",
+		[]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
+	); err != nil {
 		t.Fatal(err)
 	}
+
 	want := [][]string{
 		{"link", "show", "dev", "gt0"},
 		{"link", "add", "dev", "gt0", "type", "wireguard"},
@@ -31,6 +39,7 @@ func TestEnsureLinuxInterfaceReconcilesIdempotently(t *testing.T) {
 		{"link", "set", "dev", "gt0", "up"},
 		{"route", "replace", "10.0.0.0/8", "dev", "gt0"},
 	}
+
 	if !reflect.DeepEqual(commands, want) {
 		t.Fatalf("commands=%#v, want %#v", commands, want)
 	}
@@ -44,9 +53,16 @@ func TestEnsureLinuxInterfaceRejectsDefaultRouteBeforeCommands(t *testing.T) {
 		called = true
 		return nil
 	}
-	if err := EnsureLinuxInterface(context.Background(), "gt0", "100.64.0.1/32", []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}); err == nil {
+
+	if err := EnsureLinuxInterface(
+		context.Background(),
+		"gt0",
+		"100.64.0.1/32",
+		[]netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")},
+	); err == nil {
 		t.Fatal("default route was accepted")
 	}
+
 	if called {
 		t.Fatal("ip command ran before route validation")
 	}

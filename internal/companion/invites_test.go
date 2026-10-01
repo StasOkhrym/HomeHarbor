@@ -42,22 +42,41 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := controlinvites.NewMemoryStore()
-	inviteService := controlinvites.NewService(store, rootPublic, "home", func() time.Time { return now }, controlinvites.WithApprovalWorkflow(approvalFixture{store: store, root: rootPublic}))
+	inviteService := controlinvites.NewService(
+		store,
+		rootPublic,
+		"home",
+		func() time.Time { return now },
+		controlinvites.WithApprovalWorkflow(approvalFixture{store: store, root: rootPublic}),
+	)
 	if err := inviteService.SubmitProof(context.Background(), permit, proof); err != nil {
 		t.Fatal(err)
 	}
 	snapshotService := controlsnapshots.NewService(controlsnapshots.NewMemoryStore(), rootPublic, "home")
-	initial, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1, Profiles: []snapshot.AccessProfile{{ID: "family", Name: "Family"}}}, rootPrivate, "root-1")
+	initial, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{
+			NetworkID: "home",
+			Revision:  1,
+			Profiles:  []snapshot.AccessProfile{{ID: "family", Name: "Family"}},
+		},
+		rootPrivate,
+		"root-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := snapshotService.Publish(context.Background(), initial); err != nil {
 		t.Fatal(err)
 	}
-	handler := httpapi.NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAllAuthorizer{}, httpapi.WithInviteService(inviteService), httpapi.WithSnapshotService(snapshotService), httpapi.WithCompanionRootKey(rootPublic)).Handler()
+	handler := httpapi.NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAllAuthorizer{}, httpapi.WithInviteService(inviteService), httpapi.WithSnapshotService(snapshotService), httpapi.WithCompanionRootKey(rootPublic)).
+		Handler()
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	approver := RemoteApprover{Endpoint: server.URL, KeyID: "root-1", OverlayPool: netip.MustParsePrefix("10.200.0.0/29")}
+	approver := RemoteApprover{
+		Endpoint:    server.URL,
+		KeyID:       "root-1",
+		OverlayPool: netip.MustParsePrefix("10.200.0.0/29"),
+	}
 	if err := approver.Approve(context.Background(), local.Permit.InviteID, local.Code, rootPrivate); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +108,13 @@ func TestRemoteApproverPublishesSignedDeviceRemoval(t *testing.T) {
 	initial, err := snapshot.Sign(snapshot.NetworkSnapshot{
 		NetworkID: "home", Revision: 1,
 		Devices: []snapshot.Device{
-			{ID: "phone", Role: "client", IdentityPublicKey: "phone-id", WireGuardPublicKey: "phone-wg", OverlayAddress: "10.200.0.2/32"},
+			{
+				ID:                 "phone",
+				Role:               "client",
+				IdentityPublicKey:  "phone-id",
+				WireGuardPublicKey: "phone-wg",
+				OverlayAddress:     "10.200.0.2/32",
+			},
 		},
 		Profiles: []snapshot.AccessProfile{{ID: "family", Name: "Family", DeviceIDs: []string{"phone"}}},
 	}, rootPrivate, "root-1")
@@ -99,7 +124,8 @@ func TestRemoteApproverPublishesSignedDeviceRemoval(t *testing.T) {
 	if err := snapshotService.Publish(context.Background(), initial); err != nil {
 		t.Fatal(err)
 	}
-	handler := httpapi.NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAllAuthorizer{}, httpapi.WithSnapshotService(snapshotService), httpapi.WithCompanionRootKey(rootPublic)).Handler()
+	handler := httpapi.NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAllAuthorizer{}, httpapi.WithSnapshotService(snapshotService), httpapi.WithCompanionRootKey(rootPublic)).
+		Handler()
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
@@ -142,7 +168,12 @@ func TestRemoteApproverBlocksInviteAfterFiveInvalidCodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := controlinvites.NewService(controlinvites.NewMemoryStore(), rootPublic, "home", func() time.Time { return now })
+	service := controlinvites.NewService(
+		controlinvites.NewMemoryStore(),
+		rootPublic,
+		"home",
+		func() time.Time { return now },
+	)
 	if err := service.SubmitProof(context.Background(), permit, proof); err != nil {
 		t.Fatal(err)
 	}

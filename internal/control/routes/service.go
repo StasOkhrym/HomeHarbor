@@ -59,13 +59,30 @@ func NewService(store Repository, now func() time.Time) *Service {
 
 func (s *Service) Advertise(ctx context.Context, request AdvertisementRequest) (Advertisement, error) {
 	suffix := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(request.DomainSuffix)), ".")
-	if request.ID == "" || request.GatewayDeviceID == "" || !request.Prefix.IsValid() || request.Prefix.Bits() == 0 || !request.Resolver.IsValid() || request.Resolver.IsUnspecified() || !validDomainSuffix(suffix) {
-		return Advertisement{}, fmt.Errorf("%w: complete route, resolver, and DNS suffix are required", ErrInvalidAdvertisement)
+	if request.ID == "" || request.GatewayDeviceID == "" || !request.Prefix.IsValid() || request.Prefix.Bits() == 0 ||
+		!request.Resolver.IsValid() ||
+		request.Resolver.IsUnspecified() ||
+		!validDomainSuffix(suffix) {
+		return Advertisement{}, fmt.Errorf(
+			"%w: complete route, resolver, and DNS suffix are required",
+			ErrInvalidAdvertisement,
+		)
 	}
 	if !request.Prefix.Contains(request.Resolver) {
-		return Advertisement{}, fmt.Errorf("%w: DNS resolver must be inside the advertised prefix", ErrInvalidAdvertisement)
+		return Advertisement{}, fmt.Errorf(
+			"%w: DNS resolver must be inside the advertised prefix",
+			ErrInvalidAdvertisement,
+		)
 	}
-	advertisement := Advertisement{ID: request.ID, GatewayDeviceID: request.GatewayDeviceID, Prefix: request.Prefix.Masked(), Resolver: request.Resolver, DomainSuffix: suffix, Status: StatusPending, CreatedAt: s.now().UTC()}
+	advertisement := Advertisement{
+		ID:              request.ID,
+		GatewayDeviceID: request.GatewayDeviceID,
+		Prefix:          request.Prefix.Masked(),
+		Resolver:        request.Resolver,
+		DomainSuffix:    suffix,
+		Status:          StatusPending,
+		CreatedAt:       s.now().UTC(),
+	}
 	if err := s.store.Save(ctx, advertisement); err != nil {
 		return Advertisement{}, err
 	}

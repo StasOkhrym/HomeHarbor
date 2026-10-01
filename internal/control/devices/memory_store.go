@@ -14,7 +14,11 @@ type MemoryStore struct {
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{tokens: make(map[[32]byte]EnrollmentToken), devices: make(map[string]Device), credentialExpires: make(map[string]time.Time)}
+	return &MemoryStore{
+		tokens:            make(map[[32]byte]EnrollmentToken),
+		devices:           make(map[string]Device),
+		credentialExpires: make(map[string]time.Time),
+	}
 }
 
 func (s *MemoryStore) SaveEnrollmentToken(_ context.Context, token EnrollmentToken) error {
@@ -70,7 +74,8 @@ func (s *MemoryStore) Enroll(_ context.Context, hash [32]byte, now time.Time, de
 // checkUnique is called with mu held, before consuming a one-time token.
 func (s *MemoryStore) checkUnique(device Device) error {
 	for _, current := range s.devices {
-		if current.ID == device.ID || current.IdentityPublicKey == device.IdentityPublicKey || current.WireGuardPublicKey == device.WireGuardPublicKey {
+		if current.ID == device.ID || current.IdentityPublicKey == device.IdentityPublicKey ||
+			current.WireGuardPublicKey == device.WireGuardPublicKey {
 			return ErrDeviceConflict
 		}
 	}
@@ -117,18 +122,25 @@ func (s *MemoryStore) AuthenticateCredential(_ context.Context, hash [32]byte, n
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, device := range s.devices {
-		if device.CredentialHash == hash && device.Status == StatusActive && now.Before(s.credentialExpires[device.ID]) {
+		if device.CredentialHash == hash && device.Status == StatusActive &&
+			now.Before(s.credentialExpires[device.ID]) {
 			return device, nil
 		}
 	}
 	return Device{}, ErrDeviceNotFound
 }
 
-func (s *MemoryStore) RotateCredential(_ context.Context, id string, oldHash, newHash [32]byte, now, expiresAt time.Time) error {
+func (s *MemoryStore) RotateCredential(
+	_ context.Context,
+	id string,
+	oldHash, newHash [32]byte,
+	now, expiresAt time.Time,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	device, ok := s.devices[id]
-	if !ok || device.Status != StatusActive || device.CredentialHash != oldHash || !now.Before(s.credentialExpires[id]) {
+	if !ok || device.Status != StatusActive || device.CredentialHash != oldHash ||
+		!now.Before(s.credentialExpires[id]) {
 		return ErrDeviceNotFound
 	}
 	device.CredentialHash = newHash

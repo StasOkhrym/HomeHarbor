@@ -10,7 +10,12 @@ import (
 
 type sharedChallenges struct{ store *redissecurity.Store }
 
-func (s sharedChallenges) PutChallenge(ctx context.Context, purpose, key string, value []byte, ttl time.Duration) error {
+func (s sharedChallenges) PutChallenge(
+	ctx context.Context,
+	purpose, key string,
+	value []byte,
+	ttl time.Duration,
+) error {
 	return s.store.PutChallenge(ctx, purpose, key, value, ttl)
 }
 

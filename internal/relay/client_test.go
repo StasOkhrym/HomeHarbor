@@ -29,15 +29,29 @@ func TestBridgeForwardsOpaqueDatagramsBothDirections(t *testing.T) {
 		t.Fatal(err)
 	}
 	bridgeA, err := NewBridge(BridgeConfig{
-		RelayURL: relayURL, Ticket: ticketA, SessionID: "session", DeviceID: "a", DestinationDeviceID: "b",
-		ListenAddress: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}, WireGuardAddress: wireGuardA.LocalAddr().(*net.UDPAddr),
+		RelayURL:            relayURL,
+		Ticket:              ticketA,
+		SessionID:           "session",
+		DeviceID:            "a",
+		DestinationDeviceID: "b",
+		ListenAddress: &net.UDPAddr{
+			IP: net.IPv4(127, 0, 0, 1),
+		},
+		WireGuardAddress: wireGuardA.LocalAddr().(*net.UDPAddr),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	bridgeB, err := NewBridge(BridgeConfig{
-		RelayURL: relayURL, Ticket: ticketB, SessionID: "session", DeviceID: "b", DestinationDeviceID: "a",
-		ListenAddress: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}, WireGuardAddress: wireGuardB.LocalAddr().(*net.UDPAddr),
+		RelayURL:            relayURL,
+		Ticket:              ticketB,
+		SessionID:           "session",
+		DeviceID:            "b",
+		DestinationDeviceID: "a",
+		ListenAddress: &net.UDPAddr{
+			IP: net.IPv4(127, 0, 0, 1),
+		},
+		WireGuardAddress: wireGuardB.LocalAddr().(*net.UDPAddr),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -103,10 +117,26 @@ func TestBridgeRejectsInvalidRelayURL(t *testing.T) {
 
 func TestTicketBoundDestinationCannotBeChangedByPacket(t *testing.T) {
 	claims := TicketClaims{SessionID: "session", DeviceID: "client", DestinationDeviceID: "gateway"}
-	if destinationAllowedByTicket(claims, Packet{SessionID: "session", SourceDeviceID: "client", DestinationDeviceID: "other-device", Payload: []byte("ciphertext")}) {
+	if destinationAllowedByTicket(
+		claims,
+		Packet{
+			SessionID:           "session",
+			SourceDeviceID:      "client",
+			DestinationDeviceID: "other-device",
+			Payload:             []byte("ciphertext"),
+		},
+	) {
 		t.Fatal("ticket-bound packet was allowed to target a different device")
 	}
-	if !destinationAllowedByTicket(claims, Packet{SessionID: "session", SourceDeviceID: "client", DestinationDeviceID: "gateway", Payload: []byte("ciphertext")}) {
+	if !destinationAllowedByTicket(
+		claims,
+		Packet{
+			SessionID:           "session",
+			SourceDeviceID:      "client",
+			DestinationDeviceID: "gateway",
+			Payload:             []byte("ciphertext"),
+		},
+	) {
 		t.Fatal("ticket-bound packet for its authorized peer was rejected")
 	}
 }

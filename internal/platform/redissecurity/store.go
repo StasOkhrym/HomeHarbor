@@ -73,13 +73,21 @@ return {count, redis.call('PTTL', KEYS[1])}
 
 // Allow starts a fixed window at the first request, atomically across control
 // processes. Redis OOM/noeviction and transport failures never grant a request.
-func (s *Store) Allow(ctx context.Context, bucket, key string, limit int, window time.Duration) (bool, time.Duration, error) {
+func (s *Store) Allow(
+	ctx context.Context,
+	bucket, key string,
+	limit int,
+	window time.Duration,
+) (bool, time.Duration, error) {
 	if limit < 1 || window < time.Millisecond {
 		return false, 0, errors.New("invalid rate-limit bounds")
 	}
-	result, err := rateScript.Run(ctx, s.client, []string{s.key("rate:"+bucket, key)}, window.Milliseconds()).Int64Slice()
+
+	result, err := rateScript.Run(ctx, s.client, []string{s.key("rate:"+bucket, key)}, window.Milliseconds()).
+		Int64Slice()
 	if err != nil || len(result) != 2 || result[1] < 0 {
 		return false, 0, ErrUnavailable
 	}
+
 	return result[0] <= int64(limit), time.Duration(result[1]) * time.Millisecond, nil
 }

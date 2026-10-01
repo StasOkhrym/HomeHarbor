@@ -35,8 +35,15 @@ type CompanionRequest struct {
 // SignCompanionRequest signs a challenge-bound HTTP request for the trusted
 // companion snapshot API. The signature contains no private device material.
 func SignCompanionRequest(method, path, nonce, keyID string, privateKey ed25519.PrivateKey) ([]byte, error) {
-	request := CompanionRequest{Version: CurrentVersion, KeyID: strings.TrimSpace(keyID), Method: method, Path: path, Nonce: nonce}
-	if len(privateKey) != ed25519.PrivateKeySize || request.KeyID == "" || request.Method == "" || request.Path == "" || request.Nonce == "" {
+	request := CompanionRequest{
+		Version: CurrentVersion,
+		KeyID:   strings.TrimSpace(keyID),
+		Method:  method,
+		Path:    path,
+		Nonce:   nonce,
+	}
+	if len(privateKey) != ed25519.PrivateKeySize || request.KeyID == "" || request.Method == "" || request.Path == "" ||
+		request.Nonce == "" {
 		return nil, ErrInvalidCompanionRequest
 	}
 	payload, err := companionCanonicalMode.Marshal(request)
@@ -49,8 +56,16 @@ func SignCompanionRequest(method, path, nonce, keyID string, privateKey ed25519.
 // VerifyCompanionRequest validates the exact method/path/nonce tuple before a
 // handler consumes the nonce. Callers must still enforce single-use semantics.
 func VerifyCompanionRequest(method, path, nonce, keyID string, signature []byte, publicKey ed25519.PublicKey) error {
-	request := CompanionRequest{Version: CurrentVersion, KeyID: strings.TrimSpace(keyID), Method: method, Path: path, Nonce: nonce}
-	if len(publicKey) != ed25519.PublicKeySize || request.KeyID == "" || request.Method == "" || request.Path == "" || request.Nonce == "" || len(signature) != ed25519.SignatureSize {
+	request := CompanionRequest{
+		Version: CurrentVersion,
+		KeyID:   strings.TrimSpace(keyID),
+		Method:  method,
+		Path:    path,
+		Nonce:   nonce,
+	}
+	if len(publicKey) != ed25519.PublicKeySize || request.KeyID == "" || request.Method == "" || request.Path == "" ||
+		request.Nonce == "" ||
+		len(signature) != ed25519.SignatureSize {
 		return ErrInvalidCompanionRequest
 	}
 	payload, err := companionCanonicalMode.Marshal(request)

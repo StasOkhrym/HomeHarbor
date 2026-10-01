@@ -54,7 +54,11 @@ func TestHistoryRequiresDeviceAuthAndValidCursorHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 2, PreviousHash: first.Hash}, private, "root")
+	second, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 2, PreviousHash: first.Hash},
+		private,
+		"root",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

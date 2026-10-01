@@ -61,7 +61,12 @@ func signedHistory(t *testing.T, count int) (ed25519.PublicKey, []snapshot.Envel
 	return public, page
 }
 
-func historyServer(t *testing.T, page []snapshot.Envelope, transform func([]snapshot.Envelope) []snapshot.Envelope, cursors *[]uint64) *httptest.Server {
+func historyServer(
+	t *testing.T,
+	page []snapshot.Envelope,
+	transform func([]snapshot.Envelope) []snapshot.Envelope,
+	cursors *[]uint64,
+) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/coordination/snapshots" || r.Header.Get("Authorization") != "Bearer credential" {
@@ -102,12 +107,20 @@ func TestSnapshotCatchUpVerifiesEveryPageAndAppliesOnlyTarget(t *testing.T) {
 	var cursors []uint64
 	server := historyServer(t, history, nil, &cursors)
 	defer server.Close()
-	cfg := CoordinationConfig{URL: "ws" + server.URL[len("http"):], Credential: "credential", NetworkID: "home", DeviceID: "device-1", RootPublicKey: public, StatePath: filepath.Join(t.TempDir(), "head.json")}
+	cfg := CoordinationConfig{
+		URL:           "ws" + server.URL[len("http"):],
+		Credential:    "credential",
+		NetworkID:     "home",
+		DeviceID:      "device-1",
+		RootPublicKey: public,
+		StatePath:     filepath.Join(t.TempDir(), "head.json"),
+	}
 	applier, cursor := &stateApplier{}, &coordinationCursor{}
 	if err := reconcileSnapshotHead(context.Background(), cfg, applier, cursor, history[4]); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cursors, []uint64{0, 2, 4}) || !reflect.DeepEqual(applier.revisions, []uint64{5}) || cursor.revision != 5 {
+	if !reflect.DeepEqual(cursors, []uint64{0, 2, 4}) || !reflect.DeepEqual(applier.revisions, []uint64{5}) ||
+		cursor.revision != 5 {
 		t.Fatalf("requests=%v applied=%v cursor=%d", cursors, applier.revisions, cursor.revision)
 	}
 	info, err := os.Stat(cfg.StatePath)
@@ -128,7 +141,16 @@ func TestSnapshotCatchUpVerifiesEveryPageAndAppliesOnlyTarget(t *testing.T) {
 	forged := history[4]
 	forged.Signature = append([]byte(nil), forged.Signature...)
 	forged.Signature[0] ^= 1
-	if err := reconcileSnapshotHead(context.Background(), cfg, restoredApplier, &restored, forged); !errors.Is(err, snapshot.ErrInvalidSignature) {
+	if err := reconcileSnapshotHead(
+		context.Background(),
+		cfg,
+		restoredApplier,
+		&restored,
+		forged,
+	); !errors.Is(
+		err,
+		snapshot.ErrInvalidSignature,
+	) {
 		t.Fatalf("same-hash forged replay: %v", err)
 	}
 }
@@ -151,7 +173,13 @@ func TestSnapshotCatchUpRejectsMissingGappedAndTamperedHistory(t *testing.T) {
 			var cursors []uint64
 			server := historyServer(t, history, test.change, &cursors)
 			defer server.Close()
-			cfg := CoordinationConfig{URL: "ws" + server.URL[len("http"):], Credential: "credential", NetworkID: "home", RootPublicKey: public, StatePath: filepath.Join(t.TempDir(), "head.json")}
+			cfg := CoordinationConfig{
+				URL:           "ws" + server.URL[len("http"):],
+				Credential:    "credential",
+				NetworkID:     "home",
+				RootPublicKey: public,
+				StatePath:     filepath.Join(t.TempDir(), "head.json"),
+			}
 			applier, cursor := &stateApplier{}, &coordinationCursor{}
 			if err := reconcileSnapshotHead(context.Background(), cfg, applier, cursor, history[3]); err == nil {
 				t.Fatal("invalid history accepted")
@@ -169,42 +197,76 @@ func TestSnapshotCatchUpRejectsMissingGappedAndTamperedHistory(t *testing.T) {
 func TestSnapshotCheckpointFailureAndTrustBinding(t *testing.T) {
 	public, history := signedHistory(t, 1)
 	path := filepath.Join(t.TempDir(), "head.json")
+
 	if err := persistSnapshotState(path, history[0]); err != nil {
 		t.Fatal(err)
 	}
+
 	other, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, cfg := range []CoordinationConfig{
 		{StatePath: path, RootPublicKey: other, NetworkID: "home"},
 		{StatePath: path, RootPublicKey: public, NetworkID: "other"},
 	} {
 		a := &stateApplier{}
-		if _, err := restoreSnapshotCursor(context.Background(), cfg, a); !errors.Is(err, ErrSnapshotState) || len(a.revisions) != 0 {
+
+		if _, err := restoreSnapshotCursor(
+			context.Background(),
+			cfg,
+			a,
+		); !errors.Is(err, ErrSnapshotState) ||
+			len(a.revisions) != 0 {
 			t.Fatalf("untrusted checkpoint err=%v applied=%v", err, a.revisions)
 		}
 	}
+
 	var cursors []uint64
+
 	server := historyServer(t, history, nil, &cursors)
 	defer server.Close()
-	cfg := CoordinationConfig{URL: "ws" + server.URL[len("http"):], Credential: "credential", NetworkID: "home", RootPublicKey: public, StatePath: t.TempDir()}
+
+	cfg := CoordinationConfig{
+		URL:           "ws" + server.URL[len("http"):],
+		Credential:    "credential",
+		NetworkID:     "home",
+		RootPublicKey: public,
+		StatePath:     t.TempDir(),
+	}
 	a, cursor := &stateApplier{}, &coordinationCursor{}
-	if err := reconcileSnapshotHead(context.Background(), cfg, a, cursor, history[0]); !errors.Is(err, ErrSnapshotState) {
+
+	if err := reconcileSnapshotHead(
+		context.Background(),
+		cfg,
+		a,
+		cursor,
+		history[0],
+	); !errors.Is(
+		err,
+		ErrSnapshotState,
+	) {
 		t.Fatalf("persistence error=%v", err)
 	}
+
 	if cursor.revision != 0 || len(a.revisions) != 0 {
 		t.Fatal("failed state preparation applied or advanced cursor")
 	}
+
 	cfg.StatePath = path
 	a.fail = errors.New("kernel rejected target")
+
 	if err := reconcileSnapshotHead(context.Background(), cfg, a, cursor, history[0]); err == nil {
 		t.Fatal("application failure accepted")
 	}
+
 	if cursor.revision != 0 {
 		t.Fatal("failed application advanced cursor")
 	}
+
 	loaded, err := loadSnapshotState(path, public, "home")
+
 	if err != nil || !reflect.DeepEqual(loaded.Hash, history[0].Hash) {
 		t.Fatalf("failed application changed checkpoint: %v", err)
 	}
@@ -213,32 +275,55 @@ func TestSnapshotCheckpointFailureAndTrustBinding(t *testing.T) {
 func TestSnapshotCheckpointCommitFailureKeepsCursorAndStopsLoop(t *testing.T) {
 	public, history := signedHistory(t, 1)
 	var requests []uint64
+
 	server := historyServer(t, history, nil, &requests)
 	defer server.Close()
+
 	path := filepath.Join(t.TempDir(), "head.json")
-	cfg := CoordinationConfig{URL: "ws" + server.URL[len("http"):], Credential: "credential", NetworkID: "home", RootPublicKey: public, StatePath: path}
+	cfg := CoordinationConfig{
+		URL:           "ws" + server.URL[len("http"):],
+		Credential:    "credential",
+		NetworkID:     "home",
+		RootPublicKey: public,
+		StatePath:     path,
+	}
 	applier := &stateApplier{hook: func() {
 		if err := os.Mkdir(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}}
 	cursor := coordinationCursor{}
-	if err := reconcileSnapshotHead(context.Background(), cfg, applier, &cursor, history[0]); !errors.Is(err, ErrSnapshotState) {
+
+	if err := reconcileSnapshotHead(
+		context.Background(),
+		cfg,
+		applier,
+		&cursor,
+		history[0],
+	); !errors.Is(
+		err,
+		ErrSnapshotState,
+	) {
 		t.Fatalf("commit failure=%v", err)
 	}
+
 	if cursor.revision != 0 || len(applier.revisions) != 1 {
 		t.Fatalf("cursor=%d applied=%v", cursor.revision, applier.revisions)
 	}
+
 	entries, err := os.ReadDir(filepath.Dir(path))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(entries) != 1 || entries[0].Name() != "head.json" {
 		t.Fatalf("abandoned temporary checkpoint: %v", entries)
 	}
+
 	// Bad local state is terminal before any network reconnect attempt.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+
 	if err := RunCoordinationLoop(ctx, cfg, &stateApplier{}); !errors.Is(err, ErrSnapshotState) {
 		t.Fatalf("loop persistence failure=%v", err)
 	}

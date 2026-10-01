@@ -1,0 +1,38 @@
+{{define "activity"}}
+  <section class="panel">
+    <form method="get" action="/admin/activity">
+      <div class="field">
+        <label for="activity-limit">Number of recent events</label>
+        <input id="activity-limit"
+               type="number"
+               name="limit"
+               min="1"
+               max="200"
+               value="{{.AuditLimit}}">
+      </div>
+      <button class="secondary" type="submit">Refresh activity</button>
+    </form>
+  </section>
+  <section class="panel">
+    <h2>Recent events</h2>
+    {{if .Audit.Ready}}
+      <ul class="resource-list">
+        {{range .Audit.Items}}
+          <li>
+            <div class="resource-row"><strong>{{actionLabel .Action}}</strong>{{with auditOutcome .}}<span class="badge">{{.}}</span>{{end}}</div>
+            <p><time datetime="{{timeISO .OccurredAt}}">{{timeLabel .OccurredAt}}</time></p>
+            <details class="advanced">
+              <summary>Advanced · event identities</summary>
+              <p>Action: <code>{{.Action}}</code></p>
+              <p>{{.ActorType}} / <code>{{.ActorID}}</code> → {{.TargetType}} / <code>{{.TargetID}}</code></p>
+            </details>
+          </li>
+        {{else}}
+          <li class="empty-state">No audit events yet.</li>
+        {{end}}
+      </ul>
+    {{else}}
+      <p class="alert alert-error" role="alert">{{.Audit.Error}}</p>
+    {{end}}
+  </section>
+{{end}}

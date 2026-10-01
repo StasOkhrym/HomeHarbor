@@ -45,7 +45,10 @@ func NewSnapshotSigner(session *Session, networkID, keyID string) *SnapshotSigne
 // SignDeviceAddition verifies the current signed head, adds exactly one client
 // to one existing profile, and signs the next contiguous revision. It refuses
 // a stale/tampered head and never accepts a caller-supplied revision or hash.
-func (s *SnapshotSigner) SignDeviceAddition(previous snapshot.Envelope, addition DeviceAddition) (snapshot.Envelope, error) {
+func (s *SnapshotSigner) SignDeviceAddition(
+	previous snapshot.Envelope,
+	addition DeviceAddition,
+) (snapshot.Envelope, error) {
 	value, privateKey, err := s.currentHead(previous)
 	if err != nil {
 		return snapshot.Envelope{}, err
@@ -62,7 +65,14 @@ func (s *SnapshotSigner) SignDeviceAddition(previous snapshot.Envelope, addition
 		if next.Profiles[index].ID == addition.ProfileID {
 			previousMembers := append([]string(nil), next.Profiles[index].DeviceIDs...)
 			next.Profiles[index].DeviceIDs = append(next.Profiles[index].DeviceIDs, addition.Device.ID)
-			if err := copyProfileACL(next.ACL, &next.ACL, addition.ProfileID, next.Profiles[index].ACLRuleIDs, previousMembers, addition.Device.ID); err != nil {
+			if err := copyProfileACL(
+				next.ACL,
+				&next.ACL,
+				addition.ProfileID,
+				next.Profiles[index].ACLRuleIDs,
+				previousMembers,
+				addition.Device.ID,
+			); err != nil {
 				return snapshot.Envelope{}, err
 			}
 			break
@@ -75,11 +85,15 @@ func (s *SnapshotSigner) SignDeviceAddition(previous snapshot.Envelope, addition
 // client removal. Existing ACL entries are filtered by source device and
 // profile references are updated together, so a gateway can apply the new
 // snapshot atomically without accepting a partially revoked policy.
-func (s *SnapshotSigner) SignDeviceRemoval(previous snapshot.Envelope, removal DeviceRemoval) (snapshot.Envelope, error) {
+func (s *SnapshotSigner) SignDeviceRemoval(
+	previous snapshot.Envelope,
+	removal DeviceRemoval,
+) (snapshot.Envelope, error) {
 	value, privateKey, err := s.currentHead(previous)
 	if err != nil {
 		return snapshot.Envelope{}, err
 	}
+
 	if err := validateDeviceRemoval(value, removal); err != nil {
 		return snapshot.Envelope{}, err
 	}
@@ -94,6 +108,7 @@ func (s *SnapshotSigner) SignDeviceRemoval(previous snapshot.Envelope, removal D
 			devices = append(devices, device)
 		}
 	}
+
 	next.Devices = devices
 
 	removedACL := make(map[string]struct{})
@@ -103,8 +118,10 @@ func (s *SnapshotSigner) SignDeviceRemoval(previous snapshot.Envelope, removal D
 			removedACL[rule.ID] = struct{}{}
 			continue
 		}
+
 		acl = append(acl, rule)
 	}
+
 	next.ACL = acl
 	for index := range next.Profiles {
 		profile := &next.Profiles[index]
@@ -133,7 +150,13 @@ func (s *SnapshotSigner) currentHead(previous snapshot.Envelope) (snapshot.Netwo
 		currentRevision = value.Revision - 1
 		currentHash = value.PreviousHash
 	}
-	if err := snapshot.VerifyNext(previous, privateKey.Public().(ed25519.PublicKey), s.networkID, currentRevision, currentHash); err != nil {
+	if err := snapshot.VerifyNext(
+		previous,
+		privateKey.Public().(ed25519.PublicKey),
+		s.networkID,
+		currentRevision,
+		currentHash,
+	); err != nil {
 		return snapshot.NetworkSnapshot{}, nil, fmt.Errorf("verify current snapshot: %w", err)
 	}
 	return value, privateKey, nil
@@ -143,20 +166,28 @@ func (s *SnapshotSigner) currentHead(previous snapshot.Envelope) (snapshot.Netwo
 // the trusted companion's configured pool, then applies the same constrained
 // device/profile diff as SignDeviceAddition. The caller cannot smuggle an
 // arbitrary address through this path.
-func (s *SnapshotSigner) SignDeviceAdditionFromPool(previous snapshot.Envelope, addition DeviceAddition, pool netip.Prefix) (snapshot.Envelope, error) {
+func (s *SnapshotSigner) SignDeviceAdditionFromPool(
+	previous snapshot.Envelope,
+	addition DeviceAddition,
+	pool netip.Prefix,
+) (snapshot.Envelope, error) {
 	value, err := snapshot.Decode(previous)
 	if err != nil {
 		return snapshot.Envelope{}, fmt.Errorf("decode current snapshot: %w", err)
 	}
+
 	used := make([]string, 0, len(value.Devices))
 	for _, device := range value.Devices {
 		used = append(used, device.OverlayAddress)
 	}
+
 	allocated, err := snapshot.AllocateOverlayAddress(pool, used)
 	if err != nil {
 		return snapshot.Envelope{}, err
 	}
+
 	addition.Device.OverlayAddress = allocated.String()
+
 	return s.SignDeviceAddition(previous, addition)
 }
 
@@ -164,39 +195,54 @@ func (s *SnapshotSigner) SignDeviceAdditionFromPool(previous snapshot.Envelope, 
 // profile. It refuses a missing template or a template sourced from a device
 // outside the profile, preventing membership changes from inheriting unrelated
 // access. Empty ACLRuleIDs remain default-deny.
-func copyProfileACL(existing []snapshot.ACLRule, destination *[]snapshot.ACLRule, profileID string, ruleIDs, previousMembers []string, newDeviceID string) error {
+func copyProfileACL(
+	existing []snapshot.ACLRule,
+	destination *[]snapshot.ACLRule,
+	profileID string,
+	ruleIDs, previousMembers []string,
+	newDeviceID string,
+) error {
 	memberSet := make(map[string]struct{}, len(previousMembers))
 	for _, memberID := range previousMembers {
 		memberSet[memberID] = struct{}{}
 	}
+
 	existingIDs := make(map[string]struct{}, len(existing))
 	rulesByID := make(map[string]snapshot.ACLRule, len(existing))
 	for _, rule := range existing {
 		existingIDs[rule.ID] = struct{}{}
 		rulesByID[rule.ID] = rule
 	}
+
 	for _, ruleID := range ruleIDs {
 		rule, ok := rulesByID[ruleID]
 		if !ok {
 			return ErrInvalidSnapshotDiff
 		}
+
 		if _, ok := memberSet[rule.SourceDeviceID]; !ok {
 			return ErrInvalidSnapshotDiff
 		}
+
 		copied := rule
 		copied.ID = profileID + "/" + newDeviceID + "/" + ruleID
+
 		if _, exists := existingIDs[copied.ID]; exists {
 			return ErrInvalidSnapshotDiff
 		}
+
 		copied.SourceDeviceID = newDeviceID
 		*destination = append(*destination, copied)
 		existingIDs[copied.ID] = struct{}{}
 	}
+
 	return nil
 }
 
 func validateDeviceAddition(value snapshot.NetworkSnapshot, addition DeviceAddition) error {
-	if strings.TrimSpace(addition.ProfileID) == "" || addition.Device.ID == "" || addition.Device.Role != "client" || addition.Device.IdentityPublicKey == "" || addition.Device.WireGuardPublicKey == "" {
+	if strings.TrimSpace(addition.ProfileID) == "" || addition.Device.ID == "" || addition.Device.Role != "client" ||
+		addition.Device.IdentityPublicKey == "" ||
+		addition.Device.WireGuardPublicKey == "" {
 		return ErrInvalidSnapshotDiff
 	}
 	overlay, err := netip.ParsePrefix(addition.Device.OverlayAddress)

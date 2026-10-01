@@ -21,7 +21,12 @@ const (
 	maxSnapshotHistoryBytes = snapshotHistoryPageSize*(maxSnapshotEnvelopeBytes+1) + 2
 )
 
-func fetchSnapshotHistory(ctx context.Context, cfg CoordinationConfig, revision uint64, hash []byte) ([]snapshot.Envelope, error) {
+func fetchSnapshotHistory(
+	ctx context.Context,
+	cfg CoordinationConfig,
+	revision uint64,
+	hash []byte,
+) ([]snapshot.Envelope, error) {
 	endpoint, err := url.Parse(cfg.URL)
 	if err != nil {
 		return nil, err
@@ -35,7 +40,10 @@ func fetchSnapshotHistory(ctx context.Context, cfg CoordinationConfig, revision 
 		return nil, errors.New("coordination requires ws or wss URL")
 	}
 	endpoint.Path, endpoint.RawPath, endpoint.Fragment = "/api/v1/coordination/snapshots", "", ""
-	query := url.Values{"after_revision": {strconv.FormatUint(revision, 10)}, "limit": {strconv.Itoa(snapshotHistoryPageSize)}}
+	query := url.Values{
+		"after_revision": {strconv.FormatUint(revision, 10)},
+		"limit":          {strconv.Itoa(snapshotHistoryPageSize)},
+	}
 	if revision > 0 {
 		query.Set("after_hash", base64.RawURLEncoding.EncodeToString(hash))
 	}
@@ -47,7 +55,10 @@ func fetchSnapshotHistory(ctx context.Context, cfg CoordinationConfig, revision 
 	request.Header.Set("Authorization", "Bearer "+cfg.Credential)
 	// Use normal TLS validation. A redirect must not move a credential-bearing
 	// history request to another endpoint or silently switch its trust boundary.
-	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{
+		Timeout:       15 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, err
@@ -81,7 +92,13 @@ func fetchSnapshotHistory(ctx context.Context, cfg CoordinationConfig, revision 
 
 // A WS head is only a signed catch-up target. It never bypasses missing
 // revisions, including on a fresh node that was absent from early topology.
-func reconcileSnapshotHead(ctx context.Context, cfg CoordinationConfig, applier SnapshotApplier, cursor *coordinationCursor, head snapshot.Envelope) error {
+func reconcileSnapshotHead(
+	ctx context.Context,
+	cfg CoordinationConfig,
+	applier SnapshotApplier,
+	cursor *coordinationCursor,
+	head snapshot.Envelope,
+) error {
 	target, err := snapshot.Verify(head, cfg.RootPublicKey, cfg.NetworkID)
 	if err != nil {
 		return fmt.Errorf("verify snapshot head: %w", err)

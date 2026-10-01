@@ -17,8 +17,16 @@ import (
 
 func main() {
 	path := flag.String("config", "config/relay.toml", "relay configuration path")
-	certFile := flag.String("tls-cert", os.Getenv("GO_TUNNELS_RELAY_TLS_CERT_FILE"), "relay TLS certificate PEM file (required)")
-	keyFile := flag.String("tls-key", os.Getenv("GO_TUNNELS_RELAY_TLS_KEY_FILE"), "relay TLS private key PEM file (required)")
+	certFile := flag.String(
+		"tls-cert",
+		os.Getenv("GO_TUNNELS_RELAY_TLS_CERT_FILE"),
+		"relay TLS certificate PEM file (required)",
+	)
+	keyFile := flag.String(
+		"tls-key",
+		os.Getenv("GO_TUNNELS_RELAY_TLS_KEY_FILE"),
+		"relay TLS private key PEM file (required)",
+	)
 	portMin := flag.Int("udp-port-min", 0, "inclusive UDP v2 range start; default derives from udp_listen_address")
 	portMax := flag.Int("udp-port-max", 0, "inclusive UDP v2 range end")
 	advertiseHost := flag.String("udp-advertise-host", "", "public UDP v2 hostname/IP; required behind a proxy or NAT")
@@ -53,7 +61,14 @@ func main() {
 		logger.Error("load relay TLS", "error", err)
 		os.Exit(1)
 	}
-	app := relayapp.NewWithOptions(cfg, logger, relayapp.Options{TLSConfig: tlsConfig, UDPV2: relay.UDPPairV2Config{PortMin: *portMin, PortMax: *portMax, AdvertiseHost: *advertiseHost}})
+	app := relayapp.NewWithOptions(
+		cfg,
+		logger,
+		relayapp.Options{
+			TLSConfig: tlsConfig,
+			UDPV2:     relay.UDPPairV2Config{PortMin: *portMin, PortMax: *portMax, AdvertiseHost: *advertiseHost},
+		},
+	)
 	logger.Info("relay listening", "address", cfg.Server.ListenAddress)
 	if err = app.Run(ctx); err != nil {
 		logger.Error("serve relay", "error", err)

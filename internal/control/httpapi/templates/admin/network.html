@@ -1,0 +1,70 @@
+{{define "network"}}
+  <section class="panel">
+    <h2>LAN routes &amp; split DNS</h2>
+    {{if .Routes.Ready}}
+      <ul class="resource-list">
+        {{range .Routes.Items}}
+          <li>
+            <div class="resource-row"><strong><code>{{.Prefix}}</code></strong><span class="badge">{{.Status}}</span></div>
+            <p>Gateway: {{$.DeviceName .GatewayDeviceID}}</p>
+            <p class="help">Resolver {{.Resolver}} · domain {{.DomainSuffix}}</p>
+            <details class="advanced">
+              <summary>Advanced · route ID</summary>
+              <code>{{.ID}}</code>
+            </details>
+            <div class="actions">
+              {{if ne .Status "approved"}}
+                <form method="post" action="/admin/routes/approve">
+                  <input type="hidden" name="route_id" value="{{.ID}}">
+                  <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                  <input type="hidden" name="return_to" value="network">
+                  <button type="submit">Approve route &amp; DNS</button>
+                </form>
+              {{end}}
+              {{if ne .Status "rejected"}}
+                <form method="post" action="/admin/routes/reject">
+                  <input type="hidden" name="route_id" value="{{.ID}}">
+                  <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                  <input type="hidden" name="return_to" value="network">
+                  <button class="secondary" type="submit">Reject</button>
+                </form>
+              {{end}}
+            </div>
+          </li>
+        {{else}}
+          <li class="empty-state">No advertised routes.</li>
+        {{end}}
+      </ul>
+    {{else}}
+      <p class="alert alert-error" role="alert">{{.Routes.Error}}</p>
+    {{end}}
+  </section>
+  {{if .Devices.Error}}
+    <p class="alert alert-error" role="alert">{{.Devices.Error}}</p>
+  {{end}}
+  {{if and .Routes.Ready .Devices.Ready}}
+    <section class="panel">
+      <h2>Add a LAN route</h2>
+      <form method="post" action="/admin/routes">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <input type="hidden" name="return_to" value="network">
+        <div class="field">
+          <label for="gateway_device_id">Home gateway</label>
+          <select id="gateway_device_id" name="gateway_device_id" required>
+            <option value="">Choose a gateway</option>
+            {{range .Devices.Items}}{{if and (eq .Role "gateway") (eq .Status "active")}}
+              <option value="{{.ID}}"
+                      {{if $.Selected "gateway_device_id" .ID}}selected{{end}}>{{.Name}}</option>
+            {{end}}{{end}}
+          </select>
+        </div>
+        {{template "field" (.Field "prefix" "LAN CIDR (for example 192.168.50.0/24)" "text" true)}}
+        {{template "field" (.Field "resolver" "LAN DNS resolver IP" "text" true)}}
+        {{template "field" (.Field "domain_suffix" "Private DNS suffix (for example home.arpa)" "text" true)}}
+        {{template "record-id" .}}
+        <button type="submit">Save for approval</button>
+      </form>
+    </section>
+  {{end}}
+  <p class="help">Approval saves control metadata. Gateway access changes only through trusted signed configuration.</p>
+{{end}}

@@ -32,12 +32,24 @@ func TestCoordinationRuntimeJoinsHijackedWebSockets(t *testing.T) {
 	defer s.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(s.URL, "http"), &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer credential"}}})
+	c, _, err := websocket.Dial(
+		ctx,
+		"ws"+strings.TrimPrefix(s.URL, "http"),
+		&websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer credential"}}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = c.CloseNow() }()
-	if err := wsjson.Write(ctx, c, controlprotocol.Hello{DeviceID: "device-1", Versions: []uint16{controlprotocol.CurrentVersion}, Capabilities: []string{controlprotocol.CapabilityUDPPairV2}}); err != nil {
+	if err := wsjson.Write(
+		ctx,
+		c,
+		controlprotocol.Hello{
+			DeviceID:     "device-1",
+			Versions:     []uint16{controlprotocol.CurrentVersion},
+			Capabilities: []string{controlprotocol.CapabilityUDPPairV2},
+		},
+	); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {

@@ -21,16 +21,26 @@ func NewActivationUnitOfWork(pool *pgxpool.Pool) *ActivationUnitOfWork {
 	return &ActivationUnitOfWork{pool: pool}
 }
 
-func (u *ActivationUnitOfWork) WithinActivation(ctx context.Context, fn func(workflows.ActivationTransaction) error) error {
+func (u *ActivationUnitOfWork) WithinActivation(
+	ctx context.Context,
+	fn func(workflows.ActivationTransaction) error,
+) error {
 	tx, err := u.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	ports := workflows.ActivationTransaction{Invites: invitepg.Bind(tx), Devices: devicepg.Bind(tx), Profiles: profilepg.Bind(tx), Outbox: outbox{tx: tx}}
+
+	ports := workflows.ActivationTransaction{
+		Invites:  invitepg.Bind(tx),
+		Devices:  devicepg.Bind(tx),
+		Profiles: profilepg.Bind(tx),
+		Outbox:   outbox{tx: tx},
+	}
 	if err = fn(ports); err != nil {
 		return err
 	}
+
 	return tx.Commit(ctx)
 }
 
@@ -47,7 +57,13 @@ func AppendEvent(ctx context.Context, tx pgx.Tx, event devices.Event) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO event_outbox(topic,payload,occurred_at) VALUES($1,$2,$3)`, event.Type, payload, event.OccurredAt)
+	_, err = tx.Exec(
+		ctx,
+		`INSERT INTO event_outbox(topic,payload,occurred_at) VALUES($1,$2,$3)`,
+		event.Type,
+		payload,
+		event.OccurredAt,
+	)
 	return err
 }
 

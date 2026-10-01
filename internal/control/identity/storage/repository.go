@@ -29,7 +29,12 @@ func (s *Repository) SaveRecoveryCodes(ctx context.Context, codes []identity.Rec
 		return err
 	}
 	for _, code := range codes {
-		if _, err = tx.Exec(ctx, `INSERT INTO recovery_codes(code_hash,created_at) VALUES($1,$2)`, code.Hash[:], code.CreatedAt); err != nil {
+		if _, err = tx.Exec(
+			ctx,
+			`INSERT INTO recovery_codes(code_hash,created_at) VALUES($1,$2)`,
+			code.Hash[:],
+			code.CreatedAt,
+		); err != nil {
 			return err
 		}
 	}
@@ -45,7 +50,11 @@ func (s *Repository) HasCredentials(ctx context.Context) (bool, error) {
 }
 
 func (s *Repository) Credentials(ctx context.Context, userHandle []byte) ([]webauthn.Credential, error) {
-	rows, err := s.pool.Query(ctx, `SELECT credential_data FROM webauthn_credentials WHERE user_handle=$1 ORDER BY created_at`, userHandle)
+	rows, err := s.pool.Query(
+		ctx,
+		`SELECT credential_data FROM webauthn_credentials WHERE user_handle=$1 ORDER BY created_at`,
+		userHandle,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +76,8 @@ func (s *Repository) Credentials(ctx context.Context, userHandle []byte) ([]weba
 
 func (s *Repository) Credential(ctx context.Context, userHandle, credentialID []byte) (webauthn.Credential, error) {
 	var payload []byte
-	err := s.pool.QueryRow(ctx, `SELECT credential_data FROM webauthn_credentials WHERE user_handle=$1 AND credential_id=$2`, userHandle, credentialID).Scan(&payload)
+	err := s.pool.QueryRow(ctx, `SELECT credential_data FROM webauthn_credentials WHERE user_handle=$1 AND credential_id=$2`, userHandle, credentialID).
+		Scan(&payload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return webauthn.Credential{}, identity.ErrInvalidCredential
 	}
@@ -101,13 +111,24 @@ func (s *Repository) SaveCredential(ctx context.Context, userHandle []byte, cred
 		return err
 	}
 	var exists bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM webauthn_credentials WHERE user_handle=$1)`, userHandle).Scan(&exists); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM webauthn_credentials WHERE user_handle=$1)`, userHandle).
+		Scan(&exists); err != nil {
 		return err
 	}
 	if exists {
 		return identity.ErrBootstrapClosed
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO webauthn_credentials(credential_id,public_key,attestation_type,transport,sign_count,user_handle,credential_data) VALUES($1,$2,$3,$4,$5,$6,$7)`, credential.ID, credential.PublicKey, credential.AttestationType, transports, credential.Authenticator.SignCount, userHandle, payload); err != nil {
+	if _, err = tx.Exec(
+		ctx,
+		`INSERT INTO webauthn_credentials(credential_id,public_key,attestation_type,transport,sign_count,user_handle,credential_data) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+		credential.ID,
+		credential.PublicKey,
+		credential.AttestationType,
+		transports,
+		credential.Authenticator.SignCount,
+		userHandle,
+		payload,
+	); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -120,7 +141,11 @@ func (s *Repository) UpdateCredential(ctx context.Context, userHandle []byte, cr
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var storedPayload []byte
-	if err = tx.QueryRow(ctx, `SELECT credential_data FROM webauthn_credentials WHERE user_handle=$1 AND credential_id=$2 FOR UPDATE`, userHandle, credential.ID).Scan(&storedPayload); errors.Is(err, pgx.ErrNoRows) {
+	if err = tx.QueryRow(ctx, `SELECT credential_data FROM webauthn_credentials WHERE user_handle=$1 AND credential_id=$2 FOR UPDATE`, userHandle, credential.ID).
+		Scan(&storedPayload); errors.Is(
+		err,
+		pgx.ErrNoRows,
+	) {
 		return identity.ErrInvalidCredential
 	} else if err != nil {
 		return err
@@ -138,7 +163,14 @@ func (s *Repository) UpdateCredential(ctx context.Context, userHandle []byte, cr
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE webauthn_credentials SET credential_data=$3,sign_count=$4,updated_at=now() WHERE user_handle=$1 AND credential_id=$2`, userHandle, credential.ID, payload, credential.Authenticator.SignCount); err != nil {
+	if _, err = tx.Exec(
+		ctx,
+		`UPDATE webauthn_credentials SET credential_data=$3,sign_count=$4,updated_at=now() WHERE user_handle=$1 AND credential_id=$2`,
+		userHandle,
+		credential.ID,
+		payload,
+		credential.Authenticator.SignCount,
+	); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -147,7 +179,12 @@ func (s *Repository) UpdateCredential(ctx context.Context, userHandle []byte, cr
 func (s *Repository) ConsumeRecoveryCode(ctx context.Context, hash [32]byte, now time.Time) error {
 	// The predicate and update execute as one statement, so concurrent replicas
 	// cannot both observe an unused code before either marks it consumed.
-	tag, err := s.pool.Exec(ctx, `UPDATE recovery_codes SET used_at=$2 WHERE code_hash=$1 AND used_at IS NULL`, hash[:], now)
+	tag, err := s.pool.Exec(
+		ctx,
+		`UPDATE recovery_codes SET used_at=$2 WHERE code_hash=$1 AND used_at IS NULL`,
+		hash[:],
+		now,
+	)
 	if err != nil {
 		return err
 	}

@@ -20,7 +20,10 @@ func TestExplicitPublicationFailureIsNotIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 	id, wg := validPublicKeys(t)
-	if _, err := s.Enroll(context.Background(), EnrollRequest{Token: token.Token, Name: "linux", IdentityPublicKey: id, WireGuardPublicKey: wg}); err == nil {
+	if _, err := s.Enroll(
+		context.Background(),
+		EnrollRequest{Token: token.Token, Name: "linux", IdentityPublicKey: id, WireGuardPublicKey: wg},
+	); err == nil {
 		t.Fatal("publication failure ignored")
 	}
 }

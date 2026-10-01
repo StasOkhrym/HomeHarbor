@@ -29,7 +29,16 @@ func (s *Server) advertiseRoute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid resolver")
 		return
 	}
-	item, err := s.routes.Advertise(r.Context(), controlroutes.AdvertisementRequest{ID: input.ID, GatewayDeviceID: input.GatewayDeviceID, Prefix: prefix, Resolver: resolver, DomainSuffix: input.DomainSuffix})
+	item, err := s.routes.Advertise(
+		r.Context(),
+		controlroutes.AdvertisementRequest{
+			ID:              input.ID,
+			GatewayDeviceID: input.GatewayDeviceID,
+			Prefix:          prefix,
+			Resolver:        resolver,
+			DomainSuffix:    input.DomainSuffix,
+		},
+	)
 	if err != nil {
 		if errors.Is(err, controlroutes.ErrInvalidAdvertisement) {
 			writeErrorCode(w, http.StatusBadRequest, "invalid_route", "route advertisement is invalid")

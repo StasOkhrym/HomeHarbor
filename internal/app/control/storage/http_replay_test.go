@@ -44,7 +44,8 @@ func TestPostgresHTTPClaimReplayReturnsInvalidClaim400(t *testing.T) {
 		if w.Code != want {
 			t.Fatalf("status=%d want=%d body=%s", w.Code, want, w.Body)
 		}
-		if want == http.StatusBadRequest && w.Body.String() != "{\"code\":\"invalid_activation_claim\",\"error\":\"invalid activation claim\"}\n" {
+		if want == http.StatusBadRequest &&
+			w.Body.String() != "{\"code\":\"invalid_activation_claim\",\"error\":\"invalid activation claim\"}\n" {
 			t.Fatalf("replay response=%s", w.Body)
 		}
 	}

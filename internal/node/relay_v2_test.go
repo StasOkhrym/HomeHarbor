@@ -16,7 +16,15 @@ import (
 )
 
 func TestNodeRejectsLegacyUDPRelayAddress(t *testing.T) {
-	cfg := RelayBridgeConfig{RelayUDPAddress: "127.0.0.1:51820", Ticket: "ticket", SessionID: "s", DeviceID: "a", DestinationDeviceID: "b", ListenAddress: "127.0.0.1:0", WireGuardAddress: "127.0.0.1:9"}
+	cfg := RelayBridgeConfig{
+		RelayUDPAddress:     "127.0.0.1:51820",
+		Ticket:              "ticket",
+		SessionID:           "s",
+		DeviceID:            "a",
+		DestinationDeviceID: "b",
+		ListenAddress:       "127.0.0.1:0",
+		WireGuardAddress:    "127.0.0.1:9",
+	}
 	if err := validateRelayBridgeConfig(cfg); err == nil {
 		t.Fatal("node enabled legacy bearer UDP ingress without versioned TLS control")
 	}
@@ -34,7 +42,12 @@ func (w *waitingRelayWorker) Run(ctx context.Context) error {
 }
 
 func TestKernelRelayPathOwnerAwaitsCancelledBridge(t *testing.T) {
-	w := &waitingRelayWorker{started: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{}), finished: make(chan struct{})}
+	w := &waitingRelayWorker{
+		started:   make(chan struct{}),
+		cancelled: make(chan struct{}),
+		release:   make(chan struct{}),
+		finished:  make(chan struct{}),
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -90,7 +103,19 @@ func TestNodeUDPV2LoopPreservesSocketDuringRenewalAndControlFailure(t *testing.T
 		}
 		return i.IssueForPeer("s", "a", "b", time.Minute)
 	}
-	cfg := RelayBridgeConfig{RelayTransport: relay.UDPPairV2Protocol, RelayURL: "wss" + strings.TrimPrefix(s.URL, "https"), RelayHTTPClient: s.Client(), Ticket: ticket, TicketLifetime: 80 * time.Millisecond, SessionID: "s", DeviceID: "a", DestinationDeviceID: "b", ListenAddress: local.String(), WireGuardAddress: wg.LocalAddr().String(), OnObservedEndpoint: func(a netip.AddrPort) { observed <- a }}
+	cfg := RelayBridgeConfig{
+		RelayTransport:      relay.UDPPairV2Protocol,
+		RelayURL:            "wss" + strings.TrimPrefix(s.URL, "https"),
+		RelayHTTPClient:     s.Client(),
+		Ticket:              ticket,
+		TicketLifetime:      80 * time.Millisecond,
+		SessionID:           "s",
+		DeviceID:            "a",
+		DestinationDeviceID: "b",
+		ListenAddress:       local.String(),
+		WireGuardAddress:    wg.LocalAddr().String(),
+		OnObservedEndpoint:  func(a netip.AddrPort) { observed <- a },
+	}
 	done := make(chan error, 1)
 	go func() { done <- RunRelayBridgeLoop(ctx, cfg, provider) }()
 	t.Cleanup(func() {

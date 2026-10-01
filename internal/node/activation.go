@@ -119,7 +119,14 @@ func PrepareInviteProof(p InviteEnrollment, state State, now time.Time) (invite.
 		return invite.SignedPermit{}, invite.Proof{}, err
 	}
 	digest := sha256.Sum256(append([]byte("go-tunnels/invite-code/v1\x00"), []byte(p.Code)...))
-	proof := invite.Proof{Version: invite.Version, InviteID: permit.InviteID, DeviceID: p.DeviceID, DevicePublicKey: devicePrivate.Public().(ed25519.PublicKey), WireGuardPublicKey: bytes.Clone(wg[:]), CodeDigest: bytes.Clone(digest[:])}
+	proof := invite.Proof{
+		Version:            invite.Version,
+		InviteID:           permit.InviteID,
+		DeviceID:           p.DeviceID,
+		DevicePublicKey:    devicePrivate.Public().(ed25519.PublicKey),
+		WireGuardPublicKey: bytes.Clone(wg[:]),
+		CodeDigest:         bytes.Clone(digest[:]),
+	}
 	payload, err := inviteCanonical.Marshal(struct {
 		Version            uint16 `cbor:"version"`
 		InviteID           string `cbor:"invite_id"`
@@ -145,7 +152,8 @@ func activationOrigin(raw string) (string, error) {
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
 		return "", errors.New("control URL must be an origin")
 	}
-	if u.Scheme == "https" || u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1") {
+	if u.Scheme == "https" ||
+		u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1") {
 		return strings.TrimRight(raw, "/"), nil
 	}
 	return "", errors.New("control URL must use HTTPS or local HTTP")
@@ -230,7 +238,10 @@ func EnrollByInvite(ctx context.Context, httpClient *http.Client, p InviteEnroll
 		var challenge workflows.ClaimChallenge
 		status, err = activationRequest(ctx, &client, endpoint+"/challenge", nil, &challenge)
 		if err == nil && status == http.StatusOK {
-			if challenge.InviteID != proof.InviteID || challenge.DeviceID != p.DeviceID || challenge.NetworkID != p.NetworkID || challenge.ExpiresAt <= time.Now().Unix() || challenge.ExpiresAt > time.Now().Add(workflows.ClaimTTL).Unix() {
+			if challenge.InviteID != proof.InviteID || challenge.DeviceID != p.DeviceID ||
+				challenge.NetworkID != p.NetworkID ||
+				challenge.ExpiresAt <= time.Now().Unix() ||
+				challenge.ExpiresAt > time.Now().Add(workflows.ClaimTTL).Unix() {
 				return workflows.ErrInvalidClaim
 			}
 			signed, signErr := workflows.SignClaim(challenge, ed25519.PrivateKey(private))
@@ -241,7 +252,9 @@ func EnrollByInvite(ctx context.Context, httpClient *http.Client, p InviteEnroll
 			status, err = activationRequest(ctx, &client, endpoint+"/claim", signed, &result)
 			if err == nil && status == http.StatusOK {
 				d := result.Device
-				if d.ID != p.DeviceID || d.Status != devices.StatusActive || d.Role != devices.RoleClient || d.IdentityPublicKey != state.IdentityPublicKey || d.WireGuardPublicKey != state.WireGuard.PublicKey {
+				if d.ID != p.DeviceID || d.Status != devices.StatusActive || d.Role != devices.RoleClient ||
+					d.IdentityPublicKey != state.IdentityPublicKey ||
+					d.WireGuardPublicKey != state.WireGuard.PublicKey {
 					return errors.New("claim returned a different device identity")
 				}
 				if _, err := strictInviteBytes(d.Credential, 32); err != nil {
@@ -257,7 +270,8 @@ func EnrollByInvite(ctx context.Context, httpClient *http.Client, p InviteEnroll
 				return nil
 			}
 		}
-		if err == nil && status != http.StatusConflict && status != http.StatusServiceUnavailable && status != http.StatusTooManyRequests {
+		if err == nil && status != http.StatusConflict && status != http.StatusServiceUnavailable &&
+			status != http.StatusTooManyRequests {
 			return fmt.Errorf("activate invite: status %d", status)
 		}
 		select {

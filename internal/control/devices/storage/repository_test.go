@@ -25,12 +25,16 @@ func TestPostgresEnrollmentWritesDeviceAndOutboxAtomically(t *testing.T) {
 	pool := devicesTestPool(t)
 	store := devicesstorage.New(pool, workflowstorage.AppendEvent)
 	service := devices.NewService(store, time.Now, nil)
+
 	label := uniqueIntegrationLabel()
+
 	token, err := service.IssueEnrollmentToken(context.Background(), devices.RoleClient, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	identityPublicKey, wireGuardPublicKey := validPostgresPublicKeys(t)
+
 	device, err := service.Enroll(context.Background(), devices.EnrollRequest{
 		Token:              token.Token,
 		Name:               label,
@@ -40,15 +44,21 @@ func TestPostgresEnrollmentWritesDeviceAndOutboxAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var topic string
 	var payload []byte
-	if err := pool.QueryRow(context.Background(), `SELECT topic,payload FROM event_outbox WHERE topic='device.enrolled' AND payload->>'aggregate_id'=$1 ORDER BY id DESC LIMIT 1`, device.ID).Scan(&topic, &payload); err != nil {
+
+	if err := pool.QueryRow(context.Background(), `SELECT topic,payload FROM event_outbox WHERE topic='device.enrolled' AND payload->>'aggregate_id'=$1 ORDER BY id DESC LIMIT 1`, device.ID).
+		Scan(&topic, &payload); err != nil {
 		t.Fatal(err)
 	}
+
 	var event devices.Event
+
 	if err := json.Unmarshal(payload, &event); err != nil {
 		t.Fatal(err)
 	}
+
 	if topic != "device.enrolled" || event.AggregateID != device.ID {
 		t.Fatalf("outbox event = %#v, topic=%q", event, topic)
 	}
@@ -127,13 +137,19 @@ func uniqueIntegrationLabel() string {
 
 func validPostgresPublicKeys(t *testing.T) (identity, wireGuard string) {
 	t.Helper()
+
 	_, identityPrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	wireGuardPrivate, err := wgtypes.GeneratePrivateKey()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return base64.RawURLEncoding.EncodeToString(identityPrivate.Public().(ed25519.PublicKey)), wireGuardPrivate.PublicKey().String()
+
+	return base64.RawURLEncoding.EncodeToString(
+			identityPrivate.Public().(ed25519.PublicKey),
+		), wireGuardPrivate.PublicKey().
+			String()
 }

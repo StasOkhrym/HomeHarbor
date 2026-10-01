@@ -164,13 +164,25 @@ func (s *Service) Enroll(ctx context.Context, request EnrollRequest) (Device, er
 	if err != nil {
 		return Device{}, err
 	}
-	device := Device{ID: id, Name: request.Name, Status: StatusActive, IdentityPublicKey: request.IdentityPublicKey, WireGuardPublicKey: request.WireGuardPublicKey, CreatedAt: now, Credential: credential, CredentialHash: sha256.Sum256([]byte(credential))}
+	device := Device{
+		ID:                 id,
+		Name:               request.Name,
+		Status:             StatusActive,
+		IdentityPublicKey:  request.IdentityPublicKey,
+		WireGuardPublicKey: request.WireGuardPublicKey,
+		CreatedAt:          now,
+		Credential:         credential,
+		CredentialHash:     sha256.Sum256([]byte(credential)),
+	}
 	role, err := s.store.Enroll(ctx, sha256.Sum256([]byte(request.Token)), now, device)
 	if err != nil {
 		return Device{}, err
 	}
 	device.Role = role
-	if err = s.publication.AfterCommit(ctx, Event{Type: "device.enrolled", AggregateID: device.ID, OccurredAt: now}); err != nil {
+	if err = s.publication.AfterCommit(
+		ctx,
+		Event{Type: "device.enrolled", AggregateID: device.ID, OccurredAt: now},
+	); err != nil {
 		return Device{}, err
 	}
 	return device, nil
@@ -183,7 +195,11 @@ func (s *Service) Enroll(ctx context.Context, request EnrollRequest) (Device, er
 func validateEnrollmentRequest(request EnrollRequest) error {
 	name := strings.TrimSpace(request.Name)
 	if name == "" || name != request.Name || len(name) > maxDeviceNameBytes || !utf8.ValidString(name) {
-		return fmt.Errorf("%w: device name must be 1-%d printable UTF-8 bytes without surrounding whitespace", ErrInvalidEnrollment, maxDeviceNameBytes)
+		return fmt.Errorf(
+			"%w: device name must be 1-%d printable UTF-8 bytes without surrounding whitespace",
+			ErrInvalidEnrollment,
+			maxDeviceNameBytes,
+		)
 	}
 	for _, character := range name {
 		if character < 0x20 || character == 0x7f {
@@ -191,7 +207,8 @@ func validateEnrollmentRequest(request EnrollRequest) error {
 		}
 	}
 	identity, err := base64.RawURLEncoding.DecodeString(request.IdentityPublicKey)
-	if err != nil || len(identity) != 32 || base64.RawURLEncoding.EncodeToString(identity) != request.IdentityPublicKey {
+	if err != nil || len(identity) != 32 ||
+		base64.RawURLEncoding.EncodeToString(identity) != request.IdentityPublicKey {
 		return fmt.Errorf("%w: identity public key must be canonical base64url Ed25519 bytes", ErrInvalidEnrollment)
 	}
 	wireGuard, err := wgtypes.ParseKey(request.WireGuardPublicKey)
@@ -244,7 +261,14 @@ func (s *Service) RotateCredential(ctx context.Context, deviceID, credential str
 		return "", err
 	}
 	now := s.now().UTC()
-	if err := s.store.RotateCredential(ctx, deviceID, sha256.Sum256([]byte(credential)), sha256.Sum256([]byte(newCredential)), now, now.Add(CredentialTTL)); err != nil {
+	if err := s.store.RotateCredential(
+		ctx,
+		deviceID,
+		sha256.Sum256([]byte(credential)),
+		sha256.Sum256([]byte(newCredential)),
+		now,
+		now.Add(CredentialTTL),
+	); err != nil {
 		return "", err
 	}
 	return newCredential, nil

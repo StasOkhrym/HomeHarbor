@@ -53,7 +53,14 @@ func TestBeginBootstrapStoresEncryptedOneTimeCeremony(t *testing.T) {
 	if _, err = service.FinishBootstrap(context.Background(), begin.CeremonyID, []byte(`{}`)); err == nil {
 		t.Fatal("invalid WebAuthn response succeeded")
 	}
-	if _, err = service.FinishBootstrap(context.Background(), begin.CeremonyID, []byte(`{}`)); !errors.Is(err, ErrInvalidCeremony) {
+	if _, err = service.FinishBootstrap(
+		context.Background(),
+		begin.CeremonyID,
+		[]byte(`{}`),
+	); !errors.Is(
+		err,
+		ErrInvalidCeremony,
+	) {
 		t.Fatalf("replay error = %v", err)
 	}
 }
@@ -76,7 +83,14 @@ func TestExpiredCeremonyFailsBeforeResponseParsing(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(11 * time.Minute)
-	if _, err = service.FinishBootstrap(context.Background(), begin.CeremonyID, []byte(`not-json`)); !errors.Is(err, ErrInvalidCeremony) {
+	if _, err = service.FinishBootstrap(
+		context.Background(),
+		begin.CeremonyID,
+		[]byte(`not-json`),
+	); !errors.Is(
+		err,
+		ErrInvalidCeremony,
+	) {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -88,7 +102,14 @@ func TestCredentialCounterCannotRegress(t *testing.T) {
 	store.credentials[string(adminUserHandle)] = []webauthn.Credential{stored}
 	regressed := stored
 	regressed.Authenticator.SignCount = 7
-	if err := store.UpdateCredential(context.Background(), adminUserHandle, regressed); !errors.Is(err, ErrInvalidCredential) {
+	if err := store.UpdateCredential(
+		context.Background(),
+		adminUserHandle,
+		regressed,
+	); !errors.Is(
+		err,
+		ErrInvalidCredential,
+	) {
 		t.Fatalf("error = %v", err)
 	}
 	if got := store.credentials[string(adminUserHandle)][0].Authenticator.SignCount; got != 8 {
@@ -98,7 +119,18 @@ func TestCredentialCounterCannotRegress(t *testing.T) {
 
 func newPasskeyTestService(t *testing.T, store *MemoryStore, now func() time.Time) *PasskeyService {
 	t.Helper()
-	service, err := NewPasskeyService(PasskeyConfig{RPID: "tunnel.example.com", RPOrigin: "https://tunnel.example.com", EncryptionKey: bytes.Repeat([]byte{7}, 32), CeremonyTTL: 10 * time.Minute}, store, store, now, &sequenceReader{next: 'p'})
+	service, err := NewPasskeyService(
+		PasskeyConfig{
+			RPID:          "tunnel.example.com",
+			RPOrigin:      "https://tunnel.example.com",
+			EncryptionKey: bytes.Repeat([]byte{7}, 32),
+			CeremonyTTL:   10 * time.Minute,
+		},
+		store,
+		store,
+		now,
+		&sequenceReader{next: 'p'},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

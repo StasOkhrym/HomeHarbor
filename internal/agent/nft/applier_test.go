@@ -21,7 +21,20 @@ func TestApplierKeepsLastRevisionWhenNftRejectsUpdate(t *testing.T) {
 		}
 		return nil
 	}
-	first := policy.Snapshot{Revision: 1, DefaultAction: policy.ActionDeny, Rules: []policy.Rule{{ID: "allow-http", SourceDeviceID: "client", Destination: netip.MustParsePrefix("192.168.1.0/24"), Protocol: policy.ProtocolTCP, PortFrom: 443, PortTo: 443}}}
+	first := policy.Snapshot{
+		Revision:      1,
+		DefaultAction: policy.ActionDeny,
+		Rules: []policy.Rule{
+			{
+				ID:             "allow-http",
+				SourceDeviceID: "client",
+				Destination:    netip.MustParsePrefix("192.168.1.0/24"),
+				Protocol:       policy.ProtocolTCP,
+				PortFrom:       443,
+				PortTo:         443,
+			},
+		},
+	}
 	second := first
 	second.Revision = 2
 	if err := applier.Apply(context.Background(), first); err != nil {
@@ -45,7 +58,11 @@ func TestPreparedPolicyRejectsForeignOwnerAndRetriesAfterGuard(t *testing.T) {
 	ctx := context.Background()
 	var live string
 	a := NewApplierWithRunner("wg0", nil, func(_ context.Context, s string) error { live = s; return nil })
-	b := NewApplierWithRunner("wg1", nil, func(context.Context, string) error { t.Fatal("foreign commit mutated firewall"); return nil })
+	b := NewApplierWithRunner(
+		"wg1",
+		nil,
+		func(context.Context, string) error { t.Fatal("foreign commit mutated firewall"); return nil },
+	)
 	value := policy.Snapshot{Revision: 1, DefaultAction: policy.ActionDeny}
 	prepared, err := a.Prepare(nil, value)
 	if err != nil || live != "" {

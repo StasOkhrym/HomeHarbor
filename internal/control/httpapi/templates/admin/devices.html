@@ -1,0 +1,109 @@
+{{define "devices"}}
+  {{if .Device}}
+    <section class="panel">
+      <h2>Registration</h2>
+      <dl class="key-values">
+        <dt>Name</dt>
+        <dd>
+          {{.Device.Name}}
+        </dd>
+        <dt>Role</dt>
+        <dd>
+          {{.Device.Role}}
+        </dd>
+        <dt>Credentials</dt>
+        <dd>
+          {{.Device.Status}}
+        </dd>
+        <dt>Connectivity</dt>
+        <dd>
+          <span class="badge">Unknown</span>
+        </dd>
+        <dt>Registered</dt>
+        <dd>
+          {{timeLabel .Device.CreatedAt}}
+        </dd>
+      </dl>
+      <details class="advanced">
+        <summary>Advanced · public identity</summary>
+        <dl class="key-values">
+          <dt>Device ID</dt>
+          <dd>
+            <code>{{.Device.ID}}</code>
+          </dd>
+          <dt>Identity public key</dt>
+          <dd>
+            <code>{{.Device.IdentityPublicKey}}</code>
+          </dd>
+          <dt>WireGuard public key</dt>
+          <dd>
+            <code>{{.Device.WireGuardPublicKey}}</code>
+          </dd>
+        </dl>
+      </details>
+    </section>
+    {{if eq .Device.Status "active"}}
+      <section class="panel">
+        <h2>Revoke device credentials</h2>
+        <p>This blocks new control authentication. Existing signed LAN grants are not removed by this action.</p>
+        {{if .RevokeProof}}
+          <form method="post" action="/admin/devices/{{.Device.ID}}/revoke">
+            <input type="hidden" name="_csrf" value="{{.CSRF}}">
+            <input type="hidden" name="proof" value="{{.RevokeProof}}">
+            <input type="hidden" name="return_to" value="devices">
+            <div class="check-list">
+              <label>
+                <input type="checkbox"
+                       name="confirmed"
+                       value="yes"
+                       required>I confirm credential revoke for {{.Device.Name}}.
+              </label>
+            </div>
+            <button class="danger" type="submit">Revoke credentials</button>
+          </form>
+        {{else}}
+          <p class="alert">Secure confirmation is unavailable. Reload or check control configuration.</p>
+        {{end}}
+      </section>
+    {{end}}
+  {{else}}
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>Enrolled devices</h2>
+        <a href="/admin/invites">Connect a device →</a>
+      </div>
+      {{if .Devices.Ready}}
+        <ul class="resource-list">
+          {{range .Devices.Items}}
+            <li>
+              <div class="resource-row">
+                <div>
+                  <a href="/admin/devices/{{.ID}}"><strong>{{.Name}}</strong></a>
+                  <p class="muted">{{.Role}} · credentials {{.Status}}</p>
+                </div>
+                <span class="badge">Connection unknown</span>
+              </div>
+            </li>
+          {{else}}
+            <li class="empty-state">No enrolled devices.</li>
+          {{end}}
+        </ul>
+      {{else}}
+        <p class="alert alert-error" role="alert">{{.Devices.Error}}</p>
+      {{end}}
+    </section>
+  {{end}}
+  <p class="help">Credential revoke blocks new authentication. Removing already-issued signed access requires a separate companion operation. Do not assume existing tunnel access has stopped.</p>
+  {{if .Device}}
+    <section class="panel">
+      <h2>Next: remove signed access</h2>
+      {{if eq .Device.Role "client"}}
+        <p>Use the trusted companion on your Mac. Replace CLIENT_DEVICE_ID with the public ID from Advanced; do not paste private keys here.</p>
+        <pre>go run ./cmd/admin revoke-device --config .local/admin.toml --device CLIENT_DEVICE_ID</pre>
+        <p class="help">This publishes a signed client removal. Gateway application remains unknown until verified separately.</p>
+      {{else}}
+        <p class="help">The current companion command supports client removal only, not gateway topology changes.</p>
+      {{end}}
+    </section>
+  {{end}}
+{{end}}

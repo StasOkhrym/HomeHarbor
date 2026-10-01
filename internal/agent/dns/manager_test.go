@@ -14,21 +14,36 @@ func TestApplyCanonicalizesSuffixesAndCloseReverts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var commands [][]string
 	manager.run = func(_ context.Context, args ...string) error {
 		commands = append(commands, append([]string(nil), args...))
 		return nil
 	}
-	if err := manager.Apply(context.Background(), netip.MustParseAddr("192.168.1.1"), []string{"Home.ARPA.", "cloud.home.arpa", "home.arpa"}); err != nil {
+
+	if err := manager.Apply(
+		context.Background(),
+		netip.MustParseAddr("192.168.1.1"),
+		[]string{"Home.ARPA.", "cloud.home.arpa", "home.arpa"},
+	); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{{"revert", "gt0"}, {"default-route", "gt0", "false"}, {"domain", "gt0", "~cloud.home.arpa", "~home.arpa"}, {"dns", "gt0", "192.168.1.1"}}
+
+	want := [][]string{
+		{"revert", "gt0"},
+		{"default-route", "gt0", "false"},
+		{"domain", "gt0", "~cloud.home.arpa", "~home.arpa"},
+		{"dns", "gt0", "192.168.1.1"},
+	}
+
 	if !reflect.DeepEqual(commands, want) {
 		t.Fatalf("commands=%#v, want %#v", commands, want)
 	}
+
 	if err := manager.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+
 	if got := commands[len(commands)-1]; !reflect.DeepEqual(got, []string{"revert", "gt0"}) {
 		t.Fatalf("close command=%#v", got)
 	}
@@ -48,10 +63,20 @@ func TestApplyRevertsAfterResolverFailure(t *testing.T) {
 		}
 		return nil
 	}
-	if err := manager.Apply(context.Background(), netip.MustParseAddr("192.168.1.1"), []string{"home.arpa"}); !errors.Is(err, failure) {
+	if err := manager.Apply(
+		context.Background(),
+		netip.MustParseAddr("192.168.1.1"),
+		[]string{"home.arpa"},
+	); !errors.Is(
+		err,
+		failure,
+	) {
 		t.Fatalf("Apply() error=%v", err)
 	}
-	if !reflect.DeepEqual(commands, []string{"revert gt0", "default-route gt0 false", "domain gt0 ~home.arpa", "dns gt0 192.168.1.1", "revert gt0"}) {
+	if !reflect.DeepEqual(
+		commands,
+		[]string{"revert gt0", "default-route gt0 false", "domain gt0 ~home.arpa", "dns gt0 192.168.1.1", "revert gt0"},
+	) {
 		t.Fatalf("commands=%#v", commands)
 	}
 }
@@ -61,6 +86,7 @@ func TestApplyRestoresPreviousSettingsAfterUpdateFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var commands []string
 	secondApply := false
 	manager.run = func(_ context.Context, args ...string) error {
@@ -69,17 +95,39 @@ func TestApplyRestoresPreviousSettingsAfterUpdateFailure(t *testing.T) {
 		if secondApply && command == "domain gt0 ~new.home.arpa" {
 			return errors.New("domain update failed")
 		}
+
 		return nil
 	}
-	if err := manager.Apply(context.Background(), netip.MustParseAddr("192.168.1.1"), []string{"old.home.arpa"}); err != nil {
+
+	if err := manager.Apply(
+		context.Background(),
+		netip.MustParseAddr("192.168.1.1"),
+		[]string{"old.home.arpa"},
+	); err != nil {
 		t.Fatal(err)
 	}
+
 	commands = nil
 	secondApply = true
-	if err := manager.Apply(context.Background(), netip.MustParseAddr("192.168.1.2"), []string{"new.home.arpa"}); err == nil {
+
+	if err := manager.Apply(
+		context.Background(),
+		netip.MustParseAddr("192.168.1.2"),
+		[]string{"new.home.arpa"},
+	); err == nil {
 		t.Fatal("second Apply() error=nil")
 	}
-	want := []string{"revert gt0", "default-route gt0 false", "domain gt0 ~new.home.arpa", "revert gt0", "default-route gt0 false", "domain gt0 ~old.home.arpa", "dns gt0 192.168.1.1"}
+
+	want := []string{
+		"revert gt0",
+		"default-route gt0 false",
+		"domain gt0 ~new.home.arpa",
+		"revert gt0",
+		"default-route gt0 false",
+		"domain gt0 ~old.home.arpa",
+		"dns gt0 192.168.1.1",
+	}
+
 	if !reflect.DeepEqual(commands, want) {
 		t.Fatalf("commands=%#v, want %#v", commands, want)
 	}

@@ -59,7 +59,8 @@ func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing
 				w.WriteHeader(http.StatusConflict)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(workflows.ClaimChallenge{Version: 1, NetworkID: "home", InviteID: local.Permit.InviteID, DeviceID: "linux", Nonce: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), ExpiresAt: time.Now().Add(time.Minute).Unix()})
+			_ = json.NewEncoder(w).
+				Encode(workflows.ClaimChallenge{Version: 1, NetworkID: "home", InviteID: local.Permit.InviteID, DeviceID: "linux", Nonce: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), ExpiresAt: time.Now().Add(time.Minute).Unix()})
 		case strings.HasSuffix(r.URL.Path, "/claim"):
 			var p workflows.ClaimProof
 			if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
@@ -70,7 +71,8 @@ func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing
 			if expected.Signature != p.Signature {
 				t.Error("invalid possession proof")
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"device": map[string]any{"id": "linux", "role": "client", "status": "active", "identity_public_key": state.IdentityPublicKey, "wireguard_public_key": state.WireGuard.PublicKey, "credential": base64.RawURLEncoding.EncodeToString(make([]byte, 32))}})
+			_ = json.NewEncoder(w).
+				Encode(map[string]any{"device": map[string]any{"id": "linux", "role": "client", "status": "active", "identity_public_key": state.IdentityPublicKey, "wireguard_public_key": state.WireGuard.PublicKey, "credential": base64.RawURLEncoding.EncodeToString(make([]byte, 32))}})
 		default:
 			t.Errorf("unexpected request %s", r.URL)
 			w.WriteHeader(404)
@@ -82,7 +84,21 @@ func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "state.json")
-	err = EnrollByInvite(context.Background(), server.Client(), InviteEnrollment{ControlURL: server.URL, InviteLink: link, Code: local.Code, DeviceID: "linux", StatePath: path, RootPublicKey: root, NetworkID: "home", PollInterval: time.Millisecond}, &state)
+	err = EnrollByInvite(
+		context.Background(),
+		server.Client(),
+		InviteEnrollment{
+			ControlURL:    server.URL,
+			InviteLink:    link,
+			Code:          local.Code,
+			DeviceID:      "linux",
+			StatePath:     path,
+			RootPublicKey: root,
+			NetworkID:     "home",
+			PollInterval:  time.Millisecond,
+		},
+		&state,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +106,9 @@ func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.DeviceID != "linux" || loaded.DeviceCredential == "" || loaded.IdentityPrivateKey != original.IdentityPrivateKey || loaded.WireGuard.PrivateKey != original.WireGuard.PrivateKey {
+	if loaded.DeviceID != "linux" || loaded.DeviceCredential == "" ||
+		loaded.IdentityPrivateKey != original.IdentityPrivateKey ||
+		loaded.WireGuard.PrivateKey != original.WireGuard.PrivateKey {
 		t.Fatal("identity or enrollment was not saved")
 	}
 }

@@ -129,19 +129,29 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	deviceService := devices.NewService(devicesstorage.New(pool, workflowstorage.AppendEvent), time.Now, nil)
 	routeService := controlroutes.NewService(routesstorage.New(pool), time.Now)
 	policyService := policy.NewService(policystorage.New(pool), policy.Compiler{})
-	serviceCatalog := controlservices.NewService(servicesstorage.New(pool), time.Now, controlservices.WithDeviceActiveChecker(func(ctx context.Context, id string) (bool, error) {
-		device, err := deviceService.Device(ctx, id)
-		if err != nil {
-			return false, err
-		}
-		return device.Status == devices.StatusActive, nil
-	}))
+	serviceCatalog := controlservices.NewService(
+		servicesstorage.New(pool),
+		time.Now,
+		controlservices.WithDeviceActiveChecker(func(ctx context.Context, id string) (bool, error) {
+			device, err := deviceService.Device(ctx, id)
+			if err != nil {
+				return false, err
+			}
+			return device.Status == devices.StatusActive, nil
+		}),
+	)
 	peerAuthorization := func(_ context.Context, source, destination devices.Device) bool {
-		return source.Status == devices.StatusActive && destination.Status == devices.StatusActive && source.Role != destination.Role
+		return source.Status == devices.StatusActive && destination.Status == devices.StatusActive &&
+			source.Role != destination.Role
 	}
 	var signedSnapshots *controlsnapshots.Service
 	identityStore := identitystorage.New(pool)
-	identityService := identity.NewService(identityStore, identityredis.NewSessions(redisClient, "go-tunnels:"+cfg.Networking.NetworkID, time.Now), time.Now, nil)
+	identityService := identity.NewService(
+		identityStore,
+		identityredis.NewSessions(redisClient, "go-tunnels:"+cfg.Networking.NetworkID, time.Now),
+		time.Now,
+		nil,
+	)
 	passkeyService, err := identity.NewPasskeyService(identity.PasskeyConfig{
 		RPID:          cfg.Auth.RPID,
 		RPOrigin:      cfg.Auth.RPOrigin,
@@ -156,13 +166,20 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		SigningKey: []byte(cfg.Auth.SessionSigningKey),
 		SessionTTL: cfg.Auth.SessionDuration(),
 		Auditor:    events.NewIdentityAuditor(auditSink, time.Now),
+		SetupState: passkeyService,
 	}, passkeyService, identityService)
 	if err != nil {
 		return closeBusAndPool(errors.Join(errors.New("configure browser authentication"), err))
 	}
 
 	serverOptions := []httpapi.ServerOption{
-		httpapi.WithBrowserHandlers(auth.Handler(), auth.LoginHandler(), auth.LoginAssetHandler(), auth.AuthorizeMutation),
+		httpapi.WithBrowserActionConfirmation(auth),
+		httpapi.WithBrowserHandlers(
+			auth.Handler(),
+			auth.LoginHandler(),
+			auth.LoginAssetHandler(),
+			auth.AuthorizeMutation,
+		),
 		httpapi.WithSharedRateLimits(securityState),
 		httpapi.WithRouteService(routeService),
 		httpapi.WithPolicyService(policyService),
@@ -185,8 +202,13 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	if err != nil {
 		return closeBusAndPool(errors.Join(errors.New("configure relay sessions"), err))
 	}
-	serverOptions = append(serverOptions,
-		httpapi.WithRelaySessionIssuer(relay.TicketIssuer{Key: []byte(cfg.Relay.TicketKey)}, cfg.Relay.PublicURL, relayTTL),
+	serverOptions = append(
+		serverOptions,
+		httpapi.WithRelaySessionIssuer(
+			relay.TicketIssuer{Key: []byte(cfg.Relay.TicketKey)},
+			cfg.Relay.PublicURL,
+			relayTTL,
+		),
 		httpapi.WithRelayUDPAddress(cfg.Relay.PublicUDPAddress),
 	)
 	trustedProxyCIDRs := make([]netip.Prefix, 0, len(cfg.Security.TrustedProxyCIDRs))
@@ -208,10 +230,28 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		}
 		signedSnapshots = controlsnapshots.NewService(snapshotsstorage.New(pool), rootPublic, cfg.Networking.NetworkID)
 		inviteStore := invitesstorage.New(pool)
-		activation := workflows.NewActivation(workflowstorage.NewActivationUnitOfWork(pool), inviteStore, signedSnapshots, securityState, rootPublic, cfg.Networking.NetworkID, time.Now, nil)
+		activation := workflows.NewActivation(
+			workflowstorage.NewActivationUnitOfWork(pool),
+			inviteStore,
+			signedSnapshots,
+			securityState,
+			rootPublic,
+			cfg.Networking.NetworkID,
+			time.Now,
+			nil,
+		)
 		activationHandler := httpapi.NewActivationHandler(activation, activation)
-		serverOptions = append(serverOptions,
-			httpapi.WithInviteService(controlinvites.NewService(inviteStore, rootPublic, cfg.Networking.NetworkID, time.Now, controlinvites.WithApprovalWorkflow(activation))),
+		serverOptions = append(
+			serverOptions,
+			httpapi.WithInviteService(
+				controlinvites.NewService(
+					inviteStore,
+					rootPublic,
+					cfg.Networking.NetworkID,
+					time.Now,
+					controlinvites.WithApprovalWorkflow(activation),
+				),
+			),
 			httpapi.WithActivationHandlers(activationHandler.Challenge, activationHandler.Claim),
 			httpapi.WithSnapshotService(signedSnapshots),
 			httpapi.WithCompanionRootKey(rootPublic),
@@ -229,11 +269,21 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	// known. The same instance owns live snapshot broadcasts and WebSocket
 	// connections; creating a temporary handler earlier would silently strand
 	// broadcasts on a hub that serves no production clients.
-	coordinationHandler := coordination.NewHandlerWithHistory(deviceService, deviceService, signedSnapshots, []string{cfg.Auth.RPOrigin}, peerAuthorization)
+	coordinationHandler := coordination.NewHandlerWithHistory(
+		deviceService,
+		deviceService,
+		signedSnapshots,
+		[]string{cfg.Auth.RPOrigin},
+		peerAuthorization,
+	)
 	if signedSnapshots != nil {
 		serverOptions = append(serverOptions, httpapi.WithSnapshotBroadcaster(coordinationHandler))
 	}
-	serverOptions = append(serverOptions, httpapi.WithCoordinationHandler(coordinationHandler), httpapi.WithSnapshotHistoryHandler(http.HandlerFunc(coordinationHandler.ServeHistory)))
+	serverOptions = append(
+		serverOptions,
+		httpapi.WithCoordinationHandler(coordinationHandler),
+		httpapi.WithSnapshotHistoryHandler(http.HandlerFunc(coordinationHandler.ServeHistory)),
+	)
 	var metricsServer *http.Server
 	if address := strings.TrimSpace(cfg.Observability.MetricsAddress); address != "" {
 		metricsMux := http.NewServeMux()
@@ -285,7 +335,13 @@ type signedSnapshotReader interface {
 	Latest(context.Context) (networksnapshot.Envelope, error)
 }
 
-func authorizeRelayPeer(ctx context.Context, snapshots signedSnapshotReader, rootPublic ed25519.PublicKey, networkID string, source, destination devices.Device) bool {
+func authorizeRelayPeer(
+	ctx context.Context,
+	snapshots signedSnapshotReader,
+	rootPublic ed25519.PublicKey,
+	networkID string,
+	source, destination devices.Device,
+) bool {
 	if snapshots == nil {
 		return false
 	}
@@ -310,7 +366,9 @@ func authorizeRelayPeer(ctx context.Context, snapshots signedSnapshotReader, roo
 			destinationDevice = device
 		}
 	}
-	if sourceDevice == nil || destinationDevice == nil || sourceDevice.Role != string(source.Role) || destinationDevice.Role != string(destination.Role) || sourceDevice.Role == destinationDevice.Role {
+	if sourceDevice == nil || destinationDevice == nil || sourceDevice.Role != string(source.Role) ||
+		destinationDevice.Role != string(destination.Role) ||
+		sourceDevice.Role == destinationDevice.Role {
 		return false
 	}
 	clientID, gatewayID := source.ID, destination.ID

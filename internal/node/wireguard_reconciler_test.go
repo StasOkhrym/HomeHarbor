@@ -22,11 +22,27 @@ func TestCompositeGatewayRemovalClearsFirewallAndWireGuard(t *testing.T) {
 	value.Devices[0].WireGuardPublicKey = gateway.PublicKey
 	value.Devices[1].WireGuardPublicKey = client.PublicKey
 	var live string
-	g := NewGatewayReconcilerWithEnsurer("wg0", "gateway", nil, false, func(context.Context, string, string, []netip.Prefix) error { return nil })
-	g.policies = nft.NewApplierWithRunner("wg0", nil, func(_ context.Context, script string) error { live = script; return nil })
+	g := NewGatewayReconcilerWithEnsurer(
+		"wg0",
+		"gateway",
+		nil,
+		false,
+		func(context.Context, string, string, []netip.Prefix) error { return nil },
+	)
+	g.policies = nft.NewApplierWithRunner(
+		"wg0",
+		nil,
+		func(_ context.Context, script string) error { live = script; return nil },
+	)
 	g.routes.run = func(context.Context, ...string) error { return nil }
 	var applied wgtypes.Config
-	wg, err := NewSnapshotWireGuardReconcilerWithApplier("wg0", "gateway", gateway.PrivateKey, 51820, func(_ string, c wgtypes.Config) error { applied = c; return nil })
+	wg, err := NewSnapshotWireGuardReconcilerWithApplier(
+		"wg0",
+		"gateway",
+		gateway.PrivateKey,
+		51820,
+		func(_ string, c wgtypes.Config) error { applied = c; return nil },
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +70,13 @@ func TestCompositeGatewayRemovalClearsFirewallAndWireGuard(t *testing.T) {
 	if err := wg.SetPeerEndpoint(ctx, client.PublicKey, netip.MustParseAddrPort("127.0.0.1:51821")); err == nil {
 		t.Fatal("endpoint update resurrected removed gateway")
 	}
-	restarted, err := NewSnapshotWireGuardReconcilerWithApplier("wg0", "gateway", gateway.PrivateKey, 51820, func(_ string, c wgtypes.Config) error { applied = c; return nil })
+	restarted, err := NewSnapshotWireGuardReconcilerWithApplier(
+		"wg0",
+		"gateway",
+		gateway.PrivateKey,
+		51820,
+		func(_ string, c wgtypes.Config) error { applied = c; return nil },
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,10 +105,16 @@ func TestSnapshotWireGuardReconcilerMergesRelayEndpointWithoutChangingPolicy(t *
 		Gateways: []snapshot.Gateway{{DeviceID: "gateway"}},
 	}
 	var applied wgtypes.Config
-	reconciler, err := NewSnapshotWireGuardReconcilerWithApplier("wg0", "gateway", gateway.PrivateKey, 51820, func(_ string, config wgtypes.Config) error {
-		applied = config
-		return nil
-	})
+	reconciler, err := NewSnapshotWireGuardReconcilerWithApplier(
+		"wg0",
+		"gateway",
+		gateway.PrivateKey,
+		51820,
+		func(_ string, config wgtypes.Config) error {
+			applied = config
+			return nil
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,12 +161,18 @@ func TestSnapshotWireGuardReconcilerRetainsStateAfterKernelApplyFailure(t *testi
 		Gateways: []snapshot.Gateway{{DeviceID: "gateway"}},
 	}
 	shouldFail := false
-	reconciler, err := NewSnapshotWireGuardReconcilerWithApplier("wg0", "gateway", gateway.PrivateKey, 51820, func(_ string, _ wgtypes.Config) error {
-		if shouldFail {
-			return errors.New("simulated kernel failure")
-		}
-		return nil
-	})
+	reconciler, err := NewSnapshotWireGuardReconcilerWithApplier(
+		"wg0",
+		"gateway",
+		gateway.PrivateKey,
+		51820,
+		func(_ string, _ wgtypes.Config) error {
+			if shouldFail {
+				return errors.New("simulated kernel failure")
+			}
+			return nil
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +211,12 @@ func TestWireGuardRejectsAmbiguousIdentityBeforeMutation(t *testing.T) {
 	for _, name := range []string{"subnet overlay", "duplicate public key", "duplicate overlay", "local overlay"} {
 		t.Run(name, func(t *testing.T) {
 			v := snapshot.NetworkSnapshot{Revision: 1, Devices: []snapshot.Device{
-				{ID: "gateway", Role: "gateway", WireGuardPublicKey: gateway.PublicKey, OverlayAddress: "100.64.0.1/32"},
+				{
+					ID:                 "gateway",
+					Role:               "gateway",
+					WireGuardPublicKey: gateway.PublicKey,
+					OverlayAddress:     "100.64.0.1/32",
+				},
 				{ID: "client", Role: "client", WireGuardPublicKey: client.PublicKey, OverlayAddress: "100.64.0.2/32"},
 			}, Gateways: []snapshot.Gateway{{DeviceID: "gateway"}}}
 			switch name {
@@ -191,7 +230,13 @@ func TestWireGuardRejectsAmbiguousIdentityBeforeMutation(t *testing.T) {
 				v.Devices[0].OverlayAddress = "bad"
 			}
 			calls := 0
-			r, err := NewSnapshotWireGuardReconcilerWithApplier("wg0", "gateway", gateway.PrivateKey, 51820, func(string, wgtypes.Config) error { calls++; return nil })
+			r, err := NewSnapshotWireGuardReconcilerWithApplier(
+				"wg0",
+				"gateway",
+				gateway.PrivateKey,
+				51820,
+				func(string, wgtypes.Config) error { calls++; return nil },
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -210,7 +255,13 @@ func TestWireGuardRevocationReplacesPeersAndRejectsOldEndpoint(t *testing.T) {
 		{ID: "client", Role: "client", WireGuardPublicKey: client.PublicKey, OverlayAddress: "100.64.0.2/32"},
 	}, Gateways: []snapshot.Gateway{{DeviceID: "gateway"}}}
 	var config wgtypes.Config
-	r, _ := NewSnapshotWireGuardReconcilerWithApplier("wg0", "gateway", gateway.PrivateKey, 51820, func(_ string, c wgtypes.Config) error { config = c; return nil })
+	r, _ := NewSnapshotWireGuardReconcilerWithApplier(
+		"wg0",
+		"gateway",
+		gateway.PrivateKey,
+		51820,
+		func(_ string, c wgtypes.Config) error { config = c; return nil },
+	)
 	ctx := context.Background()
 	if err := r.Apply(ctx, v); err != nil {
 		t.Fatal(err)
@@ -229,16 +280,44 @@ func TestWireGuardRevocationReplacesPeersAndRejectsOldEndpoint(t *testing.T) {
 	if err := r.SetPeerEndpoint(ctx, client.PublicKey, netip.MustParseAddrPort("127.0.0.1:51821")); err == nil {
 		t.Fatal("transport resurrected revoked peer")
 	}
-	if err := r.Apply(ctx, snapshot.NetworkSnapshot{Revision: 1, Devices: append(v.Devices, snapshot.Device{ID: "client", Role: "client", WireGuardPublicKey: client.PublicKey, OverlayAddress: "100.64.0.2/32"}), Gateways: v.Gateways}); err == nil {
+	if err := r.Apply(
+		ctx,
+		snapshot.NetworkSnapshot{
+			Revision: 1,
+			Devices: append(
+				v.Devices,
+				snapshot.Device{
+					ID:                 "client",
+					Role:               "client",
+					WireGuardPublicKey: client.PublicKey,
+					OverlayAddress:     "100.64.0.2/32",
+				},
+			),
+			Gateways: v.Gateways,
+		},
+	); err == nil {
 		t.Fatal("stale snapshot resurrected revoked peer")
 	}
 }
 
 func TestWireGuardRetriesSameRevisionAfterOtherOwnerFails(t *testing.T) {
 	gateway, _ := tunnel.NewIdentity()
-	v := snapshot.NetworkSnapshot{Revision: 1, Devices: []snapshot.Device{{ID: "gateway", Role: "gateway", WireGuardPublicKey: gateway.PublicKey, OverlayAddress: "100.64.0.1/32"}}, Gateways: []snapshot.Gateway{{DeviceID: "gateway"}}, ACL: []snapshot.ACLRule{}}
+	v := snapshot.NetworkSnapshot{
+		Revision: 1,
+		Devices: []snapshot.Device{
+			{ID: "gateway", Role: "gateway", WireGuardPublicKey: gateway.PublicKey, OverlayAddress: "100.64.0.1/32"},
+		},
+		Gateways: []snapshot.Gateway{{DeviceID: "gateway"}},
+		ACL:      []snapshot.ACLRule{},
+	}
 	writes := 0
-	r, _ := NewSnapshotWireGuardReconcilerWithApplier("wg0", "gateway", gateway.PrivateKey, 51820, func(string, wgtypes.Config) error { writes++; return nil })
+	r, _ := NewSnapshotWireGuardReconcilerWithApplier(
+		"wg0",
+		"gateway",
+		gateway.PrivateKey,
+		51820,
+		func(string, wgtypes.Config) error { writes++; return nil },
+	)
 	for i := 0; i < 2; i++ {
 		if err := r.Apply(context.Background(), v); err != nil {
 			t.Fatalf("same revision retry %d: %v", i, err)

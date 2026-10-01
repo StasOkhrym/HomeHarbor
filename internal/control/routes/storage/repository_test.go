@@ -17,7 +17,15 @@ func TestPostgresRouteAndDNSApprovalAreTransactional(t *testing.T) {
 	testutil.Device(t, pool, "gateway", "gateway")
 	repo := routespg.New(pool)
 	ctx := context.Background()
-	item := routes.Advertisement{ID: "lan", GatewayDeviceID: "gateway", Prefix: netip.MustParsePrefix("192.168.50.0/24"), Resolver: netip.MustParseAddr("192.168.50.2"), DomainSuffix: "home.test", Status: routes.StatusPending, CreatedAt: time.Now().UTC()}
+	item := routes.Advertisement{
+		ID:              "lan",
+		GatewayDeviceID: "gateway",
+		Prefix:          netip.MustParsePrefix("192.168.50.0/24"),
+		Resolver:        netip.MustParseAddr("192.168.50.2"),
+		DomainSuffix:    "home.test",
+		Status:          routes.StatusPending,
+		CreatedAt:       time.Now().UTC(),
+	}
 	if err := repo.Save(ctx, item); err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +38,9 @@ func TestPostgresRouteAndDNSApprovalAreTransactional(t *testing.T) {
 		t.Fatalf("round trip: %#v error=%v", items, err)
 	}
 	var dnsStatus string
-	if err := pool.QueryRow(ctx, `SELECT status FROM dns_routes WHERE id=$1`, item.ID).Scan(&dnsStatus); err != nil || dnsStatus != string(status) {
+	if err := pool.QueryRow(ctx, `SELECT status FROM dns_routes WHERE id=$1`, item.ID).
+		Scan(&dnsStatus); err != nil ||
+		dnsStatus != string(status) {
 		t.Fatalf("DNS approval diverged: %s %v", dnsStatus, err)
 	}
 	// A conflicting DNS suffix fails the second insert. Its LAN route must
@@ -41,7 +51,9 @@ func TestPostgresRouteAndDNSApprovalAreTransactional(t *testing.T) {
 		t.Fatal("duplicate suffix accepted")
 	}
 	var count int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM advertised_routes WHERE id='other'`).Scan(&count); err != nil || count != 0 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM advertised_routes WHERE id='other'`).
+		Scan(&count); err != nil ||
+		count != 0 {
 		t.Fatalf("partial route persisted: %d %v", count, err)
 	}
 	if err := repo.SetStatus(ctx, "missing", status); !errors.Is(err, routes.ErrAdvertisementNotFound) {

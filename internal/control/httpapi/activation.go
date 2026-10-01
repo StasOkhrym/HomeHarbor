@@ -115,7 +115,9 @@ func activationError(w http.ResponseWriter, err error) {
 		writeErrorCode(w, http.StatusBadRequest, "invalid_activation_claim", "invalid activation claim")
 	case errors.Is(err, invites.ErrInviteNotFound):
 		writeError(w, http.StatusNotFound, "invite not found")
-	case errors.Is(err, devices.ErrDeviceNotFound), errors.Is(err, invites.ErrInviteBlocked), errors.Is(err, invites.ErrInviteConsumed):
+	case errors.Is(err, devices.ErrDeviceNotFound),
+		errors.Is(err, invites.ErrInviteBlocked),
+		errors.Is(err, invites.ErrInviteConsumed):
 		writeError(w, http.StatusForbidden, "activation unavailable")
 	default:
 		writeError(w, http.StatusServiceUnavailable, "activation unavailable")

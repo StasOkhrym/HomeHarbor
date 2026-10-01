@@ -93,11 +93,23 @@ func WithRandom(random io.Reader) Option {
 	}
 }
 
-func NewService(store Repository, root ed25519.PublicKey, networkID string, now func() time.Time, options ...Option) *Service {
+func NewService(
+	store Repository,
+	root ed25519.PublicKey,
+	networkID string,
+	now func() time.Time,
+	options ...Option,
+) *Service {
 	if now == nil {
 		now = time.Now
 	}
-	service := &Service{store: store, root: append(ed25519.PublicKey(nil), root...), networkID: networkID, now: now, random: rand.Reader}
+	service := &Service{
+		store:     store,
+		root:      append(ed25519.PublicKey(nil), root...),
+		networkID: networkID,
+		now:       now,
+		random:    rand.Reader,
+	}
 	for _, option := range options {
 		option(service)
 	}
@@ -116,7 +128,20 @@ func (s *Service) SubmitProof(ctx context.Context, permit invite.SignedPermit, p
 	if err = invite.VerifyProof(permit, proof, profileID, now); err != nil {
 		return err
 	}
-	return s.store.Save(ctx, Record{InviteID: proof.InviteID, ProfileID: profileID, DeviceID: proof.DeviceID, DevicePublic: append([]byte(nil), proof.DevicePublicKey...), WireGuardPublicKey: append([]byte(nil), proof.WireGuardPublicKey...), Permit: permit, Proof: proof, Status: StatusPending, CreatedAt: now})
+	return s.store.Save(
+		ctx,
+		Record{
+			InviteID:           proof.InviteID,
+			ProfileID:          profileID,
+			DeviceID:           proof.DeviceID,
+			DevicePublic:       append([]byte(nil), proof.DevicePublicKey...),
+			WireGuardPublicKey: append([]byte(nil), proof.WireGuardPublicKey...),
+			Permit:             permit,
+			Proof:              proof,
+			Status:             StatusPending,
+			CreatedAt:          now,
+		},
+	)
 }
 
 func (s *Service) Get(ctx context.Context, inviteID string) (Record, error) {
@@ -134,7 +159,13 @@ func (s *Service) Approve(ctx context.Context, inviteID, code string) (Record, e
 	if record.Status != StatusPending {
 		return Record{}, ErrInviteConsumed
 	}
-	if err = invite.VerifyProofWithCode(record.Permit, record.Proof, record.ProfileID, code, s.now().UTC()); err != nil {
+	if err = invite.VerifyProofWithCode(
+		record.Permit,
+		record.Proof,
+		record.ProfileID,
+		code,
+		s.now().UTC(),
+	); err != nil {
 		if recordErr := s.store.RecordInvalidCodeAttempt(ctx, inviteID, s.now().UTC()); recordErr != nil {
 			return Record{}, recordErr
 		}

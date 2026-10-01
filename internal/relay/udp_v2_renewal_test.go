@@ -26,7 +26,11 @@ func TestUDPV2RenewalUsesEndpointMappingForRetainedPort(t *testing.T) {
 		probeSocket = v2UDP(t)
 	}
 	challenge, _ := probeV2(t, probeSocket, offer)
-	if err := wsjson.Write(f.ctx, c, UDPPairV2Message{Protocol: UDPPairV2Protocol, Kind: "confirm", Challenge: challenge}); err != nil {
+	if err := wsjson.Write(
+		f.ctx,
+		c,
+		UDPPairV2Message{Protocol: UDPPairV2Protocol, Kind: "confirm", Challenge: challenge},
+	); err != nil {
 		t.Fatal(err)
 	}
 	var bound UDPPairV2Message
@@ -66,7 +70,11 @@ func TestUDPV2FailedRenewalCannotCloseEstablishedIngress(t *testing.T) {
 				_ = c.CloseNow()
 			} else {
 				if mode == "bad confirm" {
-					if err := wsjson.Write(f.ctx, c, UDPPairV2Message{Protocol: UDPPairV2Protocol, Kind: "confirm", Challenge: "not-proven"}); err != nil {
+					if err := wsjson.Write(
+						f.ctx,
+						c,
+						UDPPairV2Message{Protocol: UDPPairV2Protocol, Kind: "confirm", Challenge: "not-proven"},
+					); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -118,7 +126,11 @@ func TestUDPV2LostRenewalAcknowledgmentPreservesIngress(t *testing.T) {
 			}
 			c, offer := f.offer(t, f.ticket(t, "s", "a", "b"))
 			challenge, _ := probeV2(t, current, offer)
-			if err := wsjson.Write(f.ctx, c, UDPPairV2Message{Protocol: UDPPairV2Protocol, Kind: "confirm", Challenge: challenge}); err != nil {
+			if err := wsjson.Write(
+				f.ctx,
+				c,
+				UDPPairV2Message{Protocol: UDPPairV2Protocol, Kind: "confirm", Challenge: challenge},
+			); err != nil {
 				t.Fatal(err)
 			}
 			// Wait until the relay commits confirmation, then deliberately discard

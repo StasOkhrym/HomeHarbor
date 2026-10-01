@@ -68,7 +68,17 @@ func (i TicketIssuer) issue(sessionID, deviceID, destinationDeviceID string, ttl
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return "", fmt.Errorf("generate ticket ID: %w", err)
 	}
-	payload, err := json.Marshal(TicketClaims{TicketID: base64.RawURLEncoding.EncodeToString(nonce[:]), Version: TicketVersion, Audience: RelayAudience, SessionID: sessionID, DeviceID: deviceID, DestinationDeviceID: destinationDeviceID, ExpiresAt: now().Add(ttl).Unix()})
+	payload, err := json.Marshal(
+		TicketClaims{
+			TicketID:            base64.RawURLEncoding.EncodeToString(nonce[:]),
+			Version:             TicketVersion,
+			Audience:            RelayAudience,
+			SessionID:           sessionID,
+			DeviceID:            deviceID,
+			DestinationDeviceID: destinationDeviceID,
+			ExpiresAt:           now().Add(ttl).Unix(),
+		},
+	)
 	if err != nil {
 		return "", err
 	}
@@ -92,7 +102,9 @@ func (i TicketIssuer) Verify(token string) (TicketClaims, error) {
 	if err = json.Unmarshal(payload, &claims); err != nil {
 		return claims, ErrInvalidTicket
 	}
-	if claims.Version != TicketVersion || claims.Audience != RelayAudience || claims.SessionID == "" || claims.DeviceID == "" || claims.ExpiresAt <= 0 {
+	if claims.Version != TicketVersion || claims.Audience != RelayAudience || claims.SessionID == "" ||
+		claims.DeviceID == "" ||
+		claims.ExpiresAt <= 0 {
 		return TicketClaims{}, ErrInvalidTicket
 	}
 	now := time.Now

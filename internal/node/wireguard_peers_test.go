@@ -32,7 +32,8 @@ func TestBuildWireGuardPeerConfigsScopesGatewayRoutes(t *testing.T) {
 	if len(peers) != 1 || len(peers[0].AllowedPrefixes) != 2 {
 		t.Fatalf("client peers=%#v", peers)
 	}
-	if peers[0].AllowedPrefixes[0].String() != "10.10.0.0/24" || peers[0].AllowedPrefixes[1].String() != "100.64.0.1/32" {
+	if peers[0].AllowedPrefixes[0].String() != "10.10.0.0/24" ||
+		peers[0].AllowedPrefixes[1].String() != "100.64.0.1/32" {
 		t.Fatalf("client allowed prefixes=%v", peers[0].AllowedPrefixes)
 	}
 
@@ -40,7 +41,8 @@ func TestBuildWireGuardPeerConfigsScopesGatewayRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(peers) != 1 || len(peers[0].AllowedPrefixes) != 1 || peers[0].AllowedPrefixes[0].String() != "100.64.0.2/32" {
+	if len(peers) != 1 || len(peers[0].AllowedPrefixes) != 1 ||
+		peers[0].AllowedPrefixes[0].String() != "100.64.0.2/32" {
 		t.Fatalf("gateway peers=%#v", peers)
 	}
 }
@@ -51,7 +53,9 @@ func TestBuildWireGuardPeerConfigsRejectsUnsafeOrIncompleteTopology(t *testing.T
 		t.Fatal(err)
 	}
 	value := snapshot.NetworkSnapshot{
-		Devices:  []snapshot.Device{{ID: "gateway", Role: "gateway", WireGuardPublicKey: gateway.PublicKey, OverlayAddress: "100.64.0.1/32"}},
+		Devices: []snapshot.Device{
+			{ID: "gateway", Role: "gateway", WireGuardPublicKey: gateway.PublicKey, OverlayAddress: "100.64.0.1/32"},
+		},
 		Gateways: []snapshot.Gateway{{DeviceID: "gateway"}},
 		Routes:   []snapshot.Route{{ID: "default", GatewayID: "gateway", Prefix: "0.0.0.0/0"}},
 	}
@@ -60,7 +64,13 @@ func TestBuildWireGuardPeerConfigsRejectsUnsafeOrIncompleteTopology(t *testing.T
 		// must still be rejected before any future applier can consume it.
 		t.Fatal("default route was accepted")
 	}
-	if _, err := BuildWireGuardPeerConfigs(snapshot.NetworkSnapshot{}, "missing"); !errors.Is(err, ErrLocalDeviceMissing) {
+	if _, err := BuildWireGuardPeerConfigs(
+		snapshot.NetworkSnapshot{},
+		"missing",
+	); !errors.Is(
+		err,
+		ErrLocalDeviceMissing,
+	) {
 		t.Fatalf("missing local device error=%v", err)
 	}
 }

@@ -25,28 +25,54 @@ type approvalFixture struct {
 	root  ed25519.PublicKey
 }
 
-func (f approvalFixture) ApproveSigned(ctx context.Context, signed invite.SignedApproval) (invites.ApprovalResult, error) {
+func (f approvalFixture) ApproveSigned(
+	ctx context.Context,
+	signed invite.SignedApproval,
+) (invites.ApprovalResult, error) {
 	var a invite.Approval
+
 	if err := cbor.Unmarshal(signed.Payload, &a); err != nil {
 		return invites.ApprovalResult{}, err
 	}
+
 	r, err := f.store.Get(ctx, a.InviteID)
 	if err != nil {
 		return invites.ApprovalResult{}, err
 	}
-	if err := invite.VerifyApproval(signed, f.root, invite.Approval{Version: 1, InviteID: r.InviteID, ProfileID: r.ProfileID, DeviceID: r.DeviceID, DevicePublicKey: r.DevicePublic, WireGuardPublicKey: r.WireGuardPublicKey}); err != nil {
+
+	if err := invite.VerifyApproval(
+		signed,
+		f.root,
+		invite.Approval{
+			Version:            1,
+			InviteID:           r.InviteID,
+			ProfileID:          r.ProfileID,
+			DeviceID:           r.DeviceID,
+			DevicePublicKey:    r.DevicePublic,
+			WireGuardPublicKey: r.WireGuardPublicKey,
+		},
+	); err != nil {
 		return invites.ApprovalResult{}, err
 	}
+
 	if r.Status == invites.StatusPending {
 		r, err = f.store.Approve(ctx, r.InviteID, time.Now())
 		if err != nil {
 			return invites.ApprovalResult{}, err
 		}
 	}
+
 	if r.Status != invites.StatusApproved {
 		return invites.ApprovalResult{}, invites.ErrInviteConsumed
 	}
-	return invites.ApprovalResult{Record: r, InviteID: r.InviteID, DeviceID: r.DeviceID, ProfileID: r.ProfileID, Status: r.Status}, nil
+
+	return invites.ApprovalResult{
+		Record:    r,
+		InviteID:  r.InviteID,
+		DeviceID:  r.DeviceID,
+		ProfileID: r.ProfileID,
+		Status:    r.Status,
+	}, nil
 }
 
 func TestCompanionRetriesApprovedRecordAfterPermitExpiry(t *testing.T) {
@@ -56,7 +82,17 @@ func TestCompanionRetriesApprovedRecordAfterPermitExpiry(t *testing.T) {
 	local, _ := invite.New("home", "family", time.Minute, now, rand.Reader)
 	permit, _ := invite.SignPermit(local.Permit, key, "root-1")
 	proof, _ := local.Proof("linux", device, local.Code, bytes.Repeat([]byte{7}, 32))
-	r := invites.Record{InviteID: proof.InviteID, ProfileID: "family", DeviceID: "linux", DevicePublic: proof.DevicePublicKey, WireGuardPublicKey: proof.WireGuardPublicKey, Permit: permit, Proof: proof, Status: invites.StatusApproved, ApprovedAt: &now}
+	r := invites.Record{
+		InviteID:           proof.InviteID,
+		ProfileID:          "family",
+		DeviceID:           "linux",
+		DevicePublic:       proof.DevicePublicKey,
+		WireGuardPublicKey: proof.WireGuardPublicKey,
+		Permit:             permit,
+		Proof:              proof,
+		Status:             invites.StatusApproved,
+		ApprovedAt:         &now,
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if request.Method == http.MethodGet {
 			_ = json.NewEncoder(w).Encode(r)
@@ -68,10 +104,22 @@ func TestCompanionRetriesApprovedRecordAfterPermitExpiry(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
 			t.Error(err)
 		}
-		if err := invite.VerifyApproval(input.Approval, root, invite.Approval{Version: 1, InviteID: r.InviteID, ProfileID: r.ProfileID, DeviceID: r.DeviceID, DevicePublicKey: r.DevicePublic, WireGuardPublicKey: r.WireGuardPublicKey}); err != nil {
+		if err := invite.VerifyApproval(
+			input.Approval,
+			root,
+			invite.Approval{
+				Version:            1,
+				InviteID:           r.InviteID,
+				ProfileID:          r.ProfileID,
+				DeviceID:           r.DeviceID,
+				DevicePublicKey:    r.DevicePublic,
+				WireGuardPublicKey: r.WireGuardPublicKey,
+			},
+		); err != nil {
 			t.Error(err)
 		}
-		_ = json.NewEncoder(w).Encode(invites.ApprovalResult{InviteID: r.InviteID, DeviceID: r.DeviceID, ProfileID: r.ProfileID, Status: invites.StatusApproved})
+		_ = json.NewEncoder(w).
+			Encode(invites.ApprovalResult{InviteID: r.InviteID, DeviceID: r.DeviceID, ProfileID: r.ProfileID, Status: invites.StatusApproved})
 	}))
 	defer server.Close()
 	a := RemoteApprover{Endpoint: server.URL, Now: func() time.Time { return now.Add(time.Hour) }}
@@ -87,7 +135,16 @@ func TestCompanionRejectsApprovalCredentialResponse(t *testing.T) {
 	local, _ := invite.New("home", "family", time.Hour, now, rand.Reader)
 	permit, _ := invite.SignPermit(local.Permit, key, "root-1")
 	proof, _ := local.Proof("linux", device, local.Code, bytes.Repeat([]byte{7}, 32))
-	r := invites.Record{InviteID: proof.InviteID, ProfileID: "family", DeviceID: "linux", DevicePublic: proof.DevicePublicKey, WireGuardPublicKey: proof.WireGuardPublicKey, Permit: permit, Proof: proof, Status: invites.StatusPending}
+	r := invites.Record{
+		InviteID:           proof.InviteID,
+		ProfileID:          "family",
+		DeviceID:           "linux",
+		DevicePublic:       proof.DevicePublicKey,
+		WireGuardPublicKey: proof.WireGuardPublicKey,
+		Permit:             permit,
+		Proof:              proof,
+		Status:             invites.StatusPending,
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if request.Method == http.MethodGet {
 			_ = json.NewEncoder(w).Encode(r)

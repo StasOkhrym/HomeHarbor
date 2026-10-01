@@ -1,0 +1,15 @@
+{{define "security"}}
+  <section class="panel">
+    <h2>Administrator account</h2>
+    <p>Passkey authentication protects this panel. Recovery codes work once each and cannot be shown again after bootstrap.</p>
+    <p class="help">Passkey management and recovery-code regeneration are not supported by the current API.</p>
+    {{template "logout" .}}
+  </section>
+  <section class="panel">
+    <h2>Network trust</h2>
+    <p>The control plane does not hold your companion private key and cannot independently authorize LAN access.</p>
+    <p>Keep the encrypted signing key and passphrase on your trusted Mac. This panel never asks for either.</p>
+    <a href="/admin/setup">Companion setup instructions →</a>
+  </section>
+  {{template "signed-state" .}}
+{{end}}

@@ -96,10 +96,10 @@ type NetworkSnapshot struct {
 }
 
 type Envelope struct {
-	Version   uint16 `cbor:"version" json:"version"`
-	KeyID     string `cbor:"key_id" json:"key_id"`
-	Payload   []byte `cbor:"payload" json:"payload"`
-	Hash      []byte `cbor:"hash" json:"hash"`
+	Version   uint16 `cbor:"version"   json:"version"`
+	KeyID     string `cbor:"key_id"    json:"key_id"`
+	Payload   []byte `cbor:"payload"   json:"payload"`
+	Hash      []byte `cbor:"hash"      json:"hash"`
 	Signature []byte `cbor:"signature" json:"signature"`
 }
 
@@ -115,17 +115,28 @@ func Sign(value NetworkSnapshot, privateKey ed25519.PrivateKey, keyID string) (E
 	if len(privateKey) != ed25519.PrivateKeySize || strings.TrimSpace(keyID) == "" {
 		return Envelope{}, errors.New("snapshot signing key and key ID are required")
 	}
+
 	value.Version = SchemaVersion
+
 	if err := validateAndNormalize(&value); err != nil {
 		return Envelope{}, err
 	}
+
 	payload, err := canonicalMode.Marshal(value)
 	if err != nil {
 		return Envelope{}, fmt.Errorf("encode snapshot: %w", err)
 	}
+
 	hash := sha256.Sum256(payload)
 	signed := append([]byte(signatureDomain), payload...)
-	return Envelope{Version: SchemaVersion, KeyID: keyID, Payload: payload, Hash: hash[:], Signature: ed25519.Sign(privateKey, signed)}, nil
+
+	return Envelope{
+		Version:   SchemaVersion,
+		KeyID:     keyID,
+		Payload:   payload,
+		Hash:      hash[:],
+		Signature: ed25519.Sign(privateKey, signed),
+	}, nil
 }
 
 // Verify authenticates and canonicalizes one envelope without imposing a
@@ -134,7 +145,9 @@ func Sign(value NetworkSnapshot, privateKey ed25519.PrivateKey, keyID string) (E
 // against, but still need the trusted signature, hash, schema, and network
 // binding before using the snapshot for authorization.
 func Verify(envelope Envelope, publicKey ed25519.PublicKey, networkID string) (NetworkSnapshot, error) {
-	if envelope.Version != SchemaVersion || len(publicKey) != ed25519.PublicKeySize || envelope.KeyID == "" || len(envelope.Hash) != sha256.Size || len(envelope.Signature) != ed25519.SignatureSize {
+	if envelope.Version != SchemaVersion || len(publicKey) != ed25519.PublicKeySize || envelope.KeyID == "" ||
+		len(envelope.Hash) != sha256.Size ||
+		len(envelope.Signature) != ed25519.SignatureSize {
 		return NetworkSnapshot{}, ErrInvalidSnapshot
 	}
 	hash := sha256.Sum256(envelope.Payload)
@@ -164,7 +177,13 @@ func Verify(envelope Envelope, publicKey ed25519.PublicKey, networkID string) (N
 // VerifyNext authenticates an envelope and requires it to be the next
 // contiguous revision after the caller's cursor. This is the anti-replay and
 // anti-gap check used while a node reconnects to control.
-func VerifyNext(envelope Envelope, publicKey ed25519.PublicKey, networkID string, currentRevision uint64, currentHash []byte) error {
+func VerifyNext(
+	envelope Envelope,
+	publicKey ed25519.PublicKey,
+	networkID string,
+	currentRevision uint64,
+	currentHash []byte,
+) error {
 	value, err := Verify(envelope, publicKey, networkID)
 	if err != nil {
 		return err
@@ -176,6 +195,7 @@ func VerifyNext(envelope Envelope, publicKey ed25519.PublicKey, networkID string
 		if value.Revision != 1 {
 			return ErrRevisionGap
 		}
+
 		return nil
 	}
 	if value.Revision <= currentRevision {
@@ -187,6 +207,7 @@ func VerifyNext(envelope Envelope, publicKey ed25519.PublicKey, networkID string
 	if !bytes.Equal(value.PreviousHash, currentHash) {
 		return ErrPreviousHash
 	}
+
 	return nil
 }
 
@@ -321,12 +342,22 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 		profile.ACLRuleIDs = slices.Compact(profile.ACLRuleIDs)
 		for _, deviceID := range profile.DeviceIDs {
 			if _, ok := deviceIDs[deviceID]; !ok {
-				return fmt.Errorf("%w: profile %s references unknown device %s", ErrInvalidSnapshot, profile.ID, deviceID)
+				return fmt.Errorf(
+					"%w: profile %s references unknown device %s",
+					ErrInvalidSnapshot,
+					profile.ID,
+					deviceID,
+				)
 			}
 		}
 		for _, serviceID := range profile.ServiceIDs {
 			if _, ok := serviceIDs[serviceID]; !ok {
-				return fmt.Errorf("%w: profile %s references unknown service %s", ErrInvalidSnapshot, profile.ID, serviceID)
+				return fmt.Errorf(
+					"%w: profile %s references unknown service %s",
+					ErrInvalidSnapshot,
+					profile.ID,
+					serviceID,
+				)
 			}
 		}
 	}
@@ -350,7 +381,12 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 	for _, profile := range value.Profiles {
 		for _, ruleID := range profile.ACLRuleIDs {
 			if _, ok := aclIDs[ruleID]; !ok {
-				return fmt.Errorf("%w: profile %s references unknown ACL rule %s", ErrInvalidSnapshot, profile.ID, ruleID)
+				return fmt.Errorf(
+					"%w: profile %s references unknown ACL rule %s",
+					ErrInvalidSnapshot,
+					profile.ID,
+					ruleID,
+				)
 			}
 		}
 	}

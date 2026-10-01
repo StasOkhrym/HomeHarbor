@@ -70,6 +70,7 @@ type Server struct {
 	relayTTL            time.Duration
 	relayPeerAuthorizer RelayPeerAuthorizer
 	trustedProxy        []netip.Prefix
+	actionConfirmation  BrowserActionConfirmation
 }
 
 type RouteService interface {
@@ -94,7 +95,10 @@ func WithActivationHandlers(challenge, claim http.HandlerFunc) ServerOption {
 
 // WithBrowserHandlers makes transport capabilities explicit at composition;
 // the authorization interface cannot silently acquire HTTP routes at runtime.
-func WithBrowserHandlers(api, login, asset http.Handler, mutation func(context.Context, *http.Request) (bool, error)) ServerOption {
+func WithBrowserHandlers(
+	api, login, asset http.Handler,
+	mutation func(context.Context, *http.Request) (bool, error),
+) ServerOption {
 	return func(s *Server) {
 		s.browserAPI = api
 		s.loginPage = login
@@ -180,6 +184,7 @@ func WithRouteService(service RouteService) ServerOption {
 
 type PolicyService interface {
 	Replace(context.Context, []policy.Rule) (policy.Snapshot, error)
+	ReplaceIfRevision(context.Context, uint64, []policy.Rule) (policy.Snapshot, error)
 	Latest(context.Context) (policy.Snapshot, error)
 }
 
@@ -264,7 +269,14 @@ func WithServiceCatalog(catalog ServiceCatalog) ServerOption {
 }
 
 func NewServer(deviceService DeviceService, authorizer Authorizer, options ...ServerOption) *Server {
-	server := &Server{devices: deviceService, authorizer: authorizer, logger: slog.Default(), apiLimiter: NewRateLimiter(120, time.Minute, nil), authLimiter: NewRateLimiter(5, time.Minute, nil), deviceLimiter: NewRateLimiter(10, time.Minute, nil)}
+	server := &Server{
+		devices:       deviceService,
+		authorizer:    authorizer,
+		logger:        slog.Default(),
+		apiLimiter:    NewRateLimiter(120, time.Minute, nil),
+		authLimiter:   NewRateLimiter(5, time.Minute, nil),
+		deviceLimiter: NewRateLimiter(10, time.Minute, nil),
+	}
 	for _, option := range options {
 		option(server)
 	}

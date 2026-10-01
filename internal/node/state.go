@@ -29,11 +29,17 @@ func NewState() (State, error) {
 	if err != nil {
 		return State{}, err
 	}
+
 	wireGuard, err := tunnel.NewIdentity()
 	if err != nil {
 		return State{}, err
 	}
-	return State{IdentityPrivateKey: base64.RawURLEncoding.EncodeToString(privateKey), IdentityPublicKey: base64.RawURLEncoding.EncodeToString(publicKey), WireGuard: wireGuard}, nil
+
+	return State{
+		IdentityPrivateKey: base64.RawURLEncoding.EncodeToString(privateKey),
+		IdentityPublicKey:  base64.RawURLEncoding.EncodeToString(publicKey),
+		WireGuard:          wireGuard,
+	}, nil
 }
 
 func (s State) Save(path string) error {
@@ -122,7 +128,8 @@ func Load(path string) (State, error) {
 // silently enrolling a new identity would strand the old device and weaken
 // the operator's ability to revoke the intended key.
 func (s State) Validate() error {
-	if s.IdentityPrivateKey == "" || s.IdentityPublicKey == "" || s.WireGuard.PrivateKey == "" || s.WireGuard.PublicKey == "" {
+	if s.IdentityPrivateKey == "" || s.IdentityPublicKey == "" || s.WireGuard.PrivateKey == "" ||
+		s.WireGuard.PublicKey == "" {
 		return errors.New("node state is incomplete")
 	}
 	identityPrivate, err := base64.RawURLEncoding.DecodeString(s.IdentityPrivateKey)
@@ -130,7 +137,8 @@ func (s State) Validate() error {
 		return errors.New("node identity private key is invalid")
 	}
 	identityPublic, err := base64.RawURLEncoding.DecodeString(s.IdentityPublicKey)
-	if err != nil || len(identityPublic) != ed25519.PublicKeySize || !bytes.Equal(ed25519.PrivateKey(identityPrivate).Public().(ed25519.PublicKey), identityPublic) {
+	if err != nil || len(identityPublic) != ed25519.PublicKeySize ||
+		!bytes.Equal(ed25519.PrivateKey(identityPrivate).Public().(ed25519.PublicKey), identityPublic) {
 		return errors.New("node identity public key does not match private key")
 	}
 	wireGuardPrivate, err := wgtypes.ParseKey(s.WireGuard.PrivateKey)

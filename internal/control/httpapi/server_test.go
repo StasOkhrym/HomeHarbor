@@ -35,12 +35,23 @@ func TestEnrollmentAPIRequiresAdminAndEnrollsDevice(t *testing.T) {
 	handler := newTestServer(deviceService, headerAuthorizer{}).Handler()
 
 	unauthorized := httptest.NewRecorder()
-	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/api/v1/enrollment-tokens", bytes.NewBufferString(`{"role":"client","ttl_seconds":3600}`)))
+	handler.ServeHTTP(
+		unauthorized,
+		httptest.NewRequest(
+			http.MethodPost,
+			"/api/v1/enrollment-tokens",
+			bytes.NewBufferString(`{"role":"client","ttl_seconds":3600}`),
+		),
+	)
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized status = %d", unauthorized.Code)
 	}
 
-	issueRequest := httptest.NewRequest(http.MethodPost, "/api/v1/enrollment-tokens", bytes.NewBufferString(`{"role":"client","ttl_seconds":3600}`))
+	issueRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/enrollment-tokens",
+		bytes.NewBufferString(`{"role":"client","ttl_seconds":3600}`),
+	)
 	issueRequest.Header.Set("X-Test-Admin", "true")
 	issued := httptest.NewRecorder()
 	handler.ServeHTTP(issued, issueRequest)
@@ -98,9 +109,19 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 		t.Fatal(err)
 	}
 	issuer := relay.TicketIssuer{Key: []byte("01234567890123456789012345678901")}
-	handler := newTestServer(deviceService, allowAuthorizer{}, WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/udp/v2", time.Minute)).Handler()
+	handler := newTestServer(
+		deviceService,
+		allowAuthorizer{},
+		WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/udp/v2", time.Minute),
+	).Handler()
 
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/relay-sessions", bytes.NewBufferString(`{"session_id":"session-1","destination_device_id":"`+deviceB.ID+`","capabilities":["udp_pair_v2"]}`))
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/relay-sessions",
+		bytes.NewBufferString(
+			`{"session_id":"session-1","destination_device_id":"`+deviceB.ID+`","capabilities":["udp_pair_v2"]}`,
+		),
+	)
 	request.Header.Set("Authorization", "Bearer "+deviceA.Credential)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
@@ -116,22 +137,36 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 		t.Fatal(err)
 	}
-	if response.RelayURL != "wss://relay.example.com/relay/udp/v2" || response.RelayUDPAddress != "" || response.RelayTransport != "udp_pair_v2" || response.Ticket == "" {
+	if response.RelayURL != "wss://relay.example.com/relay/udp/v2" || response.RelayUDPAddress != "" ||
+		response.RelayTransport != "udp_pair_v2" ||
+		response.Ticket == "" {
 		t.Fatalf("incomplete relay response=%#v", response)
 	}
 	if claims, err := issuer.Verify(response.Ticket); err != nil || claims.DeviceID != deviceA.ID {
 		t.Fatalf("ticket claims=%#v error=%v", claims, err)
 	}
 	legacy := httptest.NewRecorder()
-	legacyRequest := httptest.NewRequest(http.MethodPost, "/api/v1/relay-sessions", strings.NewReader(`{"session_id":"session-1","destination_device_id":"`+deviceB.ID+`"}`))
+	legacyRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/relay-sessions",
+		strings.NewReader(`{"session_id":"session-1","destination_device_id":"`+deviceB.ID+`"}`),
+	)
 	legacyRequest.Header.Set("Authorization", "Bearer "+deviceA.Credential)
 	handler.ServeHTTP(legacy, legacyRequest)
-	if legacy.Code != http.StatusUpgradeRequired || !strings.Contains(legacy.Body.String(), protocol.ErrorUpgradeRequired) {
+	if legacy.Code != http.StatusUpgradeRequired ||
+		!strings.Contains(legacy.Body.String(), protocol.ErrorUpgradeRequired) {
 		t.Fatalf("legacy ingress advertised: %d %s", legacy.Code, legacy.Body.String())
 	}
 
 	unauthorized := httptest.NewRecorder()
-	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/api/v1/relay-sessions", strings.NewReader(`{"session_id":"s","destination_device_id":"`+deviceB.ID+`"}`)))
+	handler.ServeHTTP(
+		unauthorized,
+		httptest.NewRequest(
+			http.MethodPost,
+			"/api/v1/relay-sessions",
+			strings.NewReader(`{"session_id":"s","destination_device_id":"`+deviceB.ID+`"}`),
+		),
+	)
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized status=%d", unauthorized.Code)
 	}
@@ -156,8 +191,16 @@ func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
 		t.Fatal(err)
 	}
 	issuer := relay.TicketIssuer{Key: []byte("01234567890123456789012345678901")}
-	handler := newTestServer(deviceService, allowAuthorizer{}, WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/v1", time.Minute)).Handler()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/relay-sessions", strings.NewReader(`{"session_id":"session-1","destination_device_id":"`+second.ID+`"}`))
+	handler := newTestServer(
+		deviceService,
+		allowAuthorizer{},
+		WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/v1", time.Minute),
+	).Handler()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/relay-sessions",
+		strings.NewReader(`{"session_id":"session-1","destination_device_id":"`+second.ID+`"}`),
+	)
 	request.Header.Set("Authorization", "Bearer "+first.Credential)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
@@ -185,8 +228,17 @@ func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
 		t.Fatal(err)
 	}
 	issuer := relay.TicketIssuer{Key: []byte("01234567890123456789012345678901")}
-	handler := newTestServer(deviceService, allowAuthorizer{}, WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/v1", time.Minute), WithRelayPeerAuthorizer(func(context.Context, devices.Device, devices.Device) bool { return false })).Handler()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/relay-sessions", strings.NewReader(`{"session_id":"session-1","destination_device_id":"`+gateway.ID+`"}`))
+	handler := newTestServer(
+		deviceService,
+		allowAuthorizer{},
+		WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/v1", time.Minute),
+		WithRelayPeerAuthorizer(func(context.Context, devices.Device, devices.Device) bool { return false }),
+	).Handler()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/relay-sessions",
+		strings.NewReader(`{"session_id":"session-1","destination_device_id":"`+gateway.ID+`"}`),
+	)
 	request.Header.Set("Authorization", "Bearer "+client.Credential)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
@@ -207,25 +259,35 @@ func TestHealthEndpoints(t *testing.T) {
 }
 
 func TestReadinessAndSecurityHeaders(t *testing.T) {
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}, WithReadiness(func(context.Context) error {
-		return errors.New("database unavailable")
-	})).Handler()
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		allowAuthorizer{},
+		WithReadiness(func(context.Context) error {
+			return errors.New("database unavailable")
+		}),
+	).Handler()
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("ready status = %d", recorder.Code)
 	}
-	if recorder.Header().Get("Content-Security-Policy") == "" || recorder.Header().Get("X-Content-Type-Options") != "nosniff" {
+	if recorder.Header().Get("Content-Security-Policy") == "" ||
+		recorder.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Fatalf("security headers = %#v", recorder.Header())
 	}
 }
 
 func TestDecodeJSONRejectsTrailingValues(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/test", strings.NewReader(`{"name":"ok"}{"name":"unexpected"}`))
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/test",
+		strings.NewReader(`{"name":"ok"}{"name":"unexpected"}`),
+	)
 	var value struct {
 		Name string `json:"name"`
 	}
+
 	if decodeJSON(recorder, request, &value) {
 		t.Fatal("decodeJSON accepted trailing JSON value")
 	}
@@ -235,23 +297,46 @@ func TestDecodeJSONRejectsTrailingValues(t *testing.T) {
 }
 
 func TestAdminPageUsesLocalAssets(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now, controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
-		return true, nil
-	}))
-	if _, err := catalog.Create(context.Background(), controlservices.Service{ID: "cloud", Name: "Nextcloud", Kind: controlservices.KindWeb, URL: "https://cloud.home.example.com", Description: "Family files"}); err != nil {
+	catalog := controlservices.NewService(
+		controlservices.NewMemoryStore(),
+		time.Now,
+		controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
+			return true, nil
+		}),
+	)
+	if _, err := catalog.Create(
+		context.Background(),
+		controlservices.Service{
+			ID:          "cloud",
+			Name:        "Nextcloud",
+			Kind:        controlservices.KindWeb,
+			URL:         "https://cloud.home.example.com",
+			Description: "Family files",
+		},
+	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := catalog.CreateProfile(context.Background(), controlservices.AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}}); err != nil {
+	if _, err := catalog.CreateProfile(
+		context.Background(),
+		controlservices.AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}},
+	); err != nil {
 		t.Fatal(err)
 	}
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}, WithServiceCatalog(catalog)).Handler()
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		allowAuthorizer{},
+		WithServiceCatalog(catalog),
+	).Handler()
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/", nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d", recorder.Code)
 	}
 	body := recorder.Body.String()
-	if strings.Contains(body, "unpkg.com") || strings.Contains(body, "<style>") || !strings.Contains(body, "/assets/admin.css") || !strings.Contains(body, "Nextcloud") || !strings.Contains(body, "Family") {
+	if strings.Contains(body, "unpkg.com") || strings.Contains(body, "<style>") ||
+		!strings.Contains(body, "/assets/admin.css") ||
+		!strings.Contains(body, "Nextcloud") ||
+		!strings.Contains(body, "Family") {
 		t.Fatalf("admin page assets are not local: %s", body)
 	}
 	if strings.Contains(body, "Add LAN route") {
@@ -265,10 +350,18 @@ func TestAdminPageUsesLocalAssets(t *testing.T) {
 }
 
 func TestAdminFormCreatesServiceThroughDomainCatalog(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now, controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
-		return true, nil
-	}))
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}, WithServiceCatalog(catalog)).Handler()
+	catalog := controlservices.NewService(
+		controlservices.NewMemoryStore(),
+		time.Now,
+		controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
+			return true, nil
+		}),
+	)
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		allowAuthorizer{},
+		WithServiceCatalog(catalog),
+	).Handler()
 	form := url.Values{
 		"id":          {"cloud"},
 		"name":        {"Nextcloud"},
@@ -281,7 +374,12 @@ func TestAdminFormCreatesServiceThroughDomainCatalog(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusSeeOther || recorder.Header().Get("Location") != "/admin/?notice=service-created" {
-		t.Fatalf("form status=%d location=%q body=%s", recorder.Code, recorder.Header().Get("Location"), recorder.Body.String())
+		t.Fatalf(
+			"form status=%d location=%q body=%s",
+			recorder.Code,
+			recorder.Header().Get("Location"),
+			recorder.Body.String(),
+		)
 	}
 	items, err := catalog.List(context.Background())
 	if err != nil || len(items) != 1 || items[0].ID != "cloud" {
@@ -291,7 +389,11 @@ func TestAdminFormCreatesServiceThroughDomainCatalog(t *testing.T) {
 
 func TestAdminFormCreatesRouteThroughNetworkService(t *testing.T) {
 	routeService := controlroutes.NewService(controlroutes.NewMemoryStore(), time.Now)
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}, WithRouteService(routeService)).Handler()
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		allowAuthorizer{},
+		WithRouteService(routeService),
+	).Handler()
 	form := url.Values{
 		"id":                {"home-lan"},
 		"gateway_device_id": {"gateway-home"},
@@ -304,7 +406,12 @@ func TestAdminFormCreatesRouteThroughNetworkService(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusSeeOther || recorder.Header().Get("Location") != "/admin/?notice=route-created" {
-		t.Fatalf("form status=%d location=%q body=%s", recorder.Code, recorder.Header().Get("Location"), recorder.Body.String())
+		t.Fatalf(
+			"form status=%d location=%q body=%s",
+			recorder.Code,
+			recorder.Header().Get("Location"),
+			recorder.Body.String(),
+		)
 	}
 	items, err := routeService.List(context.Background())
 	if err != nil || len(items) != 1 || items[0].ID != "home-lan" || items[0].Status != controlroutes.StatusPending {
@@ -322,13 +429,33 @@ func TestAvailableServicesRequireDeviceCredentialAndProfileMembership(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now, controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
-		return true, nil
-	}))
-	if _, err := catalog.Create(context.Background(), controlservices.Service{ID: "cloud", Name: "Cloud", Kind: controlservices.KindWeb, URL: "https://cloud.example"}); err != nil {
+	catalog := controlservices.NewService(
+		controlservices.NewMemoryStore(),
+		time.Now,
+		controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
+			return true, nil
+		}),
+	)
+	if _, err := catalog.Create(
+		context.Background(),
+		controlservices.Service{
+			ID:   "cloud",
+			Name: "Cloud",
+			Kind: controlservices.KindWeb,
+			URL:  "https://cloud.example",
+		},
+	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := catalog.CreateProfile(context.Background(), controlservices.AccessProfile{ID: "family", Name: "Family", DeviceIDs: []string{device.ID}, ServiceIDs: []string{"cloud"}}); err != nil {
+	if _, err := catalog.CreateProfile(
+		context.Background(),
+		controlservices.AccessProfile{
+			ID:         "family",
+			Name:       "Family",
+			DeviceIDs:  []string{device.ID},
+			ServiceIDs: []string{"cloud"},
+		},
+	); err != nil {
 		t.Fatal(err)
 	}
 	handler := newTestServer(deviceService, allowAuthorizer{}, WithServiceCatalog(catalog)).Handler()
@@ -350,7 +477,11 @@ func TestAvailableServicesRequireDeviceCredentialAndProfileMembership(t *testing
 
 func TestGroupedResourceRoutesKeepAdminBoundary(t *testing.T) {
 	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), headerAuthorizer{}, WithServiceCatalog(catalog)).Handler()
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		headerAuthorizer{},
+		WithServiceCatalog(catalog),
+	).Handler()
 
 	unauthorized := httptest.NewRecorder()
 	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/admin/devices", nil))
@@ -366,7 +497,11 @@ func TestGroupedResourceRoutesKeepAdminBoundary(t *testing.T) {
 		t.Fatalf("grouped device route status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 
-	create := httptest.NewRequest(http.MethodPost, "/api/v1/services/", strings.NewReader(`{"id":"files","name":"Files","kind":"web","url":"https://files.home.example.com"}`))
+	create := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/services/",
+		strings.NewReader(`{"id":"files","name":"Files","kind":"web","url":"https://files.home.example.com"}`),
+	)
 	create.Header.Set("X-Test-Admin", "true")
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, create)
@@ -385,7 +520,11 @@ func TestAuditAPIRequiresAdminAndBoundsResults(t *testing.T) {
 		TargetID:   "device-1",
 		Metadata:   map[string]any{"reason": "test"},
 	}}}
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), headerAuthorizer{}, WithAuditReader(reader)).Handler()
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		headerAuthorizer{},
+		WithAuditReader(reader),
+	).Handler()
 
 	unauthorized := httptest.NewRecorder()
 	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit", nil))
@@ -407,8 +546,16 @@ func TestAuditAPIRequiresAdminAndBoundsResults(t *testing.T) {
 
 func TestServiceCatalogAPIUsesAdminBoundary(t *testing.T) {
 	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), headerAuthorizer{}, WithServiceCatalog(catalog)).Handler()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/services", bytes.NewBufferString(`{"id":"cloud","name":"Nextcloud","kind":"web","url":"https://cloud.home.example.com"}`))
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		headerAuthorizer{},
+		WithServiceCatalog(catalog),
+	).Handler()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/services",
+		bytes.NewBufferString(`{"id":"cloud","name":"Nextcloud","kind":"web","url":"https://cloud.home.example.com"}`),
+	)
 	request.Header.Set("X-Test-Admin", "true")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
@@ -447,8 +594,17 @@ func TestInviteProofAPIDoesNotRequireAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := controlinvites.NewService(controlinvites.NewMemoryStore(), rootPublic, "home", func() time.Time { return now })
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), headerAuthorizer{}, WithInviteService(service)).Handler()
+	service := controlinvites.NewService(
+		controlinvites.NewMemoryStore(),
+		rootPublic,
+		"home",
+		func() time.Time { return now },
+	)
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		headerAuthorizer{},
+		WithInviteService(service),
+	).Handler()
 	body, _ := json.Marshal(map[string]any{"permit": permit, "proof": proof})
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/invites/proof", bytes.NewReader(body)))
@@ -458,7 +614,11 @@ func TestInviteProofAPIDoesNotRequireAdmin(t *testing.T) {
 }
 
 func TestClientKeyUsesForwardedAddressOnlyFromTrustedProxy(t *testing.T) {
-	server := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}, WithTrustedProxyCIDRs([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}))
+	server := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		allowAuthorizer{},
+		WithTrustedProxyCIDRs([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}),
+	)
 	trusted := httptest.NewRequest(http.MethodGet, "/", nil)
 	trusted.RemoteAddr = "10.1.2.3:443"
 	trusted.Header.Set("X-Forwarded-For", "192.0.2.10, 10.1.2.3")
@@ -489,10 +649,17 @@ func TestSignedSnapshotPublishDoesNotRequireAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := controlsnapshots.NewService(controlsnapshots.NewMemoryStore(), rootPublic, "home")
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), headerAuthorizer{}, WithSnapshotService(service)).Handler()
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		headerAuthorizer{},
+		WithSnapshotService(service),
+	).Handler()
 	body, _ := json.Marshal(envelope)
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/coordination/snapshots", bytes.NewReader(body)))
+	handler.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodPost, "/api/v1/coordination/snapshots", bytes.NewReader(body)),
+	)
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("publish snapshot status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -511,9 +678,17 @@ func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
 	if err := snapshotService.Publish(context.Background(), envelope); err != nil {
 		t.Fatal(err)
 	}
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), headerAuthorizer{}, WithSnapshotService(snapshotService), WithCompanionRootKey(rootPublic)).Handler()
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		headerAuthorizer{},
+		WithSnapshotService(snapshotService),
+		WithCompanionRootKey(rootPublic),
+	).Handler()
 	challengeRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(challengeRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/coordination/snapshot/companion-challenge", nil))
+	handler.ServeHTTP(
+		challengeRecorder,
+		httptest.NewRequest(http.MethodGet, "/api/v1/coordination/snapshot/companion-challenge", nil),
+	)
 	if challengeRecorder.Code != http.StatusOK {
 		t.Fatalf("challenge status=%d body=%s", challengeRecorder.Code, challengeRecorder.Body.String())
 	}
@@ -523,7 +698,13 @@ func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
 	if err := json.Unmarshal(challengeRecorder.Body.Bytes(), &challenge); err != nil || challenge.Nonce == "" {
 		t.Fatalf("challenge=%s error=%v", challengeRecorder.Body.String(), err)
 	}
-	signature, err := protocol.SignCompanionRequest(http.MethodGet, companionSnapshotPath, challenge.Nonce, "root-1", rootPrivate)
+	signature, err := protocol.SignCompanionRequest(
+		http.MethodGet,
+		companionSnapshotPath,
+		challenge.Nonce,
+		"root-1",
+		rootPrivate,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +714,8 @@ func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
 	request.Header.Set("X-Go-Tunnels-Companion-Signature", base64.RawURLEncoding.EncodeToString(signature))
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, request)
-	if first.Code != http.StatusOK || !bytes.Contains(first.Body.Bytes(), []byte(base64.StdEncoding.EncodeToString(envelope.Hash))) {
+	if first.Code != http.StatusOK ||
+		!bytes.Contains(first.Body.Bytes(), []byte(base64.StdEncoding.EncodeToString(envelope.Hash))) {
 		t.Fatalf("companion snapshot status=%d body=%s", first.Code, first.Body.String())
 	}
 	replay := httptest.NewRecorder()

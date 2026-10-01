@@ -41,7 +41,8 @@ type Bridge struct {
 }
 
 func NewBridge(cfg BridgeConfig) (*Bridge, error) {
-	if cfg.RelayURL == "" || cfg.Ticket == "" || cfg.SessionID == "" || cfg.DeviceID == "" || cfg.DestinationDeviceID == "" {
+	if cfg.RelayURL == "" || cfg.Ticket == "" || cfg.SessionID == "" || cfg.DeviceID == "" ||
+		cfg.DestinationDeviceID == "" {
 		return nil, errors.New("relay URL, ticket, session, and device identities are required")
 	}
 	if cfg.ListenAddress == nil || cfg.WireGuardAddress == nil {
@@ -70,7 +71,11 @@ func (b *Bridge) Run(ctx context.Context) error {
 	}
 	header := make(http.Header)
 	header.Set("Authorization", "Bearer "+b.cfg.Ticket)
-	connection, _, err := websocket.Dial(ctx, b.cfg.RelayURL, &websocket.DialOptions{HTTPHeader: header, CompressionMode: websocket.CompressionDisabled})
+	connection, _, err := websocket.Dial(
+		ctx,
+		b.cfg.RelayURL,
+		&websocket.DialOptions{HTTPHeader: header, CompressionMode: websocket.CompressionDisabled},
+	)
 	if err != nil {
 		_ = b.udp.Close()
 		return fmt.Errorf("dial relay: %w", err)
@@ -120,7 +125,12 @@ func (b *Bridge) readUDP(ctx context.Context, errCh chan<- error) {
 			errCh <- err
 			return
 		}
-		packet := Packet{SessionID: b.cfg.SessionID, SourceDeviceID: b.cfg.DeviceID, DestinationDeviceID: b.cfg.DestinationDeviceID, Payload: append([]byte(nil), buffer[:n]...)}
+		packet := Packet{
+			SessionID:           b.cfg.SessionID,
+			SourceDeviceID:      b.cfg.DeviceID,
+			DestinationDeviceID: b.cfg.DestinationDeviceID,
+			Payload:             append([]byte(nil), buffer[:n]...),
+		}
 		data, err := EncodePacket(packet)
 		if err != nil {
 			errCh <- err
@@ -154,7 +164,8 @@ func (b *Bridge) readWebSocket(ctx context.Context, errCh chan<- error) {
 			errCh <- err
 			return
 		}
-		if packet.SessionID != b.cfg.SessionID || packet.SourceDeviceID != b.cfg.DestinationDeviceID || packet.DestinationDeviceID != b.cfg.DeviceID {
+		if packet.SessionID != b.cfg.SessionID || packet.SourceDeviceID != b.cfg.DestinationDeviceID ||
+			packet.DestinationDeviceID != b.cfg.DeviceID {
 			errCh <- errors.New("relay packet identity mismatch")
 			return
 		}

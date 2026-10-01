@@ -16,14 +16,26 @@ func TestPostgresCatalogProfileMembershipAndRollback(t *testing.T) {
 	testutil.Device(t, pool, "client", "client")
 	repo := servicespg.New(pool)
 	ctx := context.Background()
-	service := services.Service{ID: "cloud", Name: "Cloud", Kind: services.KindWeb, URL: "https://cloud.home.test", CreatedAt: time.Now().UTC()}
+	service := services.Service{
+		ID:        "cloud",
+		Name:      "Cloud",
+		Kind:      services.KindWeb,
+		URL:       "https://cloud.home.test",
+		CreatedAt: time.Now().UTC(),
+	}
 	if err := repo.CreateService(ctx, service); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.CreateService(ctx, service); !errors.Is(err, services.ErrDuplicateID) {
 		t.Fatalf("duplicate error=%v", err)
 	}
-	profile := services.AccessProfile{ID: "family", Name: "Family", DeviceIDs: []string{"client"}, ServiceIDs: []string{"cloud"}, CreatedAt: time.Now().UTC()}
+	profile := services.AccessProfile{
+		ID:         "family",
+		Name:       "Family",
+		DeviceIDs:  []string{"client"},
+		ServiceIDs: []string{"cloud"},
+		CreatedAt:  time.Now().UTC(),
+	}
 	if err := repo.CreateProfile(ctx, profile); err != nil {
 		t.Fatal(err)
 	}

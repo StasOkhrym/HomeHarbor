@@ -91,7 +91,13 @@ func TestInviteIssuerKeepsCodeOutOfLinkFragment(t *testing.T) {
 	if err := session.Unlock(privateKey); err != nil {
 		t.Fatal(err)
 	}
-	issuer := NewInviteIssuer(session, "home", "https://control.example/invite", "root-1", func() time.Time { return now })
+	issuer := NewInviteIssuer(
+		session,
+		"home",
+		"https://control.example/invite",
+		"root-1",
+		func() time.Time { return now },
+	)
 	link, code, _, err := issuer.Issue("family", time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +106,8 @@ func TestInviteIssuerKeepsCodeOutOfLinkFragment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(parsed.Fragment, "permit=") || !strings.Contains(parsed.Fragment, "invite_key=") || strings.Contains(parsed.Fragment, code) {
+	if !strings.Contains(parsed.Fragment, "permit=") || !strings.Contains(parsed.Fragment, "invite_key=") ||
+		strings.Contains(parsed.Fragment, code) {
 		t.Fatalf("invite fragment leaks or misses material: %q", parsed.Fragment)
 	}
 	if len(publicKey) != ed25519.PublicKeySize {

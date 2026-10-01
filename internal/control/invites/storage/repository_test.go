@@ -27,7 +27,13 @@ func TestPostgresInviteBlocksAfterFiveInvalidCodes(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	profileID := uniqueInviteIntegrationID()
-	if _, err := pool.Exec(context.Background(), `INSERT INTO access_profiles(id,name,created_at) VALUES($1,$2,$3)`, profileID, profileID, now); err != nil {
+	if _, err := pool.Exec(
+		context.Background(),
+		`INSERT INTO access_profiles(id,name,created_at) VALUES($1,$2,$3)`,
+		profileID,
+		profileID,
+		now,
+	); err != nil {
 		t.Fatal(err)
 	}
 	local, err := invite.New("home", profileID, time.Hour, now, rand.Reader)
@@ -55,18 +61,33 @@ func TestPostgresInviteBlocksAfterFiveInvalidCodes(t *testing.T) {
 		wrongCode = "00000001"
 	}
 	for range 4 {
-		if _, err := service.Approve(context.Background(), local.Permit.InviteID, wrongCode); !errors.Is(err, invites.ErrInvalidCode) {
+		if _, err := service.Approve(
+			context.Background(),
+			local.Permit.InviteID,
+			wrongCode,
+		); !errors.Is(
+			err,
+			invites.ErrInvalidCode,
+		) {
 			t.Fatalf("invalid code error=%v, want ErrInvalidCode", err)
 		}
 	}
-	if _, err := service.Approve(context.Background(), local.Permit.InviteID, wrongCode); !errors.Is(err, invites.ErrInviteBlocked) {
+	if _, err := service.Approve(
+		context.Background(),
+		local.Permit.InviteID,
+		wrongCode,
+	); !errors.Is(
+		err,
+		invites.ErrInviteBlocked,
+	) {
 		t.Fatalf("fifth invalid code error=%v, want ErrInviteBlocked", err)
 	}
 	record, err := service.Get(context.Background(), local.Permit.InviteID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Status != invites.StatusBlocked || record.FailedCodeAttempts != invites.MaxInvalidCodeAttempts || record.BlockedAt == nil {
+	if record.Status != invites.StatusBlocked || record.FailedCodeAttempts != invites.MaxInvalidCodeAttempts ||
+		record.BlockedAt == nil {
 		t.Fatalf("lockout record=%#v", record)
 	}
 }

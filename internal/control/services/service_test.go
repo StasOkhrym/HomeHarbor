@@ -10,17 +10,26 @@ import (
 func TestServiceRequiresHTTPSAndSupportsProfiles(t *testing.T) {
 	store := NewMemoryStore()
 	service := NewService(store, func() time.Time { return time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC) })
-	if _, err := service.Create(context.Background(), Service{ID: "cloud", Name: "Nextcloud", Kind: KindWeb, URL: "http://cloud.home"}); err == nil {
+	if _, err := service.Create(
+		context.Background(),
+		Service{ID: "cloud", Name: "Nextcloud", Kind: KindWeb, URL: "http://cloud.home"},
+	); err == nil {
 		t.Fatal("insecure service URL accepted")
 	}
-	created, err := service.Create(context.Background(), Service{ID: "cloud", Name: "Nextcloud", Kind: KindWeb, URL: "https://cloud.home.example.com"})
+	created, err := service.Create(
+		context.Background(),
+		Service{ID: "cloud", Name: "Nextcloud", Kind: KindWeb, URL: "https://cloud.home.example.com"},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created.CreatedAt.IsZero() {
 		t.Fatal("created timestamp is empty")
 	}
-	profile, err := service.CreateProfile(context.Background(), AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}})
+	profile, err := service.CreateProfile(
+		context.Background(),
+		AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +51,10 @@ func TestServiceRejectsDuplicateIDs(t *testing.T) {
 
 func TestProfileRejectsUnknownService(t *testing.T) {
 	service := NewService(NewMemoryStore(), time.Now)
-	if _, err := service.CreateProfile(context.Background(), AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"missing"}}); err == nil {
+	if _, err := service.CreateProfile(
+		context.Background(),
+		AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"missing"}},
+	); err == nil {
 		t.Fatal("profile referenced unknown service")
 	}
 }
@@ -51,7 +63,13 @@ func TestServiceRejectsUnsafeOptionalURLs(t *testing.T) {
 	cases := []Service{
 		{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://user:password@cloud.example"},
 		{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://cloud.example", NativeURL: "javascript:alert(1)"},
-		{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://cloud.example", HealthURL: "http://cloud.example/health"},
+		{
+			ID:        "cloud",
+			Name:      "Cloud",
+			Kind:      KindWeb,
+			URL:       "https://cloud.example",
+			HealthURL: "http://cloud.example/health",
+		},
 		{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://cloud.example#fragment"},
 	}
 	for index, item := range cases {
@@ -63,7 +81,11 @@ func TestServiceRejectsUnsafeOptionalURLs(t *testing.T) {
 
 func TestServiceAllowsExplicitNativeDeepLink(t *testing.T) {
 	item, err := NewService(NewMemoryStore(), time.Now).Create(context.Background(), Service{
-		ID: "cloud", Name: "Cloud", Kind: KindNative, URL: "https://cloud.example", NativeURL: "nextcloud://cloud.example",
+		ID:        "cloud",
+		Name:      "Cloud",
+		Kind:      KindNative,
+		URL:       "https://cloud.example",
+		NativeURL: "nextcloud://cloud.example",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -74,16 +96,37 @@ func TestServiceAllowsExplicitNativeDeepLink(t *testing.T) {
 }
 
 func TestProfileRequiresActiveDevicesWhenDeviceValidationIsConfigured(t *testing.T) {
-	service := NewService(NewMemoryStore(), time.Now, WithDeviceActiveChecker(func(_ context.Context, id string) (bool, error) {
-		return id == "active-phone", nil
-	}))
-	if _, err := service.Create(context.Background(), Service{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://cloud.example"}); err != nil {
+	service := NewService(
+		NewMemoryStore(),
+		time.Now,
+		WithDeviceActiveChecker(func(_ context.Context, id string) (bool, error) {
+			return id == "active-phone", nil
+		}),
+	)
+	if _, err := service.Create(
+		context.Background(),
+		Service{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://cloud.example"},
+	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.CreateProfile(context.Background(), AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}, DeviceIDs: []string{"revoked-phone"}}); !errors.Is(err, ErrDeviceNotAllowed) {
+	if _, err := service.CreateProfile(
+		context.Background(),
+		AccessProfile{
+			ID:         "family",
+			Name:       "Family",
+			ServiceIDs: []string{"cloud"},
+			DeviceIDs:  []string{"revoked-phone"},
+		},
+	); !errors.Is(
+		err,
+		ErrDeviceNotAllowed,
+	) {
 		t.Fatalf("revoked device error=%v", err)
 	}
-	profile, err := service.CreateProfile(context.Background(), AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}, DeviceIDs: []string{"active-phone"}})
+	profile, err := service.CreateProfile(
+		context.Background(),
+		AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}, DeviceIDs: []string{"active-phone"}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,10 +148,16 @@ func TestListForDeviceIsDefaultDenyAndUnionsExplicitProfiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := service.CreateProfile(context.Background(), AccessProfile{ID: "family", Name: "Family", DeviceIDs: []string{"phone"}, ServiceIDs: []string{"cloud"}}); err != nil {
+	if _, err := service.CreateProfile(
+		context.Background(),
+		AccessProfile{ID: "family", Name: "Family", DeviceIDs: []string{"phone"}, ServiceIDs: []string{"cloud"}},
+	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.CreateProfile(context.Background(), AccessProfile{ID: "admins", Name: "Admins", DeviceIDs: []string{"laptop"}, ServiceIDs: []string{"ssh"}}); err != nil {
+	if _, err := service.CreateProfile(
+		context.Background(),
+		AccessProfile{ID: "admins", Name: "Admins", DeviceIDs: []string{"laptop"}, ServiceIDs: []string{"ssh"}},
+	); err != nil {
 		t.Fatal(err)
 	}
 	phone, err := service.ListForDevice(context.Background(), "phone")

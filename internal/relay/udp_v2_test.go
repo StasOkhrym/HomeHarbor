@@ -92,7 +92,11 @@ func (f *v2Fixture) ticket(t *testing.T, session, device, peer string) string {
 func (f *v2Fixture) offer(t *testing.T, ticket string) (*websocket.Conn, UDPPairV2Message) {
 	t.Helper()
 	h := http.Header{"Authorization": {"Bearer " + ticket}}
-	c, _, err := websocket.Dial(f.ctx, "wss"+strings.TrimPrefix(f.s.URL, "https"), &websocket.DialOptions{HTTPClient: f.s.Client(), HTTPHeader: h})
+	c, _, err := websocket.Dial(
+		f.ctx,
+		"wss"+strings.TrimPrefix(f.s.URL, "https"),
+		&websocket.DialOptions{HTTPClient: f.s.Client(), HTTPHeader: h},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +136,11 @@ func (f *v2Fixture) bind(t *testing.T, ticket string, u *net.UDPConn) (UDPPairV2
 	t.Helper()
 	c, offer := f.offer(t, ticket)
 	challenge, _ := probeV2(t, u, offer)
-	if err := wsjson.Write(f.ctx, c, UDPPairV2Message{Protocol: "udp_pair_v2", Kind: "confirm", Challenge: challenge}); err != nil {
+	if err := wsjson.Write(
+		f.ctx,
+		c,
+		UDPPairV2Message{Protocol: "udp_pair_v2", Kind: "confirm", Challenge: challenge},
+	); err != nil {
 		t.Fatal(err)
 	}
 	var bound UDPPairV2Message
@@ -210,7 +218,11 @@ func TestUDPV2LocksEndpointRejectsCapturedProbeAndForwardsRaw(t *testing.T) {
 	readV2Raw(t, a, []byte{0, 255, 2, 0}, ra)
 	// A captured nonce/UDP packet cannot reauthenticate over WSS.
 	h := http.Header{"Authorization": {"Bearer " + ta}}
-	c, resp, err := websocket.Dial(f.ctx, "wss"+strings.TrimPrefix(f.s.URL, "https"), &websocket.DialOptions{HTTPClient: f.s.Client(), HTTPHeader: h})
+	c, resp, err := websocket.Dial(
+		f.ctx,
+		"wss"+strings.TrimPrefix(f.s.URL, "https"),
+		&websocket.DialOptions{HTTPClient: f.s.Client(), HTTPHeader: h},
+	)
 	if c != nil {
 		_ = c.CloseNow()
 	}
@@ -228,7 +240,10 @@ func TestUDPV2ConfirmRequiresReturnChallengeAndAdmissionExpiry(t *testing.T) {
 	for _, mode := range []string{"tamper", "no-return", "expired"} {
 		t.Run(mode, func(t *testing.T) {
 			var offset atomic.Int64
-			i := TicketIssuer{Key: []byte("01234567890123456789012345678901"), Now: func() time.Time { return time.Now().Add(time.Duration(offset.Load()) * time.Second) }}
+			i := TicketIssuer{
+				Key: []byte("01234567890123456789012345678901"),
+				Now: func() time.Time { return time.Now().Add(time.Duration(offset.Load()) * time.Second) },
+			}
 			f := newV2FixtureIssuer(t, UDPPairV2Config{}, i)
 			u := v2UDP(t)
 			c, offer := f.offer(t, f.ticket(t, "s", "a", "b"))
@@ -253,7 +268,10 @@ func TestUDPV2ConfirmRequiresReturnChallengeAndAdmissionExpiry(t *testing.T) {
 
 func TestUDPV2EstablishedSessionSurvivesTicketExpiryAndControlClose(t *testing.T) {
 	var offset atomic.Int64
-	i := TicketIssuer{Key: []byte("01234567890123456789012345678901"), Now: func() time.Time { return time.Now().Add(time.Duration(offset.Load()) * time.Second) }}
+	i := TicketIssuer{
+		Key: []byte("01234567890123456789012345678901"),
+		Now: func() time.Time { return time.Now().Add(time.Duration(offset.Load()) * time.Second) },
+	}
 	f := newV2FixtureIssuer(t, UDPPairV2Config{}, i)
 	a, b := v2UDP(t), v2UDP(t)
 	_, ra := f.bind(t, f.ticket(t, "s", "a", "b"), a)
@@ -268,7 +286,18 @@ func TestUDPV2BindingTimeoutIdleTimeoutLimitsAndPortReclamation(t *testing.T) {
 	portSocket := v2UDP(t)
 	port := portSocket.LocalAddr().(*net.UDPAddr).Port
 	_ = portSocket.Close()
-	f := newV2Fixture(t, UDPPairV2Config{PortMin: port, PortMax: port, BindTimeout: 80 * time.Millisecond, IdleTimeout: 120 * time.Millisecond, MaxPeers: 2, MaxPeersPerDevice: 1, MaxDatagramBytes: 64})
+	f := newV2Fixture(
+		t,
+		UDPPairV2Config{
+			PortMin:           port,
+			PortMax:           port,
+			BindTimeout:       80 * time.Millisecond,
+			IdleTimeout:       120 * time.Millisecond,
+			MaxPeers:          2,
+			MaxPeersPerDevice: 1,
+			MaxDatagramBytes:  64,
+		},
+	)
 	c, _ := f.offer(t, f.ticket(t, "s", "a", "b"))
 	var reply UDPPairV2Message
 	if err := wsjson.Read(f.ctx, c, &reply); err == nil {
@@ -300,7 +329,11 @@ func TestUDPV2OversizeDroppedAndDeviceLimitEnforced(t *testing.T) {
 	sendV2(t, a, bytes.Repeat([]byte{2}, 64), ra)
 	readV2Raw(t, b, bytes.Repeat([]byte{2}, 64), rb)
 	h := http.Header{"Authorization": {"Bearer " + f.ticket(t, "s2", "a", "c")}}
-	c, resp, err := websocket.Dial(f.ctx, "wss"+strings.TrimPrefix(f.s.URL, "https"), &websocket.DialOptions{HTTPClient: f.s.Client(), HTTPHeader: h})
+	c, resp, err := websocket.Dial(
+		f.ctx,
+		"wss"+strings.TrimPrefix(f.s.URL, "https"),
+		&websocket.DialOptions{HTTPClient: f.s.Client(), HTTPHeader: h},
+	)
 	if c != nil {
 		_ = c.CloseNow()
 	}
@@ -314,7 +347,11 @@ func TestUDPV2BoundsTotalListenersAndReplayLedger(t *testing.T) {
 		f := newV2Fixture(t, limits)
 		_, _ = f.bind(t, f.ticket(t, "s", "a", "b"), v2UDP(t))
 		h := http.Header{"Authorization": {"Bearer " + f.ticket(t, "s2", "c", "d")}}
-		c, resp, err := websocket.Dial(f.ctx, "wss"+strings.TrimPrefix(f.s.URL, "https"), &websocket.DialOptions{HTTPClient: f.s.Client(), HTTPHeader: h})
+		c, resp, err := websocket.Dial(
+			f.ctx,
+			"wss"+strings.TrimPrefix(f.s.URL, "https"),
+			&websocket.DialOptions{HTTPClient: f.s.Client(), HTTPHeader: h},
+		)
 		if c != nil {
 			_ = c.CloseNow()
 		}
@@ -362,7 +399,11 @@ func TestUDPV2OwnsStartupListenerAndFailsClosedOnRangeExhaustion(t *testing.T) {
 		t.Fatal("startup listener not used for authenticated admission")
 	}
 	h := http.Header{"Authorization": {"Bearer " + f.ticket(t, "s", "b", "a")}}
-	c, resp, err := websocket.Dial(f.ctx, "wss"+strings.TrimPrefix(f.s.URL, "https"), &websocket.DialOptions{HTTPClient: f.s.Client(), HTTPHeader: h})
+	c, resp, err := websocket.Dial(
+		f.ctx,
+		"wss"+strings.TrimPrefix(f.s.URL, "https"),
+		&websocket.DialOptions{HTTPClient: f.s.Client(), HTTPHeader: h},
+	)
 	if c != nil {
 		_ = c.CloseNow()
 	}
@@ -387,7 +428,15 @@ func TestUDPV2BridgeRejectsPlaintextAndUntrustedTLS(t *testing.T) {
 	s := httptest.NewTLSServer(r)
 	defer func() { s.Close() }()
 	ticket, _ := i.IssueForPeer("s", "a", "b", time.Minute)
-	cfg := UDPPairV2BridgeConfig{ControlURL: "ws://127.0.0.1/relay/udp/v2", Ticket: ticket, SessionID: "s", DeviceID: "a", DestinationDeviceID: "b", ListenAddress: &net.UDPAddr{IP: net.ParseIP("127.0.0.1")}, WireGuardAddress: &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9}}
+	cfg := UDPPairV2BridgeConfig{
+		ControlURL:          "ws://127.0.0.1/relay/udp/v2",
+		Ticket:              ticket,
+		SessionID:           "s",
+		DeviceID:            "a",
+		DestinationDeviceID: "b",
+		ListenAddress:       &net.UDPAddr{IP: net.ParseIP("127.0.0.1")},
+		WireGuardAddress:    &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9},
+	}
 	if b, err := NewUDPPairV2Bridge(cfg); err == nil {
 		_ = b.Close()
 		t.Fatal("accepted plaintext control URL")
@@ -412,9 +461,24 @@ func TestUDPV2BridgeNeverLeaksTicketThroughTLSRedirect(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer func() { plain.Close() }()
-	s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, plain.URL, http.StatusFound) }))
+	s := httptest.NewTLSServer(
+		http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, plain.URL, http.StatusFound) },
+		),
+	)
 	defer func() { s.Close() }()
-	b, err := NewUDPPairV2Bridge(UDPPairV2BridgeConfig{ControlURL: "wss" + strings.TrimPrefix(s.URL, "https"), HTTPClient: s.Client(), Ticket: "secret", SessionID: "s", DeviceID: "a", DestinationDeviceID: "b", ListenAddress: &net.UDPAddr{IP: net.ParseIP("127.0.0.1")}, WireGuardAddress: &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9}})
+	b, err := NewUDPPairV2Bridge(
+		UDPPairV2BridgeConfig{
+			ControlURL:          "wss" + strings.TrimPrefix(s.URL, "https"),
+			HTTPClient:          s.Client(),
+			Ticket:              "secret",
+			SessionID:           "s",
+			DeviceID:            "a",
+			DestinationDeviceID: "b",
+			ListenAddress:       &net.UDPAddr{IP: net.ParseIP("127.0.0.1")},
+			WireGuardAddress:    &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +499,18 @@ func TestUDPV2BridgesRenewWithoutReplacingLocalWireGuardSocket(t *testing.T) {
 	f := newV2Fixture(t, UDPPairV2Config{MaxPeersPerDevice: 1})
 	wgA, wgB := v2UDP(t), v2UDP(t)
 	makeBridge := func(device, peer string, wg *net.UDPConn) *UDPPairV2Bridge {
-		b, err := NewUDPPairV2Bridge(UDPPairV2BridgeConfig{ControlURL: "wss" + strings.TrimPrefix(f.s.URL, "https"), HTTPClient: f.s.Client(), Ticket: f.ticket(t, "s", device, peer), SessionID: "s", DeviceID: device, DestinationDeviceID: peer, ListenAddress: &net.UDPAddr{IP: net.ParseIP("127.0.0.1")}, WireGuardAddress: wg.LocalAddr().(*net.UDPAddr)})
+		b, err := NewUDPPairV2Bridge(
+			UDPPairV2BridgeConfig{
+				ControlURL:          "wss" + strings.TrimPrefix(f.s.URL, "https"),
+				HTTPClient:          f.s.Client(),
+				Ticket:              f.ticket(t, "s", device, peer),
+				SessionID:           "s",
+				DeviceID:            device,
+				DestinationDeviceID: peer,
+				ListenAddress:       &net.UDPAddr{IP: net.ParseIP("127.0.0.1")},
+				WireGuardAddress:    wg.LocalAddr().(*net.UDPAddr),
+			},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}

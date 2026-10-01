@@ -15,7 +15,17 @@ func TestBuildWireGuardConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := BuildWireGuardConfig(local.PrivateKey, []PeerConfig{{PublicKey: remote.PublicKey, Endpoint: netip.MustParseAddrPort("203.0.113.1:51820"), AllowedPrefixes: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, PersistentKeepalive: 25 * time.Second}})
+	config, err := BuildWireGuardConfig(
+		local.PrivateKey,
+		[]PeerConfig{
+			{
+				PublicKey:           remote.PublicKey,
+				Endpoint:            netip.MustParseAddrPort("203.0.113.1:51820"),
+				AllowedPrefixes:     []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
+				PersistentKeepalive: 25 * time.Second,
+			},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +59,12 @@ func TestBuildWireGuardConfigRejectsDefaultRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := BuildWireGuardConfig(local.PrivateKey, []PeerConfig{{PublicKey: remote.PublicKey, AllowedPrefixes: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}}}); err == nil {
+	if _, err := BuildWireGuardConfig(
+		local.PrivateKey,
+		[]PeerConfig{
+			{PublicKey: remote.PublicKey, AllowedPrefixes: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}},
+		},
+	); err == nil {
 		t.Fatal("default route was accepted")
 	}
 }

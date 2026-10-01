@@ -108,7 +108,11 @@ func newFixture(t *testing.T) *fixture {
 	now := time.Now().UTC()
 	root, rootKey, _ := ed25519.GenerateKey(rand.Reader)
 	_, deviceKey, _ := ed25519.GenerateKey(rand.Reader)
-	if _, err := pool.Exec(ctx, `INSERT INTO access_profiles(id,name,created_at) VALUES('family','Family',$1)`, now); err != nil {
+	if _, err := pool.Exec(
+		ctx,
+		`INSERT INTO access_profiles(id,name,created_at) VALUES('family','Family',$1)`,
+		now,
+	); err != nil {
 		t.Fatal(err)
 	}
 	local, err := invite.New("home", "family", time.Hour, now, rand.Reader)
@@ -137,12 +141,30 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	approval, err := invite.SignApproval(invite.Approval{Version: 1, InviteID: r.InviteID, ProfileID: r.ProfileID, DeviceID: r.DeviceID, DevicePublicKey: r.DevicePublic, WireGuardPublicKey: r.WireGuardPublicKey}, rootKey)
+	approval, err := invite.SignApproval(
+		invite.Approval{
+			Version:            1,
+			InviteID:           r.InviteID,
+			ProfileID:          r.ProfileID,
+			DeviceID:           r.DeviceID,
+			DevicePublicKey:    r.DevicePublic,
+			WireGuardPublicKey: r.WireGuardPublicKey,
+		},
+		rootKey,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	snap := &snapshotReader{}
-	f := &fixture{pool: pool, devices: devicepg.New(pool, workflowpg.AppendEvent), root: rootKey, deviceKey: deviceKey, approval: approval, record: r, snapshot: snap}
+	f := &fixture{
+		pool:      pool,
+		devices:   devicepg.New(pool, workflowpg.AppendEvent),
+		root:      rootKey,
+		deviceKey: deviceKey,
+		approval:  approval,
+		record:    r,
+		snapshot:  snap,
+	}
 	f.wgKey = wgKey
 	f.code = local.Code
 	f.link, err = local.Link("https://control.example", permit)
@@ -162,14 +184,39 @@ func newFixture(t *testing.T) *fixture {
 		}
 		security = redissecurity.New(client, fmt.Sprintf("activation-envtest-%d", time.Now().UnixNano()))
 	}
-	f.activation = workflows.NewActivation(workflowpg.NewActivationUnitOfWork(pool), repo, snap, security, root, "home", time.Now, rand.Reader)
+	f.activation = workflows.NewActivation(
+		workflowpg.NewActivationUnitOfWork(pool),
+		repo,
+		snap,
+		security,
+		root,
+		"home",
+		time.Now,
+		rand.Reader,
+	)
 	return f
 }
 
 func (f *fixture) publish(t *testing.T) {
 	t.Helper()
 	var err error
-	f.snapshot.envelope, err = snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1, Devices: []snapshot.Device{{ID: "linux", Role: "client", IdentityPublicKey: base64.RawURLEncoding.EncodeToString(f.record.DevicePublic), WireGuardPublicKey: base64.StdEncoding.EncodeToString(f.record.WireGuardPublicKey)}}, Profiles: []snapshot.AccessProfile{{ID: "family", Name: "Family", DeviceIDs: []string{"linux"}}}}, f.root, "root-1")
+	f.snapshot.envelope, err = snapshot.Sign(
+		snapshot.NetworkSnapshot{
+			NetworkID: "home",
+			Revision:  1,
+			Devices: []snapshot.Device{
+				{
+					ID:                 "linux",
+					Role:               "client",
+					IdentityPublicKey:  base64.RawURLEncoding.EncodeToString(f.record.DevicePublic),
+					WireGuardPublicKey: base64.StdEncoding.EncodeToString(f.record.WireGuardPublicKey),
+				},
+			},
+			Profiles: []snapshot.AccessProfile{{ID: "family", Name: "Family", DeviceIDs: []string{"linux"}}},
+		},
+		f.root,
+		"root-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +267,17 @@ func TestPostgresApprovalRetriesExactDiffWithoutCredentialAndWritesOneOutboxPair
 	if d.WireGuardPublicKey != base64.StdEncoding.EncodeToString(f.record.WireGuardPublicKey) {
 		t.Fatalf("WG encoding=%s", d.WireGuardPublicKey)
 	}
-	bad, err := invite.SignApproval(invite.Approval{Version: 1, InviteID: f.record.InviteID, ProfileID: "other", DeviceID: "linux", DevicePublicKey: f.record.DevicePublic, WireGuardPublicKey: f.record.WireGuardPublicKey}, f.root)
+	bad, err := invite.SignApproval(
+		invite.Approval{
+			Version:            1,
+			InviteID:           f.record.InviteID,
+			ProfileID:          "other",
+			DeviceID:           "linux",
+			DevicePublicKey:    f.record.DevicePublic,
+			WireGuardPublicKey: f.record.WireGuardPublicKey,
+		},
+		f.root,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +291,10 @@ func TestPostgresApprovalRollsBackAllTablesAtEveryFailureBoundary(t *testing.T) 
 		t.Run(table, func(t *testing.T) {
 			f := newFixture(t)
 			ctx := context.Background()
-			if _, err := f.pool.Exec(ctx, `CREATE FUNCTION reject_activation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected activation failure'; END $$; CREATE TRIGGER reject_activation BEFORE INSERT OR UPDATE ON `+table+` FOR EACH ROW EXECUTE FUNCTION reject_activation()`); err != nil {
+			if _, err := f.pool.Exec(
+				ctx,
+				`CREATE FUNCTION reject_activation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected activation failure'; END $$; CREATE TRIGGER reject_activation BEFORE INSERT OR UPDATE ON `+table+` FOR EACH ROW EXECUTE FUNCTION reject_activation()`,
+			); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := f.activation.ApproveSigned(ctx, f.approval); err == nil {
@@ -247,7 +307,9 @@ func TestPostgresApprovalRollsBackAllTablesAtEveryFailureBoundary(t *testing.T) 
 				}
 			}
 			var status string
-			if err := f.pool.QueryRow(ctx, `SELECT status FROM invite_records WHERE invite_id=$1`, f.record.InviteID).Scan(&status); err != nil || status != "pending" {
+			if err := f.pool.QueryRow(ctx, `SELECT status FROM invite_records WHERE invite_id=$1`, f.record.InviteID).
+				Scan(&status); err != nil ||
+				status != "pending" {
 				t.Fatalf("status=%s err=%v", status, err)
 			}
 		})
@@ -269,10 +331,18 @@ func TestPostgresClaimsRetryReplaceCredentialReplayAndConcurrentCredentials(t *t
 	if first.Device.Credential == second.Device.Credential {
 		t.Fatal("credential reused")
 	}
-	if _, err := f.devices.AuthenticateCredential(ctx, sha256.Sum256([]byte(first.Device.Credential)), time.Now()); err == nil {
+	if _, err := f.devices.AuthenticateCredential(
+		ctx,
+		sha256.Sum256([]byte(first.Device.Credential)),
+		time.Now(),
+	); err == nil {
 		t.Fatal("old credential remains active")
 	}
-	if _, err := f.devices.AuthenticateCredential(ctx, sha256.Sum256([]byte(second.Device.Credential)), time.Now()); err != nil {
+	if _, err := f.devices.AuthenticateCredential(
+		ctx,
+		sha256.Sum256([]byte(second.Device.Credential)),
+		time.Now(),
+	); err != nil {
 		t.Fatal(err)
 	}
 	c, err := f.activation.Challenge(ctx, f.record.InviteID)
@@ -314,7 +384,11 @@ func TestPostgresClaimsRetryReplaceCredentialReplayAndConcurrentCredentials(t *t
 	}
 	active := 0
 	for r := range results {
-		if _, err := f.devices.AuthenticateCredential(ctx, sha256.Sum256([]byte(r.Device.Credential)), time.Now()); err == nil {
+		if _, err := f.devices.AuthenticateCredential(
+			ctx,
+			sha256.Sum256([]byte(r.Device.Credential)),
+			time.Now(),
+		); err == nil {
 			active++
 		}
 	}
@@ -345,7 +419,10 @@ func TestPostgresClaimOutboxFailureRollsBackCredentialReplacement(t *testing.T) 
 	}
 	f.publish(t)
 	first := f.claim(t)
-	if _, err := f.pool.Exec(ctx, `CREATE FUNCTION reject_claim() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'outbox unavailable'; END $$; CREATE TRIGGER reject_claim BEFORE INSERT ON event_outbox FOR EACH ROW EXECUTE FUNCTION reject_claim()`); err != nil {
+	if _, err := f.pool.Exec(
+		ctx,
+		`CREATE FUNCTION reject_claim() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'outbox unavailable'; END $$; CREATE TRIGGER reject_claim BEFORE INSERT ON event_outbox FOR EACH ROW EXECUTE FUNCTION reject_claim()`,
+	); err != nil {
 		t.Fatal(err)
 	}
 	c, err := f.activation.Challenge(ctx, f.record.InviteID)
@@ -356,7 +433,11 @@ func TestPostgresClaimOutboxFailureRollsBackCredentialReplacement(t *testing.T) 
 	if _, err = f.activation.Claim(ctx, f.record.InviteID, proof); err == nil {
 		t.Fatal("outbox failure ignored")
 	}
-	if _, err := f.devices.AuthenticateCredential(ctx, sha256.Sum256([]byte(first.Device.Credential)), time.Now()); err != nil {
+	if _, err := f.devices.AuthenticateCredential(
+		ctx,
+		sha256.Sum256([]byte(first.Device.Credential)),
+		time.Now(),
+	); err != nil {
 		t.Fatal("previous credential lost after rollback:", err)
 	}
 }
@@ -387,7 +468,13 @@ func TestPostgresHTTPResponseLossRequestsFreshChallengeAndPersistsReplacement(t 
 		t.Fatal(err)
 	}
 	f.publish(t)
-	records := invites.NewService(invitepg.New(f.pool), f.root.Public().(ed25519.PublicKey), "home", time.Now, invites.WithApprovalWorkflow(f.activation))
+	records := invites.NewService(
+		invitepg.New(f.pool),
+		f.root.Public().(ed25519.PublicKey),
+		"home",
+		time.Now,
+		invites.WithApprovalWorkflow(f.activation),
+	)
 	mux := http.NewServeMux()
 	handler := httpapi.NewActivationHandler(f.activation, f.activation)
 	mux.HandleFunc("POST /api/v1/invites/{id}/challenge", handler.Challenge)
@@ -413,9 +500,27 @@ func TestPostgresHTTPResponseLossRequestsFreshChallengeAndPersistsReplacement(t 
 	defer server.Close()
 	transport := &lostClaimResponse{transport: server.Client().Transport}
 	client := &http.Client{Transport: transport}
-	state := node.State{IdentityPrivateKey: base64.RawURLEncoding.EncodeToString(f.deviceKey), IdentityPublicKey: base64.RawURLEncoding.EncodeToString(f.record.DevicePublic), WireGuard: tunnel.Identity{PrivateKey: f.wgKey.String(), PublicKey: f.wgKey.PublicKey().String()}}
+	state := node.State{
+		IdentityPrivateKey: base64.RawURLEncoding.EncodeToString(f.deviceKey),
+		IdentityPublicKey:  base64.RawURLEncoding.EncodeToString(f.record.DevicePublic),
+		WireGuard:          tunnel.Identity{PrivateKey: f.wgKey.String(), PublicKey: f.wgKey.PublicKey().String()},
+	}
 	path := filepath.Join(t.TempDir(), "linux.json")
-	err := node.EnrollByInvite(ctx, client, node.InviteEnrollment{ControlURL: server.URL, InviteLink: f.link, Code: f.code, DeviceID: "linux", StatePath: path, RootPublicKey: f.root.Public().(ed25519.PublicKey), NetworkID: "home", PollInterval: time.Millisecond}, &state)
+	err := node.EnrollByInvite(
+		ctx,
+		client,
+		node.InviteEnrollment{
+			ControlURL:    server.URL,
+			InviteLink:    f.link,
+			Code:          f.code,
+			DeviceID:      "linux",
+			StatePath:     path,
+			RootPublicKey: f.root.Public().(ed25519.PublicKey),
+			NetworkID:     "home",
+			PollInterval:  time.Millisecond,
+		},
+		&state,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,11 +531,18 @@ func TestPostgresHTTPResponseLossRequestsFreshChallengeAndPersistsReplacement(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.devices.AuthenticateCredential(ctx, sha256.Sum256([]byte(loaded.DeviceCredential)), time.Now()); err != nil {
+	if _, err = f.devices.AuthenticateCredential(
+		ctx,
+		sha256.Sum256([]byte(loaded.DeviceCredential)),
+		time.Now(),
+	); err != nil {
 		t.Fatal(err)
 	}
 	var total, active int
-	if err := f.pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE revoked_at IS NULL) FROM device_credentials`).Scan(&total, &active); err != nil || total != 2 || active != 1 {
+	if err := f.pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE revoked_at IS NULL) FROM device_credentials`).
+		Scan(&total, &active); err != nil ||
+		total != 2 ||
+		active != 1 {
 		t.Fatalf("credentials total=%d active=%d err=%v", total, active, err)
 	}
 	d, err := f.devices.Device(ctx, "linux")

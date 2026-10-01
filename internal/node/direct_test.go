@@ -76,17 +76,24 @@ func TestCandidatePathManagerSelectsHighestPriorityHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	update := controlprotocol.CandidateUpdate{SourceDeviceID: "gateway", DestinationDeviceID: "client", Candidates: []controlprotocol.Candidate{
-		{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100},
-		{Type: controlprotocol.CandidateServerReflexive, Address: "203.0.113.20:51820", Priority: 200},
-	}}
+	update := controlprotocol.CandidateUpdate{
+		SourceDeviceID:      "gateway",
+		DestinationDeviceID: "client",
+		Candidates: []controlprotocol.Candidate{
+			{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100},
+			{Type: controlprotocol.CandidateServerReflexive, Address: "203.0.113.20:51820", Priority: 200},
+		},
+	}
 	if err := manager.HandleCandidateUpdate(context.Background(), update); err != nil {
 		t.Fatal(err)
 	}
 	if got := selector.Current(); got != controlprotocol.PathDirect {
 		t.Fatalf("path=%q, want direct", got)
 	}
-	want := []netip.AddrPort{netip.MustParseAddrPort("203.0.113.20:51820"), netip.MustParseAddrPort("192.168.1.20:51820")}
+	want := []netip.AddrPort{
+		netip.MustParseAddrPort("203.0.113.20:51820"),
+		netip.MustParseAddrPort("192.168.1.20:51820"),
+	}
 	_, _, endpoints := updater.state()
 	if len(endpoints) != len(want) || endpoints[0] != want[0] || endpoints[1] != want[1] {
 		t.Fatalf("endpoints=%v, want %v", endpoints, want)
@@ -101,7 +108,16 @@ func TestCandidatePathManagerFallsBackAfterEveryDirectHandshakeFails(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.HandleCandidateUpdate(context.Background(), controlprotocol.CandidateUpdate{SourceDeviceID: "gateway", DestinationDeviceID: "client", Candidates: []controlprotocol.Candidate{{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100}}}); err != nil {
+	if err := manager.HandleCandidateUpdate(
+		context.Background(),
+		controlprotocol.CandidateUpdate{
+			SourceDeviceID:      "gateway",
+			DestinationDeviceID: "client",
+			Candidates: []controlprotocol.Candidate{
+				{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100},
+			},
+		},
+	); err != nil {
 		t.Fatal(err)
 	}
 	if selector.Current() != controlprotocol.PathRelay {
@@ -114,14 +130,39 @@ func TestCandidatePathManagerFallsBackAfterEveryDirectHandshakeFails(t *testing.
 }
 
 func TestCandidatePathManagerRejectsUpdateForAnotherLocalDevice(t *testing.T) {
-	manager, err := NewCandidatePathManager("client", "gateway", validPeerKey, &endpointRecorder{}, controlprotocol.NewPathSelector(), &handshakeProbeStub{})
+	manager, err := NewCandidatePathManager(
+		"client",
+		"gateway",
+		validPeerKey,
+		&endpointRecorder{},
+		controlprotocol.NewPathSelector(),
+		&handshakeProbeStub{},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.HandleCandidateUpdate(context.Background(), controlprotocol.CandidateUpdate{SourceDeviceID: "gateway", DestinationDeviceID: "other", Candidates: []controlprotocol.Candidate{{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100}}}); err == nil {
+	if err := manager.HandleCandidateUpdate(
+		context.Background(),
+		controlprotocol.CandidateUpdate{
+			SourceDeviceID:      "gateway",
+			DestinationDeviceID: "other",
+			Candidates: []controlprotocol.Candidate{
+				{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100},
+			},
+		},
+	); err == nil {
 		t.Fatal("candidate update for another local device was accepted")
 	}
-	if err := manager.HandleCandidateUpdate(context.Background(), controlprotocol.CandidateUpdate{SourceDeviceID: "other", DestinationDeviceID: "client", Candidates: []controlprotocol.Candidate{{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100}}}); err == nil {
+	if err := manager.HandleCandidateUpdate(
+		context.Background(),
+		controlprotocol.CandidateUpdate{
+			SourceDeviceID:      "other",
+			DestinationDeviceID: "client",
+			Candidates: []controlprotocol.Candidate{
+				{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100},
+			},
+		},
+	); err == nil {
 		t.Fatal("candidate update from another peer was accepted")
 	}
 }
@@ -194,21 +235,30 @@ func TestParseDirectCandidatesRejectsUnspecifiedAddress(t *testing.T) {
 }
 
 func TestCandidateSetPublishesRelayObservedEndpointOnce(t *testing.T) {
-	set := NewCandidateSet([]controlprotocol.Candidate{{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100}})
+	set := NewCandidateSet(
+		[]controlprotocol.Candidate{
+			{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100},
+		},
+	)
+
 	set.SetObservedEndpoint(netip.MustParseAddrPort("203.0.113.20:45000"))
 	select {
 	case <-set.Changes():
 	case <-time.After(time.Second):
 		t.Fatal("candidate change was not signaled")
 	}
+
 	set.SetObservedEndpoint(netip.MustParseAddrPort("203.0.113.20:45000"))
 	select {
 	case <-set.Changes():
 		t.Fatal("duplicate candidate change was signaled")
 	default:
 	}
+
 	candidates := set.Snapshot()
-	if len(candidates) != 2 || candidates[1].Type != controlprotocol.CandidateServerReflexive || candidates[1].Priority != 200 {
+
+	if len(candidates) != 2 || candidates[1].Type != controlprotocol.CandidateServerReflexive ||
+		candidates[1].Priority != 200 {
 		t.Fatalf("candidates=%#v", candidates)
 	}
 }

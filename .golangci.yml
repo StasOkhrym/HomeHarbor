@@ -1,6 +1,6 @@
 version: "2"
 
-# `make fmt` writes; `make fmt-check` and `make lint` only report.
+# `make fmt` writes; `make verify` and `make lint` only report.
 linters:
   default: none
   enable:
@@ -15,7 +15,15 @@ formatters:
     - gofumpt
     - gci
     - goimports
+    - golines
   settings:
+    golines:
+      # A readable target for breakable Go expressions, not a hard limit on
+      # URLs, protocol constants, SQL strings or necessary struct tags.
+      max-len: 100
+      tab-len: 4
+      shorten-comments: false
+      chain-split-dots: true
     gci:
       sections:
         - standard

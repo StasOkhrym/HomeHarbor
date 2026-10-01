@@ -46,7 +46,11 @@ func TestRouterReplacesUnsafeRequestID(t *testing.T) {
 
 func TestRouterRejectsOversizedAPIBody(t *testing.T) {
 	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/enroll", bytes.NewBufferString(`{"padding":"`+strings.Repeat("x", int(maxRequestBodyBytes)+1)+`"}`))
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/enroll",
+		bytes.NewBufferString(`{"padding":"`+strings.Repeat("x", int(maxRequestBodyBytes)+1)+`"}`),
+	)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusRequestEntityTooLarge {
@@ -63,7 +67,8 @@ func TestRecoverMiddlewareReturnsStableInternalError(t *testing.T) {
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d", response.Code)
 	}
-	if strings.Contains(response.Body.String(), "database password") || strings.Contains(response.Body.String(), "secret") {
+	if strings.Contains(response.Body.String(), "database password") ||
+		strings.Contains(response.Body.String(), "secret") {
 		t.Fatalf("panic details leaked in response: %s", response.Body.String())
 	}
 }
@@ -75,7 +80,8 @@ func (readOnlyAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) 
 func TestAdminMutationRequiresExplicitMutationAuthorization(t *testing.T) {
 	server := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), readOnlyAuthorizer{})
 	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/admin/enrollment-tokens", strings.NewReader(`{"role":"client","ttl_seconds":60}`)))
+	server.Handler().
+		ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/admin/enrollment-tokens", strings.NewReader(`{"role":"client","ttl_seconds":60}`)))
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("mutation status=%d", response.Code)
 	}

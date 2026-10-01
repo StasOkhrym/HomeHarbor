@@ -41,15 +41,35 @@ type SnapshotWireGuardReconciler struct {
 // NewSnapshotWireGuardReconciler creates an endpoint-aware reconciler. The
 // default applier talks to the Linux kernel; tests and dry-run tooling can use
 // NewSnapshotWireGuardReconcilerWithApplier with a pure capture function.
-func NewSnapshotWireGuardReconciler(interfaceName, localDeviceID, privateKey string, listenPort uint16) (*SnapshotWireGuardReconciler, error) {
-	return NewSnapshotWireGuardReconcilerWithApplier(interfaceName, localDeviceID, privateKey, listenPort, tunnel.ApplyWireGuardConfig)
+func NewSnapshotWireGuardReconciler(
+	interfaceName, localDeviceID, privateKey string,
+	listenPort uint16,
+) (*SnapshotWireGuardReconciler, error) {
+	return NewSnapshotWireGuardReconcilerWithApplier(
+		interfaceName,
+		localDeviceID,
+		privateKey,
+		listenPort,
+		tunnel.ApplyWireGuardConfig,
+	)
 }
 
-func NewSnapshotWireGuardReconcilerWithApplier(interfaceName, localDeviceID, privateKey string, listenPort uint16, applier func(string, wgtypes.Config) error) (*SnapshotWireGuardReconciler, error) {
+func NewSnapshotWireGuardReconcilerWithApplier(
+	interfaceName, localDeviceID, privateKey string,
+	listenPort uint16,
+	applier func(string, wgtypes.Config) error,
+) (*SnapshotWireGuardReconciler, error) {
 	if interfaceName == "" || localDeviceID == "" || privateKey == "" || applier == nil {
 		return nil, errors.New("WireGuard interface, local device, private key, and applier are required")
 	}
-	return &SnapshotWireGuardReconciler{interfaceName: interfaceName, localDeviceID: localDeviceID, privateKey: privateKey, listenPort: listenPort, apply: applier, endpoints: make(map[string]netip.AddrPort)}, nil
+	return &SnapshotWireGuardReconciler{
+		interfaceName: interfaceName,
+		localDeviceID: localDeviceID,
+		privateKey:    privateKey,
+		listenPort:    listenPort,
+		apply:         applier,
+		endpoints:     make(map[string]netip.AddrPort),
+	}, nil
 }
 
 // Apply installs a complete peer set derived from the signed snapshot. A
@@ -135,7 +155,9 @@ func (r *SnapshotWireGuardReconciler) validateDesired(value snapshot.NetworkSnap
 	keys := make(map[wgtypes.Key]bool)
 	for _, device := range value.Devices {
 		p, err := netip.ParsePrefix(device.OverlayAddress)
-		if err != nil || !p.IsValid() || p.Bits() != p.Addr().BitLen() || p.Addr().IsUnspecified() || p.Addr().IsMulticast() || p.Addr().Is4In6() {
+		if err != nil || !p.IsValid() || p.Bits() != p.Addr().BitLen() || p.Addr().IsUnspecified() ||
+			p.Addr().IsMulticast() ||
+			p.Addr().Is4In6() {
 			return fmt.Errorf("device %s requires a concrete overlay host prefix", device.ID)
 		}
 		if addresses[p.Addr()] {
@@ -180,7 +202,11 @@ func (r *SnapshotWireGuardReconciler) validateDesired(value snapshot.NetworkSnap
 // SetPeerEndpoint updates only the endpoint of an existing or future peer.
 // Before the first snapshot it is cached; after that it is applied together
 // with the currently accepted allowed-prefix set.
-func (r *SnapshotWireGuardReconciler) SetPeerEndpoint(ctx context.Context, publicKey string, endpoint netip.AddrPort) error {
+func (r *SnapshotWireGuardReconciler) SetPeerEndpoint(
+	ctx context.Context,
+	publicKey string,
+	endpoint netip.AddrPort,
+) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

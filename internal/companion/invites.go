@@ -44,7 +44,8 @@ func NewInviteIssuer(session *Session, networkID, baseURL, keyID string, now fun
 // Issue creates a signed permit without persisting the short code remotely.
 // The caller is responsible for showing Code through a different channel.
 func (i *InviteIssuer) Issue(profileID string, ttl time.Duration) (link, code, inviteID string, err error) {
-	if i == nil || i.Session == nil || strings.TrimSpace(i.NetworkID) == "" || strings.TrimSpace(i.BaseURL) == "" || strings.TrimSpace(i.KeyID) == "" {
+	if i == nil || i.Session == nil || strings.TrimSpace(i.NetworkID) == "" || strings.TrimSpace(i.BaseURL) == "" ||
+		strings.TrimSpace(i.KeyID) == "" {
 		return "", "", "", errors.New("invite issuer is not configured")
 	}
 	root, err := i.Session.PrivateKey()
@@ -113,7 +114,9 @@ func (a RemoteApprover) Approve(ctx context.Context, inviteID, code string, root
 	if err := json.NewDecoder(response.Body).Decode(&pending); err != nil {
 		return err
 	}
-	if pending.InviteID != inviteID || pending.DeviceID != pending.Proof.DeviceID || !bytes.Equal(pending.DevicePublic, pending.Proof.DevicePublicKey) || !bytes.Equal(pending.WireGuardPublicKey, pending.Proof.WireGuardPublicKey) {
+	if pending.InviteID != inviteID || pending.DeviceID != pending.Proof.DeviceID ||
+		!bytes.Equal(pending.DevicePublic, pending.Proof.DevicePublicKey) ||
+		!bytes.Equal(pending.WireGuardPublicKey, pending.Proof.WireGuardPublicKey) {
 		return invite.ErrInvalidProof
 	}
 	checkAt := a.Now().UTC()
@@ -144,7 +147,17 @@ func (a RemoteApprover) Approve(ctx context.Context, inviteID, code string, root
 		}
 		return err
 	}
-	signed, err := invite.SignApproval(invite.Approval{Version: invite.Version, InviteID: pending.InviteID, ProfileID: pending.ProfileID, DeviceID: pending.DeviceID, DevicePublicKey: pending.DevicePublic, WireGuardPublicKey: pending.Proof.WireGuardPublicKey}, root)
+	signed, err := invite.SignApproval(
+		invite.Approval{
+			Version:            invite.Version,
+			InviteID:           pending.InviteID,
+			ProfileID:          pending.ProfileID,
+			DeviceID:           pending.DeviceID,
+			DevicePublicKey:    pending.DevicePublic,
+			WireGuardPublicKey: pending.Proof.WireGuardPublicKey,
+		},
+		root,
+	)
 	if err != nil {
 		return err
 	}
@@ -175,7 +188,9 @@ func (a RemoteApprover) Approve(ctx context.Context, inviteID, code string, root
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return errors.New("invalid public approval response")
 	}
-	if result.InviteID != pending.InviteID || result.DeviceID != pending.DeviceID || result.ProfileID != pending.ProfileID || result.Status != controlinvites.StatusApproved {
+	if result.InviteID != pending.InviteID || result.DeviceID != pending.DeviceID ||
+		result.ProfileID != pending.ProfileID ||
+		result.Status != controlinvites.StatusApproved {
 		return errors.New("approval response differs from signed public diff")
 	}
 	return nil
@@ -195,7 +210,8 @@ func (a RemoteApprover) PublishSnapshot(ctx context.Context, inviteID string, ro
 	if a.KeyID == "" {
 		a.KeyID = "root-1"
 	}
-	if strings.TrimSpace(a.Endpoint) == "" || inviteID == "" || len(root) != ed25519.PrivateKeySize || !a.OverlayPool.IsValid() {
+	if strings.TrimSpace(a.Endpoint) == "" || inviteID == "" || len(root) != ed25519.PrivateKeySize ||
+		!a.OverlayPool.IsValid() {
 		return errors.New("invalid companion snapshot publication request")
 	}
 	base := strings.TrimRight(a.Endpoint, "/")
@@ -245,8 +261,15 @@ func (a RemoteApprover) PublishSnapshot(ctx context.Context, inviteID string, ro
 	if err := session.Unlock(root); err != nil {
 		return err
 	}
-	next, err := NewSnapshotSigner(session, snapshotNetwork, a.KeyID).SignDeviceAdditionFromPool(previous, DeviceAddition{ProfileID: record.ProfileID, Device: snapshot.Device{
-		ID: record.DeviceID, Role: "client", IdentityPublicKey: base64.RawURLEncoding.EncodeToString(record.DevicePublic), WireGuardPublicKey: wireGuard.String(),
+	next, err := NewSnapshotSigner(
+		session,
+		snapshotNetwork,
+		a.KeyID,
+	).SignDeviceAdditionFromPool(previous, DeviceAddition{ProfileID: record.ProfileID, Device: snapshot.Device{
+		ID:                 record.DeviceID,
+		Role:               "client",
+		IdentityPublicKey:  base64.RawURLEncoding.EncodeToString(record.DevicePublic),
+		WireGuardPublicKey: wireGuard.String(),
 	}}, a.OverlayPool)
 	session.Close()
 	if err != nil {
@@ -307,7 +330,11 @@ func (a RemoteApprover) PublishDeviceRemoval(ctx context.Context, deviceID strin
 	if err := session.Unlock(root); err != nil {
 		return err
 	}
-	next, err := NewSnapshotSigner(session, networkID, a.KeyID).SignDeviceRemoval(previous, DeviceRemoval{DeviceID: deviceID})
+	next, err := NewSnapshotSigner(
+		session,
+		networkID,
+		a.KeyID,
+	).SignDeviceRemoval(previous, DeviceRemoval{DeviceID: deviceID})
 	session.Close()
 	if err != nil {
 		return fmt.Errorf("sign device removal for %s: %w", deviceID, err)
@@ -315,7 +342,10 @@ func (a RemoteApprover) PublishDeviceRemoval(ctx context.Context, deviceID strin
 	return a.publishSignedSnapshot(ctx, base, next)
 }
 
-func (a RemoteApprover) loadSignedSnapshot(ctx context.Context, root ed25519.PrivateKey) (snapshot.Envelope, string, error) {
+func (a RemoteApprover) loadSignedSnapshot(
+	ctx context.Context,
+	root ed25519.PrivateKey,
+) (snapshot.Envelope, string, error) {
 	base := strings.TrimRight(a.Endpoint, "/")
 	const snapshotPath = "/api/v1/coordination/snapshot/companion"
 	challengeURL := base + "/api/v1/coordination/snapshot/companion-challenge"
@@ -388,7 +418,12 @@ func (a RemoteApprover) publishSignedSnapshot(ctx context.Context, base string, 
 	if err != nil {
 		return err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/v1/coordination/snapshots", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		base+"/api/v1/coordination/snapshots",
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return err
 	}
@@ -406,7 +441,8 @@ func (a RemoteApprover) publishSignedSnapshot(ctx context.Context, base string, 
 
 func validateControlEndpoint(raw string) error {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" {
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		parsed.Path != "" {
 		return errors.New("control endpoint must be an origin without credentials, path, query, or fragment")
 	}
 	if parsed.Scheme == "https" {

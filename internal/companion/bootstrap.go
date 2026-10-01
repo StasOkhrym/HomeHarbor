@@ -119,22 +119,70 @@ func (m SnapshotManifest) SignInitialSnapshot(privateKey ed25519.PrivateKey, key
 		ACL:       make([]snapshot.ACLRule, 0, len(m.ACL)),
 	}
 	for _, device := range m.Devices {
-		value.Devices = append(value.Devices, snapshot.Device{ID: device.ID, Role: device.Role, IdentityPublicKey: device.IdentityPublicKey, WireGuardPublicKey: device.WireGuardPublicKey, OverlayAddress: device.OverlayAddress})
+		value.Devices = append(
+			value.Devices,
+			snapshot.Device{
+				ID:                 device.ID,
+				Role:               device.Role,
+				IdentityPublicKey:  device.IdentityPublicKey,
+				WireGuardPublicKey: device.WireGuardPublicKey,
+				OverlayAddress:     device.OverlayAddress,
+			},
+		)
 	}
 	for _, gateway := range m.Gateways {
 		value.Gateways = append(value.Gateways, snapshot.Gateway{DeviceID: gateway.DeviceID, Name: gateway.Name})
 	}
 	for _, route := range m.Routes {
-		value.Routes = append(value.Routes, snapshot.Route{ID: route.ID, GatewayID: route.GatewayID, Prefix: route.Prefix, DomainSuffix: route.DomainSuffix, Resolver: route.Resolver})
+		value.Routes = append(
+			value.Routes,
+			snapshot.Route{
+				ID:           route.ID,
+				GatewayID:    route.GatewayID,
+				Prefix:       route.Prefix,
+				DomainSuffix: route.DomainSuffix,
+				Resolver:     route.Resolver,
+			},
+		)
 	}
 	for _, service := range m.Services {
-		value.Services = append(value.Services, snapshot.Service{ID: service.ID, Name: service.Name, Kind: service.Kind, URL: service.URL, NativeURL: service.NativeURL, HealthURL: service.HealthURL, Description: service.Description})
+		value.Services = append(
+			value.Services,
+			snapshot.Service{
+				ID:          service.ID,
+				Name:        service.Name,
+				Kind:        service.Kind,
+				URL:         service.URL,
+				NativeURL:   service.NativeURL,
+				HealthURL:   service.HealthURL,
+				Description: service.Description,
+			},
+		)
 	}
 	for _, profile := range m.Profiles {
-		value.Profiles = append(value.Profiles, snapshot.AccessProfile{ID: profile.ID, Name: profile.Name, DeviceIDs: append([]string(nil), profile.DeviceIDs...), ServiceIDs: append([]string(nil), profile.ServiceIDs...), ACLRuleIDs: append([]string(nil), profile.ACLRuleIDs...)})
+		value.Profiles = append(
+			value.Profiles,
+			snapshot.AccessProfile{
+				ID:         profile.ID,
+				Name:       profile.Name,
+				DeviceIDs:  append([]string(nil), profile.DeviceIDs...),
+				ServiceIDs: append([]string(nil), profile.ServiceIDs...),
+				ACLRuleIDs: append([]string(nil), profile.ACLRuleIDs...),
+			},
+		)
 	}
 	for _, rule := range m.ACL {
-		value.ACL = append(value.ACL, snapshot.ACLRule{ID: rule.ID, SourceDeviceID: rule.SourceDeviceID, Destination: rule.Destination, Protocol: rule.Protocol, PortFrom: rule.PortFrom, PortTo: rule.PortTo})
+		value.ACL = append(
+			value.ACL,
+			snapshot.ACLRule{
+				ID:             rule.ID,
+				SourceDeviceID: rule.SourceDeviceID,
+				Destination:    rule.Destination,
+				Protocol:       rule.Protocol,
+				PortFrom:       rule.PortFrom,
+				PortTo:         rule.PortTo,
+			},
+		)
 	}
 	return snapshot.Sign(value, privateKey, keyID)
 }

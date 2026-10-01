@@ -29,7 +29,15 @@ func (a *BrowserAuth) csrfCookie(sessionToken string, expires time.Time) (*http.
 	// JavaScript must echo this cookie in a header, so HttpOnly is intentionally
 	// false. SameSite and the session-bound MAC prevent reuse from another site
 	// or another authenticated browser session.
-	return &http.Cookie{Name: csrfCookieName, Value: value, Path: "/", Expires: expires, Secure: true, HttpOnly: false, SameSite: http.SameSiteStrictMode}, nil
+	return &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    value,
+		Path:     "/",
+		Expires:  expires,
+		Secure:   true,
+		HttpOnly: false,
+		SameSite: http.SameSiteStrictMode,
+	}, nil
 }
 
 func (a *BrowserAuth) validCSRF(request *http.Request, sessionToken string) bool {

@@ -21,10 +21,25 @@ func (failingChallenges) ConsumeChallenge(context.Context, string, string) ([]by
 
 func TestCeremonyStoreFailureIsUnavailableNotInvalidProof(t *testing.T) {
 	repository := NewCeremonies(failingChallenges{}, time.Now)
-	if err := repository.SaveCeremony(t.Context(), identity.Ceremony{ExpiresAt: time.Now().Add(time.Minute)}); !errors.Is(err, identity.ErrSecurityStateUnavailable) {
+
+	if err := repository.SaveCeremony(
+		t.Context(),
+		identity.Ceremony{ExpiresAt: time.Now().Add(time.Minute)},
+	); !errors.Is(
+		err,
+		identity.ErrSecurityStateUnavailable,
+	) {
 		t.Fatalf("save error=%v", err)
 	}
-	if _, err := repository.ConsumeCeremony(t.Context(), [32]byte{}, time.Now()); !errors.Is(err, identity.ErrSecurityStateUnavailable) {
+
+	if _, err := repository.ConsumeCeremony(
+		t.Context(),
+		[32]byte{},
+		time.Now(),
+	); !errors.Is(
+		err,
+		identity.ErrSecurityStateUnavailable,
+	) {
 		t.Fatalf("consume error=%v", err)
 	}
 }

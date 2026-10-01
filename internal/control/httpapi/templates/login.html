@@ -1,21 +1,67 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width">
-  <title>Go Tunnels sign in</title>
-</head>
-<body>
-  <main>
-    <h1>Go Tunnels</h1>
-    <button id="passkey">Sign in with passkey</button>
-    <button id="bootstrap">Register first passkey</button>
-    <form id="recovery">
-      <label>Recovery code <input name="code" autocomplete="one-time-code"></label>
-      <button>Recover</button>
-    </form>
-    <pre id="status"></pre>
-  </main>
-  <script src="/assets/login.js" defer></script>
-</body>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sign in · Go Tunnels</title>
+    <link rel="stylesheet" href="/assets/admin.css?v=ui-2">
+    <script src="/assets/login.js?v=ui-2" defer></script>
+  </head>
+  <body class="auth-page">
+    <main class="auth-card" aria-labelledby="login-title">
+      <a class="brand"
+         href="/admin/"><span class="brand-mark"
+      aria-hidden="true">↗</span> Go Tunnels</a>
+      {{if .Unavailable}}
+        <h1 id="login-title">Sign-in is unavailable</h1>
+        <p class="muted">We could not check your account state. No account changes have been made.</p>
+        <p class="alert alert-error"
+           role="alert">Please check the control service and try again.</p>
+        <a class="button" href="/admin/login">Try again</a>
+      {{else}}
+        {{if .FirstRun}}
+          <p class="eyebrow">First-time setup</p>
+          <h1 id="login-title">Welcome to your network</h1>
+          <p class="muted">Create an administrator passkey using your device's fingerprint, face recognition or security key.</p>
+          <button id="bootstrap" class="button" type="button">Create admin passkey</button>
+          <p class="help">Next, save your recovery codes somewhere safe. Your network's signing key is configured separately on your Mac.</p>
+        {{else}}
+          <h1 id="login-title">Welcome back</h1>
+          <p class="muted">Sign in to manage your devices, services and access.</p>
+          <button id="passkey" class="button" type="button">Sign in with passkey</button>
+          <details class="recovery-details">
+            <summary>Can't use your passkey?</summary>
+            <p class="help">Use one of your saved recovery codes. Each code works only once.</p>
+            <form id="recovery" method="post" action="/admin/login">
+              <fieldset disabled>
+                <label for="recovery-code">Recovery code</label>
+                <input id="recovery-code"
+                       name="code"
+                       autocomplete="off"
+                       spellcheck="false"
+                       required>
+                <button class="button secondary" type="submit">Use recovery code</button>
+              </fieldset>
+            </form>
+          </details>
+        {{end}}
+        <p id="status" class="auth-status" role="status" aria-live="polite"></p>
+        <section id="recovery-codes"
+                 class="panel"
+                 hidden
+                 aria-labelledby="codes-title">
+          <h2 id="codes-title">Save your recovery codes</h2>
+          <p>These codes are shown only now. Store them in your password manager or another safe place.</p>
+          <pre id="codes-value" class="secret-value"></pre>
+          <button id="codes-saved"
+                  class="button"
+                  type="button">I've saved my codes · Continue</button>
+        </section>
+        <noscript>
+          <p class="alert">Passkey sign-in requires JavaScript. Enable it and reload this page.</p>
+        </noscript>
+      {{end}}
+      <p class="auth-footer">Private access. Trusted configuration.</p>
+    </main>
+  </body>
 </html>

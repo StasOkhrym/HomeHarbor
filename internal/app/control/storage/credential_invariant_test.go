@@ -24,7 +24,12 @@ func TestPostgresMigrationRefusesDuplicatesWithoutDeletingCredentialHistory(t *t
 	}
 	for i := byte(1); i <= 2; i++ {
 		hash := [32]byte{i}
-		if _, err := f.pool.Exec(ctx, `INSERT INTO device_credentials(device_id,credential_hash,expires_at) VALUES('linux',$1,$2)`, hash[:], time.Now().Add(time.Minute)); err != nil {
+		if _, err := f.pool.Exec(
+			ctx,
+			`INSERT INTO device_credentials(device_id,credential_hash,expires_at) VALUES('linux',$1,$2)`,
+			hash[:],
+			time.Now().Add(time.Minute),
+		); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -36,7 +41,9 @@ func TestPostgresMigrationRefusesDuplicatesWithoutDeletingCredentialHistory(t *t
 		t.Fatal("multiple active credentials permitted")
 	}
 	var count int
-	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM device_credentials WHERE revoked_at IS NULL`).Scan(&count); err != nil || count != 2 {
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM device_credentials WHERE revoked_at IS NULL`).
+		Scan(&count); err != nil ||
+		count != 2 {
 		t.Fatalf("migration changed history: count=%d err=%v", count, err)
 	}
 }
@@ -126,7 +133,14 @@ func TestPostgresClaimRotationAndRevocationUseConsistentLockOrder(t *testing.T) 
 	operations := []func() error{
 		func() error { _, err := f.activation.Claim(ctx, f.record.InviteID, proof); return err },
 		func() error {
-			return f.devices.RotateCredential(ctx, "linux", sha256.Sum256([]byte(first.Device.Credential)), [32]byte{9}, time.Now(), time.Now().Add(time.Minute))
+			return f.devices.RotateCredential(
+				ctx,
+				"linux",
+				sha256.Sum256([]byte(first.Device.Credential)),
+				[32]byte{9},
+				time.Now(),
+				time.Now().Add(time.Minute),
+			)
 		},
 		func() error { return f.devices.RevokeDevice(ctx, "linux", time.Now()) },
 	}
@@ -143,7 +157,9 @@ func TestPostgresClaimRotationAndRevocationUseConsistentLockOrder(t *testing.T) 
 		}
 	}
 	var count int
-	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM device_credentials WHERE revoked_at IS NULL`).Scan(&count); err != nil || count != 0 {
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM device_credentials WHERE revoked_at IS NULL`).
+		Scan(&count); err != nil ||
+		count != 0 {
 		t.Fatalf("revoked device has %d active credentials err=%v", count, err)
 	}
 }

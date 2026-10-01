@@ -1,0 +1,59 @@
+{{define "services"}}
+  <section class="panel">
+    <h2>Service catalog</h2>
+    {{if .Services.Ready}}
+      <ul class="resource-list">
+        {{range .Services.Items}}
+          <li>
+            <div class="resource-row"><strong>{{.Name}}</strong><span class="badge">{{.Kind}}</span></div>
+            <p>{{.Description}}</p>
+            <p><a href="{{.URL}}" rel="noopener noreferrer">{{.URL}}</a></p>
+            {{if .NativeURL}}
+              <p class="help">Native app link: <code>{{.NativeURL}}</code></p>
+            {{end}}
+            {{if .HealthURL}}
+              <p class="help">Health URL configured · Not checked: {{.HealthURL}}</p>
+            {{end}}
+            <details class="advanced">
+              <summary>Advanced · service ID</summary>
+              <code>{{.ID}}</code>
+            </details>
+          </li>
+        {{else}}
+          <li class="empty-state">No services in the catalog.</li>
+        {{end}}
+      </ul>
+    {{else}}
+      <p class="alert alert-error" role="alert">{{.Services.Error}}</p>
+    {{end}}
+  </section>
+  {{if .Services.Ready}}
+    <section class="panel">
+      <h2>Add a service</h2>
+      <form method="post" action="/admin/services">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <input type="hidden" name="return_to" value="services">
+        {{template "field" (.Field "name" "Service name" "text" true)}}
+        <div class="field">
+          <label for="kind">Service type</label>
+          <select id="kind"
+                  name="kind"
+                  {{if index .FieldErrors "kind"}}aria-invalid="true"
+                  {{end}}>
+            <option value="web"
+                    {{if .Selected "kind" "web"}}selected{{end}}>Web application</option>
+            <option value="native"
+                    {{if .Selected "kind" "native"}}selected{{end}}>Native application</option>
+          </select>
+        </div>
+        {{template "field" (.Field "url" "HTTPS server URL" "url" true)}}
+        {{template "field" (.Field "description" "Description (optional)" "text" false)}}
+        {{template "field" (.Field "native_url" "App / deep link URL (optional)" "text" false)}}
+        {{template "field" (.Field "health_url" "HTTPS health URL (optional, not automatically checked)" "url" false)}}
+        {{template "record-id" .}}
+        <button type="submit">Save service</button>
+      </form>
+    </section>
+  {{end}}
+  <p class="help">Catalog membership does not grant LAN access or prove that a service is reachable.</p>
+{{end}}

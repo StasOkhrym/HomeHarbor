@@ -46,7 +46,10 @@ type CompositeSnapshotApplier struct {
 
 // NewCompositeSnapshotApplier accepts a nil guard for a non-forwarding client.
 // Nil owners are errors at Apply; silently filtering them hides broken wiring.
-func NewCompositeSnapshotApplier(guard StagedSnapshotApplier, components ...PreparedSnapshotApplier) *CompositeSnapshotApplier {
+func NewCompositeSnapshotApplier(
+	guard StagedSnapshotApplier,
+	components ...PreparedSnapshotApplier,
+) *CompositeSnapshotApplier {
 	return &CompositeSnapshotApplier{guard: guard, components: append([]PreparedSnapshotApplier(nil), components...)}
 }
 
@@ -192,13 +195,24 @@ type coordinationCursor struct {
 	hash     []byte
 }
 
-func runCoordination(ctx context.Context, cfg CoordinationConfig, applier SnapshotApplier, cursor *coordinationCursor) error {
-	if cfg.URL == "" || cfg.Credential == "" || cfg.DeviceID == "" || cfg.NetworkID == "" || len(cfg.RootPublicKey) != ed25519.PublicKeySize || applier == nil {
+func runCoordination(
+	ctx context.Context,
+	cfg CoordinationConfig,
+	applier SnapshotApplier,
+	cursor *coordinationCursor,
+) error {
+	if cfg.URL == "" || cfg.Credential == "" || cfg.DeviceID == "" || cfg.NetworkID == "" ||
+		len(cfg.RootPublicKey) != ed25519.PublicKeySize ||
+		applier == nil {
 		return errors.New("coordination URL, credentials, device, network, root key, and applier are required")
 	}
 	header := make(http.Header)
 	header.Set("Authorization", "Bearer "+cfg.Credential)
-	connection, _, err := websocket.Dial(ctx, cfg.URL, &websocket.DialOptions{HTTPHeader: header, CompressionMode: websocket.CompressionDisabled})
+	connection, _, err := websocket.Dial(
+		ctx,
+		cfg.URL,
+		&websocket.DialOptions{HTTPHeader: header, CompressionMode: websocket.CompressionDisabled},
+	)
 	if err != nil {
 		return fmt.Errorf("dial coordination: %w", err)
 	}
@@ -215,14 +229,22 @@ func runCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 		defer cancel()
 		return wsjson.Write(writeContext, connection, value)
 	}
-	capabilities := []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityUDPPairV2, controlprotocol.CapabilitySplitDNS}
+	capabilities := []string{
+		controlprotocol.CapabilityRelay,
+		controlprotocol.CapabilityUDPPairV2,
+		controlprotocol.CapabilitySplitDNS,
+	}
 	if cfg.CandidateProvider != nil || cfg.CandidateHandler != nil {
 		// Candidate exchange is opt-in. Advertising it only when both the
 		// caller and its peer understand the feature keeps older nodes on the
 		// relay path instead of silently sending them unsupported messages.
 		capabilities = append(capabilities, controlprotocol.CapabilityDirectUDP)
 	}
-	hello := controlprotocol.Hello{Versions: []uint16{controlprotocol.CurrentVersion}, Capabilities: capabilities, DeviceID: cfg.DeviceID}
+	hello := controlprotocol.Hello{
+		Versions:     []uint16{controlprotocol.CurrentVersion},
+		Capabilities: capabilities,
+		DeviceID:     cfg.DeviceID,
+	}
 	if err := write(hello); err != nil {
 		return fmt.Errorf("send coordination hello: %w", err)
 	}
@@ -236,10 +258,12 @@ func runCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 	if err != nil {
 		return fmt.Errorf("read coordination welcome: %w", err)
 	}
-	if welcome.Type != "welcome" || welcome.Protocol.Version != controlprotocol.CurrentVersion || (!welcome.Protocol.Has(controlprotocol.CapabilityRelay) && !welcome.Protocol.Has(controlprotocol.CapabilityUDPPairV2)) {
+	if welcome.Type != "welcome" || welcome.Protocol.Version != controlprotocol.CurrentVersion ||
+		(!welcome.Protocol.Has(controlprotocol.CapabilityRelay) && !welcome.Protocol.Has(controlprotocol.CapabilityUDPPairV2)) {
 		return errors.New("coordination protocol negotiation failed")
 	}
-	if (cfg.CandidateProvider != nil || cfg.CandidateHandler != nil) && !welcome.Protocol.Has(controlprotocol.CapabilityDirectUDP) {
+	if (cfg.CandidateProvider != nil || cfg.CandidateHandler != nil) &&
+		!welcome.Protocol.Has(controlprotocol.CapabilityDirectUDP) {
 		return errors.New("direct UDP capability was not negotiated")
 	}
 	sendCandidates := func() error {

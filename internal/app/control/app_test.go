@@ -31,7 +31,16 @@ func TestAuthorizeRelayPeerRequiresSnapshotACLForGatewayRoute(t *testing.T) {
 		},
 		Gateways: []snapshot.Gateway{{DeviceID: "gateway"}},
 		Routes:   []snapshot.Route{{ID: "lan", GatewayID: "gateway", Prefix: "192.168.50.0/24"}},
-		ACL:      []snapshot.ACLRule{{ID: "allow-http", SourceDeviceID: "client", Destination: "192.168.50.0/24", Protocol: "tcp", PortFrom: 443, PortTo: 443}},
+		ACL: []snapshot.ACLRule{
+			{
+				ID:             "allow-http",
+				SourceDeviceID: "client",
+				Destination:    "192.168.50.0/24",
+				Protocol:       "tcp",
+				PortFrom:       443,
+				PortTo:         443,
+			},
+		},
 	}, privateKey, "root-1")
 	if err != nil {
 		t.Fatal(err)
@@ -39,15 +48,30 @@ func TestAuthorizeRelayPeerRequiresSnapshotACLForGatewayRoute(t *testing.T) {
 	reader := snapshotReader{envelope: envelope}
 	client := devices.Device{ID: "client", Role: devices.RoleClient}
 	gateway := devices.Device{ID: "gateway", Role: devices.RoleGateway}
-	if !authorizeRelayPeer(context.Background(), reader, publicKey, "home", client, gateway) || !authorizeRelayPeer(context.Background(), reader, publicKey, "home", gateway, client) {
+	if !authorizeRelayPeer(context.Background(), reader, publicKey, "home", client, gateway) ||
+		!authorizeRelayPeer(context.Background(), reader, publicKey, "home", gateway, client) {
 		t.Fatal("authorized client/gateway pair was rejected")
 	}
-	if authorizeRelayPeer(context.Background(), reader, publicKey, "home", client, devices.Device{ID: "other", Role: devices.RoleGateway}) {
+	if authorizeRelayPeer(
+		context.Background(),
+		reader,
+		publicKey,
+		"home",
+		client,
+		devices.Device{ID: "other", Role: devices.RoleGateway},
+	) {
 		t.Fatal("gateway absent from snapshot was authorized")
 	}
 	unsigned := reader.envelope
 	unsigned.Signature[0] ^= 0xff
-	if authorizeRelayPeer(context.Background(), snapshotReader{envelope: unsigned}, publicKey, "home", client, gateway) {
+	if authorizeRelayPeer(
+		context.Background(),
+		snapshotReader{envelope: unsigned},
+		publicKey,
+		"home",
+		client,
+		gateway,
+	) {
 		t.Fatal("snapshot with an invalid signature was authorized")
 	}
 }
@@ -60,15 +84,34 @@ func TestAuthorizeRelayPeerRejectsSnapshotRoleMismatch(t *testing.T) {
 	envelope, err := snapshot.Sign(snapshot.NetworkSnapshot{
 		NetworkID: "home",
 		Revision:  1,
-		Devices:   []snapshot.Device{{ID: "client", Role: "gateway", WireGuardPublicKey: testWireGuardKey(t), OverlayAddress: "100.64.0.2/32"}, {ID: "gateway", Role: "gateway", WireGuardPublicKey: testWireGuardKey(t), OverlayAddress: "100.64.0.1/32"}},
-		Gateways:  []snapshot.Gateway{{DeviceID: "gateway"}},
-		Routes:    []snapshot.Route{{ID: "lan", GatewayID: "gateway", Prefix: "192.168.50.0/24"}},
-		ACL:       []snapshot.ACLRule{{ID: "allow-http", SourceDeviceID: "client", Destination: "192.168.50.0/24", Protocol: "tcp", PortFrom: 443, PortTo: 443}},
+		Devices: []snapshot.Device{
+			{ID: "client", Role: "gateway", WireGuardPublicKey: testWireGuardKey(t), OverlayAddress: "100.64.0.2/32"},
+			{ID: "gateway", Role: "gateway", WireGuardPublicKey: testWireGuardKey(t), OverlayAddress: "100.64.0.1/32"},
+		},
+		Gateways: []snapshot.Gateway{{DeviceID: "gateway"}},
+		Routes:   []snapshot.Route{{ID: "lan", GatewayID: "gateway", Prefix: "192.168.50.0/24"}},
+		ACL: []snapshot.ACLRule{
+			{
+				ID:             "allow-http",
+				SourceDeviceID: "client",
+				Destination:    "192.168.50.0/24",
+				Protocol:       "tcp",
+				PortFrom:       443,
+				PortTo:         443,
+			},
+		},
 	}, privateKey, "root-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authorizeRelayPeer(context.Background(), snapshotReader{envelope: envelope}, publicKey, "home", devices.Device{ID: "client", Role: devices.RoleClient}, devices.Device{ID: "gateway", Role: devices.RoleGateway}) {
+	if authorizeRelayPeer(
+		context.Background(),
+		snapshotReader{envelope: envelope},
+		publicKey,
+		"home",
+		devices.Device{ID: "client", Role: devices.RoleClient},
+		devices.Device{ID: "gateway", Role: devices.RoleGateway},
+	) {
 		t.Fatal("snapshot role mismatch was authorized")
 	}
 }

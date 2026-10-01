@@ -126,7 +126,10 @@ func TestPublishInitialSnapshotUsesVersionedControlEndpoint(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	if err := (RemoteApprover{Client: server.Client(), Endpoint: server.URL}).PublishInitialSnapshot(t.Context(), envelope); err != nil {
+	if err := (RemoteApprover{Client: server.Client(), Endpoint: server.URL}).PublishInitialSnapshot(
+		t.Context(),
+		envelope,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if received.Version != envelope.Version || string(received.Hash) != string(envelope.Hash) {
@@ -148,7 +151,8 @@ func TestInitialSnapshotPublishesOnlyIntoEmptyControlStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := controlsnapshots.NewService(controlsnapshots.NewMemoryStore(), rootPublic, "home")
-	handler := httpapi.NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), bootstrapAuthorizer{}, httpapi.WithSnapshotService(service), httpapi.WithCompanionRootKey(rootPublic)).Handler()
+	handler := httpapi.NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), bootstrapAuthorizer{}, httpapi.WithSnapshotService(service), httpapi.WithCompanionRootKey(rootPublic)).
+		Handler()
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	approver := RemoteApprover{Client: server.Client(), Endpoint: server.URL}

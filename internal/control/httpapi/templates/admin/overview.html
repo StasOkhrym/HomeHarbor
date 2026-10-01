@@ -1,0 +1,62 @@
+{{define "overview"}}
+  <div class="alert">
+    <strong>Need to set up or verify access?</strong>
+    <p>Follow the setup guide. Control readiness alone does not prove a working VPN.</p>
+    <a class="button secondary" href="/admin/setup">Open setup guide →</a>
+  </div>
+  <div class="stats">
+    <div class="stat"><strong>{{.Devices.Count}}</strong><span>Enrolled devices</span></div>
+    <div class="stat"><strong>{{.Services.Count}}</strong><span>Catalog services</span></div>
+    <div class="stat"><strong>{{.PendingRoutes}}</strong><span>Pending routes</span></div>
+  </div>
+  <section class="panel">
+    <h2>Control readiness</h2>
+    <p>{{.Readiness}}</p>
+    <p class="help">This checks control dependencies, not LAN reachability.</p>
+  </section>
+  {{template "signed-state" .}}
+  <section class="panel">
+    <div class="panel-heading">
+      <h2>Services</h2>
+      <a href="/admin/services">Manage services →</a>
+    </div>
+    {{if .Services.Ready}}
+      <ul class="resource-list">
+        {{range .Services.Items}}
+          <li>
+            <strong>{{.Name}}</strong>
+            <p class="muted">{{.Description}}</p>
+            <span class="badge">In catalog · not connectivity verified</span>
+          </li>
+        {{else}}
+          <li class="empty-state">No services in the catalog.</li>
+        {{end}}
+      </ul>
+    {{else}}
+      <p class="alert alert-error" role="alert">{{.Services.Error}}</p>
+    {{end}}
+  </section>
+  <section class="panel">
+    <h2>Access profiles</h2>
+    {{if .Profiles.Ready}}
+      <ul class="resource-list">
+        {{range .Profiles.Items}}
+          <li>
+            <strong>{{.Name}}</strong>
+            <p class="help">{{len .DeviceIDs}} devices · {{len .ServiceIDs}} services</p>
+          </li>
+        {{else}}
+          <li class="empty-state">No access profiles.</li>
+        {{end}}
+      </ul>
+    {{else}}
+      <p class="muted">{{.Profiles.Error}}</p>
+    {{end}}
+  </section>
+  {{if .Devices.Error}}
+    <p class="alert alert-error" role="alert">{{.Devices.Error}}</p>
+  {{end}}
+  {{if .Routes.Error}}
+    <p class="alert" role="status">{{.Routes.Error}}</p>
+  {{end}}
+{{end}}

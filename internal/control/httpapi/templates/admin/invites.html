@@ -1,0 +1,89 @@
+{{define "invites"}}
+  <section class="panel">
+    <h2>Signed invite · trusted companion</h2>
+    <p>Create the invite on your Mac for a profile already present in signed configuration. Send the link and 8-digit code through separate channels.</p>
+    <pre>go run ./cmd/admin invite --config .local/admin.toml</pre>
+    <p class="help">Choose the profile in your local admin TOML configuration. The link and code are output locally, not returned by this panel.</p>
+    <p>After the device submits its proof, approve locally using <code>admin approve</code>, then publish its addition using <code>admin publish-snapshot</code>. Use CLI help for the required flags. Never paste the code, passphrase or private key here.</p>
+    {{if .InvitesReady}}
+      <form method="get" action="/admin/invites">
+        <div class="field">
+          <label for="invite-id">Check invite status by ID</label>
+          <input id="invite-id"
+                 name="invite_id"
+                 value="{{.Value "invite_id"}}"
+                 maxlength="128"
+                 required>
+          <p class="help">Use the invite ID only, not the link or code.</p>
+        </div>
+        <button class="secondary" type="submit">Check status</button>
+      </form>
+    {{else}}
+      <p class="alert">Signed invite verification is not configured.</p>
+    {{end}}
+    {{if .InviteError}}
+      <p class="alert alert-error" role="alert">{{.InviteError}}</p>
+    {{end}}
+    {{if .Invite}}
+      <p>Status: <strong>{{.Invite.Status}}</strong></p>
+      <details class="advanced">
+        <summary>Advanced · invite identities</summary>
+        <dl class="key-values">
+          <dt>Invite ID</dt>
+          <dd>
+            <code>{{.Invite.ID}}</code>
+          </dd>
+          <dt>Profile ID</dt>
+          <dd>
+            <code>{{.Invite.ProfileID}}</code>
+          </dd>
+          <dt>Device ID</dt>
+          <dd>
+            <code>{{.Invite.DeviceID}}</code>
+          </dd>
+        </dl>
+      </details>
+      <p class="help">Approval is not proof that credentials were claimed or gateway policy applied.</p>
+    {{end}}
+  </section>
+  <section class="panel" id="legacy-token">
+    <h2>Legacy enrollment token</h2>
+    <p>This is not a signed invite. It registers a device but does not authorize LAN access.</p>
+    {{if .Devices.Ready}}
+      <form method="post" action="/admin/enrollment-tokens">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <div class="field">
+          <label for="token-role">Device role</label>
+          <select id="token-role"
+                  name="role"
+                  {{if index .FieldErrors "role"}}aria-invalid="true"
+                  {{end}}>
+            <option value="client" {{if .Selected "role" "client"}}selected{{end}}>Client</option>
+            <option value="gateway"
+                    {{if .Selected "role" "gateway"}}selected{{end}}>Home gateway</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="token-ttl">Lifetime in seconds</label>
+          <input id="token-ttl"
+                 name="ttl_seconds"
+                 type="number"
+                 min="60"
+                 max="86400"
+                 required
+                 value="{{if .Value "ttl_seconds"}}{{.Value "ttl_seconds"}}{{else}}600{{end}}"
+                 {{if index .FieldErrors "ttl_seconds"}}aria-invalid="true"
+                 aria-describedby="ttl-error"
+                 {{end}}>
+          <p class="help">Default: 600 seconds (10 minutes). Maximum: 24 hours.</p>
+          {{with index .FieldErrors "ttl_seconds"}}
+            <p class="field-error" id="ttl-error">{{.}}</p>
+          {{end}}
+        </div>
+        <button type="submit">Create one-time token</button>
+      </form>
+    {{else}}
+      <p class="alert alert-error" role="alert">{{.Devices.Error}}</p>
+    {{end}}
+  </section>
+{{end}}

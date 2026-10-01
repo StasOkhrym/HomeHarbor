@@ -22,7 +22,12 @@ func newRouteOwnership() routeOwnership {
 	return routeOwnership{installed: make(map[netip.Prefix]struct{}), run: runOwnedIP}
 }
 
-func (r *routeOwnership) reconcile(ctx context.Context, link string, desired []netip.Prefix, install func() error) error {
+func (r *routeOwnership) reconcile(
+	ctx context.Context,
+	link string,
+	desired []netip.Prefix,
+	install func() error,
+) error {
 	wanted := make(map[netip.Prefix]struct{}, len(desired))
 	for _, prefix := range desired {
 		wanted[prefix.Masked()] = struct{}{}
@@ -50,11 +55,13 @@ func runOwnedIP(ctx context.Context, args ...string) error {
 	output, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
 	// Deletion is idempotent, including a partial ensure that never reached
 	// its route add. Every other error keeps ownership for the next retry.
-	if err != nil && len(args) > 1 && args[1] == "del" && (strings.Contains(string(output), "No such process") || strings.Contains(string(output), "Cannot find device")) {
+	if err != nil && len(args) > 1 && args[1] == "del" &&
+		(strings.Contains(string(output), "No such process") || strings.Contains(string(output), "Cannot find device")) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("ip: %w (%s)", err, strings.TrimSpace(string(output)))
 	}
+
 	return nil
 }

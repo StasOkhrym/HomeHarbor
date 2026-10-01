@@ -73,7 +73,18 @@ func TestRunCoordinationVerifiesAndAppliesSignedSnapshot(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	recorder := &snapshotRecorder{cancel: cancel}
-	err = RunCoordination(ctx, CoordinationConfig{URL: "ws" + server.URL[len("http"):], Credential: "credential", DeviceID: "device-1", NetworkID: "home", RootPublicKey: publicKey, HeartbeatEvery: time.Hour}, recorder)
+	err = RunCoordination(
+		ctx,
+		CoordinationConfig{
+			URL:            "ws" + server.URL[len("http"):],
+			Credential:     "credential",
+			DeviceID:       "device-1",
+			NetworkID:      "home",
+			RootPublicKey:  publicKey,
+			HeartbeatEvery: time.Hour,
+		},
+		recorder,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +125,11 @@ func TestRunCoordinationLoopRetainsCursorAcrossReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 2, PreviousHash: first.Hash}, privateKey, "root-1")
+	second, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 2, PreviousHash: first.Hash},
+		privateKey,
+		"root-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +149,17 @@ func TestRunCoordinationLoopRetainsCursorAcrossReconnect(t *testing.T) {
 			t.Errorf("hello: %v", readErr)
 			return
 		}
-		if writeErr := wsjson.Write(r.Context(), connection, map[string]any{"type": "welcome", "protocol": controlprotocol.Negotiated{Version: controlprotocol.CurrentVersion, Capabilities: []string{controlprotocol.CapabilityRelay}}}); writeErr != nil {
+		if writeErr := wsjson.Write(
+			r.Context(),
+			connection,
+			map[string]any{
+				"type": "welcome",
+				"protocol": controlprotocol.Negotiated{
+					Version:      controlprotocol.CurrentVersion,
+					Capabilities: []string{controlprotocol.CapabilityRelay},
+				},
+			},
+		); writeErr != nil {
 			t.Errorf("welcome: %v", writeErr)
 			return
 		}
@@ -147,7 +172,11 @@ func TestRunCoordinationLoopRetainsCursorAcrossReconnect(t *testing.T) {
 			t.Errorf("marshal envelope: %v", marshalErr)
 			return
 		}
-		if writeErr := wsjson.Write(r.Context(), connection, controlprotocol.Message{Type: "network.snapshot", Payload: payload}); writeErr != nil {
+		if writeErr := wsjson.Write(
+			r.Context(),
+			connection,
+			controlprotocol.Message{Type: "network.snapshot", Payload: payload},
+		); writeErr != nil {
 			t.Errorf("snapshot: %v", writeErr)
 			return
 		}
@@ -199,7 +228,17 @@ func TestRunCoordinationPublishesCandidateUpdatesAfterWelcome(t *testing.T) {
 			t.Errorf("hello: %v", readErr)
 			return
 		}
-		if writeErr := wsjson.Write(r.Context(), connection, map[string]any{"type": "welcome", "protocol": controlprotocol.Negotiated{Version: controlprotocol.CurrentVersion, Capabilities: []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityDirectUDP}}}); writeErr != nil {
+		if writeErr := wsjson.Write(
+			r.Context(),
+			connection,
+			map[string]any{
+				"type": "welcome",
+				"protocol": controlprotocol.Negotiated{
+					Version:      controlprotocol.CurrentVersion,
+					Capabilities: []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityDirectUDP},
+				},
+			},
+		); writeErr != nil {
 			t.Errorf("welcome: %v", writeErr)
 			return
 		}
@@ -226,7 +265,14 @@ func TestRunCoordinationPublishesCandidateUpdatesAfterWelcome(t *testing.T) {
 		NetworkID:     "home",
 		RootPublicKey: publicKey,
 		CandidateProvider: func(context.Context) ([]controlprotocol.CandidateUpdate, error) {
-			return []controlprotocol.CandidateUpdate{{DestinationDeviceID: "gateway", Candidates: []controlprotocol.Candidate{{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100}}}}, nil
+			return []controlprotocol.CandidateUpdate{
+				{
+					DestinationDeviceID: "gateway",
+					Candidates: []controlprotocol.Candidate{
+						{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100},
+					},
+				},
+			}, nil
 		},
 	}, &snapshotRecorder{cancel: cancel})
 	if err != nil {
@@ -275,7 +321,17 @@ func newCoordinationTestServer(t *testing.T, envelope snapshot.Envelope) *httpte
 			t.Errorf("hello: %v", err)
 			return
 		}
-		if err := wsjson.Write(r.Context(), connection, map[string]any{"type": "welcome", "protocol": controlprotocol.Negotiated{Version: controlprotocol.CurrentVersion, Capabilities: []string{controlprotocol.CapabilityRelay}}}); err != nil {
+		if err := wsjson.Write(
+			r.Context(),
+			connection,
+			map[string]any{
+				"type": "welcome",
+				"protocol": controlprotocol.Negotiated{
+					Version:      controlprotocol.CurrentVersion,
+					Capabilities: []string{controlprotocol.CapabilityRelay},
+				},
+			},
+		); err != nil {
 			t.Errorf("welcome: %v", err)
 			return
 		}

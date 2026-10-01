@@ -68,7 +68,13 @@ func Postgres(t *testing.T) *pgxpool.Pool {
 // Device inserts a durable identity fixture, not a bypass used by runtime code.
 func Device(t *testing.T, pool *pgxpool.Pool, id, role string) {
 	t.Helper()
-	_, err := pool.Exec(context.Background(), `INSERT INTO devices(id,name,role,status,identity_public_key,wireguard_public_key,created_at) VALUES($1,$1,$2,'active',$1||'-identity',$1||'-wg',now())`, id, role)
+
+	_, err := pool.Exec(
+		context.Background(),
+		`INSERT INTO devices(id,name,role,status,identity_public_key,wireguard_public_key,created_at) VALUES($1,$1,$2,'active',$1||'-identity',$1||'-wg',now())`,
+		id,
+		role,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -96,7 +96,11 @@ while True:
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = manager.Close(ctx) })
-	if err := manager.Apply(ctx, netip.MustParseAddr("192.0.2.2"), []string{"one.gt-test.arpa", "two.gt-test.arpa"}); err != nil {
+	if err := manager.Apply(
+		ctx,
+		netip.MustParseAddr("192.0.2.2"),
+		[]string{"one.gt-test.arpa", "two.gt-test.arpa"},
+	); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"host.one.gt-test.arpa", "host.two.gt-test.arpa"} {

@@ -9,7 +9,24 @@ import (
 )
 
 func TestCompileScopesDefaultDenyAndExplicitAllows(t *testing.T) {
-	script, err := Compile("gt0", map[string]netip.Prefix{"client-1": netip.MustParsePrefix("100.64.0.2/32")}, policy.Snapshot{Revision: 9, DefaultAction: policy.ActionDeny, Rules: []policy.Rule{{ID: "ssh", SourceDeviceID: "client-1", Destination: netip.MustParsePrefix("10.0.0.10/32"), Protocol: policy.ProtocolTCP, PortFrom: 22, PortTo: 22}}})
+	script, err := Compile(
+		"gt0",
+		map[string]netip.Prefix{"client-1": netip.MustParsePrefix("100.64.0.2/32")},
+		policy.Snapshot{
+			Revision:      9,
+			DefaultAction: policy.ActionDeny,
+			Rules: []policy.Rule{
+				{
+					ID:             "ssh",
+					SourceDeviceID: "client-1",
+					Destination:    netip.MustParsePrefix("10.0.0.10/32"),
+					Protocol:       policy.ProtocolTCP,
+					PortFrom:       22,
+					PortTo:         22,
+				},
+			},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +44,14 @@ func TestCompileScopesDefaultDenyAndExplicitAllows(t *testing.T) {
 }
 
 func TestCompileRejectsMalformedACLAndAmbiguousIdentity(t *testing.T) {
-	valid := policy.Rule{ID: "http", SourceDeviceID: "client", Destination: netip.MustParsePrefix("192.168.50.2/32"), Protocol: policy.ProtocolTCP, PortFrom: 80, PortTo: 80}
+	valid := policy.Rule{
+		ID:             "http",
+		SourceDeviceID: "client",
+		Destination:    netip.MustParsePrefix("192.168.50.2/32"),
+		Protocol:       policy.ProtocolTCP,
+		PortFrom:       80,
+		PortTo:         80,
+	}
 	for _, change := range []struct {
 		name   string
 		mutate func(*policy.Rule, map[string]netip.Prefix)
@@ -43,7 +67,12 @@ func TestCompileRejectsMalformedACLAndAmbiguousIdentity(t *testing.T) {
 			rule := valid
 			peers := map[string]netip.Prefix{"client": netip.MustParsePrefix("100.64.0.2/32")}
 			change.mutate(&rule, peers)
-			if script, err := Compile("wg0", peers, policy.Snapshot{Revision: 1, DefaultAction: policy.ActionDeny, Rules: []policy.Rule{rule}}); err == nil || script != "" {
+			if script, err := Compile(
+				"wg0",
+				peers,
+				policy.Snapshot{Revision: 1, DefaultAction: policy.ActionDeny, Rules: []policy.Rule{rule}},
+			); err == nil ||
+				script != "" {
 				t.Fatalf("malformed policy accepted: err=%v script=%s", err, script)
 			}
 		})

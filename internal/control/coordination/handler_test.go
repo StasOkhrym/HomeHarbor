@@ -69,7 +69,11 @@ func TestBroadcastSnapshotReachesConnectedPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 2, PreviousHash: first.Hash}, privateKey, "root-1")
+	second, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 2, PreviousHash: first.Hash},
+		privateKey,
+		"root-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,12 +83,24 @@ func TestBroadcastSnapshotReachesConnectedPeer(t *testing.T) {
 
 	requestHeader := make(http.Header)
 	requestHeader.Set("Authorization", "Bearer credential")
-	connection, _, err := websocket.Dial(context.Background(), "ws"+server.URL[len("http"):], &websocket.DialOptions{HTTPHeader: requestHeader})
+	connection, _, err := websocket.Dial(
+		context.Background(),
+		"ws"+server.URL[len("http"):],
+		&websocket.DialOptions{HTTPHeader: requestHeader},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = connection.CloseNow() }()
-	if err := wsjson.Write(context.Background(), connection, controlprotocol.Hello{Versions: []uint16{controlprotocol.CurrentVersion}, Capabilities: []string{controlprotocol.CapabilityRelay}, DeviceID: "device-1"}); err != nil {
+	if err := wsjson.Write(
+		context.Background(),
+		connection,
+		controlprotocol.Hello{
+			Versions:     []uint16{controlprotocol.CurrentVersion},
+			Capabilities: []string{controlprotocol.CapabilityRelay},
+			DeviceID:     "device-1",
+		},
+	); err != nil {
 		t.Fatal(err)
 	}
 	var welcome map[string]any
@@ -122,9 +138,15 @@ func TestCandidateForwardingUsesAuthenticatedSourceIdentity(t *testing.T) {
 		"source":      {ID: "source", Status: devices.StatusActive},
 		"destination": {ID: "destination", Status: devices.StatusActive},
 	}}
-	handler := NewHandler(authenticationOnly{auth}, auth, coordinationSnapshotStub{envelope: first}, nil, func(_ context.Context, source, destination devices.Device) bool {
-		return source.ID != destination.ID
-	})
+	handler := NewHandler(
+		authenticationOnly{auth},
+		auth,
+		coordinationSnapshotStub{envelope: first},
+		nil,
+		func(_ context.Context, source, destination devices.Device) bool {
+			return source.ID != destination.ID
+		},
+	)
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
@@ -132,11 +154,23 @@ func TestCandidateForwardingUsesAuthenticatedSourceIdentity(t *testing.T) {
 		t.Helper()
 		header := make(http.Header)
 		header.Set("Authorization", "Bearer credential-"+id)
-		connection, _, dialErr := websocket.Dial(context.Background(), "ws"+server.URL[len("http"):], &websocket.DialOptions{HTTPHeader: header})
+		connection, _, dialErr := websocket.Dial(
+			context.Background(),
+			"ws"+server.URL[len("http"):],
+			&websocket.DialOptions{HTTPHeader: header},
+		)
 		if dialErr != nil {
 			t.Fatal(dialErr)
 		}
-		if writeErr := wsjson.Write(context.Background(), connection, controlprotocol.Hello{Versions: []uint16{controlprotocol.CurrentVersion}, Capabilities: []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityDirectUDP}, DeviceID: id}); writeErr != nil {
+		if writeErr := wsjson.Write(
+			context.Background(),
+			connection,
+			controlprotocol.Hello{
+				Versions:     []uint16{controlprotocol.CurrentVersion},
+				Capabilities: []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityDirectUDP},
+				DeviceID:     id,
+			},
+		); writeErr != nil {
 			t.Fatal(writeErr)
 		}
 		var welcome map[string]any
@@ -157,12 +191,18 @@ func TestCandidateForwardingUsesAuthenticatedSourceIdentity(t *testing.T) {
 	payload, err := json.Marshal(controlprotocol.CandidateUpdate{
 		SourceDeviceID:      "attacker-controlled-value",
 		DestinationDeviceID: "destination",
-		Candidates:          []controlprotocol.Candidate{{Type: controlprotocol.CandidateHost, Address: "203.0.113.20:51820", Priority: 100}},
+		Candidates: []controlprotocol.Candidate{
+			{Type: controlprotocol.CandidateHost, Address: "203.0.113.20:51820", Priority: 100},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := wsjson.Write(context.Background(), source, controlprotocol.Message{Type: "candidate.update", Payload: payload}); err != nil {
+	if err := wsjson.Write(
+		context.Background(),
+		source,
+		controlprotocol.Message{Type: "candidate.update", Payload: payload},
+	); err != nil {
 		t.Fatal(err)
 	}
 	readContext, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -193,9 +233,15 @@ func TestCandidateForwardingRequiresAuthorizedPeer(t *testing.T) {
 		"source":      {ID: "source", Status: devices.StatusActive},
 		"destination": {ID: "destination", Status: devices.StatusActive},
 	}}
-	handler := NewHandler(auth, auth, coordinationSnapshotStub{envelope: first}, nil, func(context.Context, devices.Device, devices.Device) bool {
-		return false
-	})
+	handler := NewHandler(
+		auth,
+		auth,
+		coordinationSnapshotStub{envelope: first},
+		nil,
+		func(context.Context, devices.Device, devices.Device) bool {
+			return false
+		},
+	)
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
@@ -203,11 +249,23 @@ func TestCandidateForwardingRequiresAuthorizedPeer(t *testing.T) {
 		t.Helper()
 		header := make(http.Header)
 		header.Set("Authorization", "Bearer credential-"+id)
-		connection, _, dialErr := websocket.Dial(context.Background(), "ws"+server.URL[len("http"):], &websocket.DialOptions{HTTPHeader: header})
+		connection, _, dialErr := websocket.Dial(
+			context.Background(),
+			"ws"+server.URL[len("http"):],
+			&websocket.DialOptions{HTTPHeader: header},
+		)
 		if dialErr != nil {
 			t.Fatal(dialErr)
 		}
-		if writeErr := wsjson.Write(context.Background(), connection, controlprotocol.Hello{Versions: []uint16{controlprotocol.CurrentVersion}, Capabilities: []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityDirectUDP}, DeviceID: id}); writeErr != nil {
+		if writeErr := wsjson.Write(
+			context.Background(),
+			connection,
+			controlprotocol.Hello{
+				Versions:     []uint16{controlprotocol.CurrentVersion},
+				Capabilities: []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityDirectUDP},
+				DeviceID:     id,
+			},
+		); writeErr != nil {
 			t.Fatal(writeErr)
 		}
 		var welcome map[string]any
@@ -227,12 +285,18 @@ func TestCandidateForwardingRequiresAuthorizedPeer(t *testing.T) {
 
 	payload, err := json.Marshal(controlprotocol.CandidateUpdate{
 		DestinationDeviceID: "destination",
-		Candidates:          []controlprotocol.Candidate{{Type: controlprotocol.CandidateHost, Address: "203.0.113.20:51820", Priority: 100}},
+		Candidates: []controlprotocol.Candidate{
+			{Type: controlprotocol.CandidateHost, Address: "203.0.113.20:51820", Priority: 100},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := wsjson.Write(context.Background(), source, controlprotocol.Message{Type: "candidate.update", Payload: payload}); err != nil {
+	if err := wsjson.Write(
+		context.Background(),
+		source,
+		controlprotocol.Message{Type: "candidate.update", Payload: payload},
+	); err != nil {
 		t.Fatal(err)
 	}
 	readContext, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
@@ -256,9 +320,15 @@ func TestCandidateForwardingRequiresDirectCapability(t *testing.T) {
 		"source":      {ID: "source", Status: devices.StatusActive},
 		"destination": {ID: "destination", Status: devices.StatusActive},
 	}}
-	handler := NewHandler(auth, auth, coordinationSnapshotStub{envelope: first}, nil, func(context.Context, devices.Device, devices.Device) bool {
-		return true
-	})
+	handler := NewHandler(
+		auth,
+		auth,
+		coordinationSnapshotStub{envelope: first},
+		nil,
+		func(context.Context, devices.Device, devices.Device) bool {
+			return true
+		},
+	)
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
@@ -266,11 +336,23 @@ func TestCandidateForwardingRequiresDirectCapability(t *testing.T) {
 		t.Helper()
 		header := make(http.Header)
 		header.Set("Authorization", "Bearer credential-"+id)
-		connection, _, dialErr := websocket.Dial(context.Background(), "ws"+server.URL[len("http"):], &websocket.DialOptions{HTTPHeader: header})
+		connection, _, dialErr := websocket.Dial(
+			context.Background(),
+			"ws"+server.URL[len("http"):],
+			&websocket.DialOptions{HTTPHeader: header},
+		)
 		if dialErr != nil {
 			t.Fatal(dialErr)
 		}
-		if writeErr := wsjson.Write(context.Background(), connection, controlprotocol.Hello{Versions: []uint16{controlprotocol.CurrentVersion}, Capabilities: capabilities, DeviceID: id}); writeErr != nil {
+		if writeErr := wsjson.Write(
+			context.Background(),
+			connection,
+			controlprotocol.Hello{
+				Versions:     []uint16{controlprotocol.CurrentVersion},
+				Capabilities: capabilities,
+				DeviceID:     id,
+			},
+		); writeErr != nil {
 			t.Fatal(writeErr)
 		}
 		var welcome map[string]any
@@ -290,12 +372,18 @@ func TestCandidateForwardingRequiresDirectCapability(t *testing.T) {
 
 	payload, err := json.Marshal(controlprotocol.CandidateUpdate{
 		DestinationDeviceID: "destination",
-		Candidates:          []controlprotocol.Candidate{{Type: controlprotocol.CandidateHost, Address: "203.0.113.20:51820", Priority: 100}},
+		Candidates: []controlprotocol.Candidate{
+			{Type: controlprotocol.CandidateHost, Address: "203.0.113.20:51820", Priority: 100},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := wsjson.Write(context.Background(), source, controlprotocol.Message{Type: "candidate.update", Payload: payload}); err != nil {
+	if err := wsjson.Write(
+		context.Background(),
+		source,
+		controlprotocol.Message{Type: "candidate.update", Payload: payload},
+	); err != nil {
 		t.Fatal(err)
 	}
 	readContext, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)

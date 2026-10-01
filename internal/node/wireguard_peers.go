@@ -82,12 +82,22 @@ func BuildWireGuardPeerConfigs(value snapshot.NetworkSnapshot, localDeviceID str
 			allowed = append(allowed, routesByGateway[device.ID]...)
 		}
 		allowed = uniquePrefixes(allowed)
-		peers = append(peers, tunnel.PeerConfig{PublicKey: device.WireGuardPublicKey, AllowedPrefixes: allowed, PersistentKeepalive: 25 * time.Second})
+		peers = append(
+			peers,
+			tunnel.PeerConfig{
+				PublicKey:           device.WireGuardPublicKey,
+				AllowedPrefixes:     allowed,
+				PersistentKeepalive: 25 * time.Second,
+			},
+		)
 	}
 	if local.Role == "client" && len(peers) == 0 {
 		return nil, ErrNoGatewayPeer
 	}
-	slices.SortFunc(peers, func(left, right tunnel.PeerConfig) int { return strings.Compare(left.PublicKey, right.PublicKey) })
+	slices.SortFunc(
+		peers,
+		func(left, right tunnel.PeerConfig) int { return strings.Compare(left.PublicKey, right.PublicKey) },
+	)
 	return peers, nil
 }
 

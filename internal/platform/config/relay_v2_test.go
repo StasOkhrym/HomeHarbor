@@ -26,7 +26,10 @@ tls_key_file = "/run/secrets/relay_tls_key"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Server.UDPPortMin != 51820 || cfg.Server.UDPPortMax != 51851 || cfg.Server.UDPAdvertiseHost != "relay.example.com" || cfg.Security.TLSCertFile != "/run/secrets/relay_tls_cert" || cfg.Security.TLSKeyFile != "/run/secrets/relay_tls_key" {
+	if cfg.Server.UDPPortMin != 51820 || cfg.Server.UDPPortMax != 51851 ||
+		cfg.Server.UDPAdvertiseHost != "relay.example.com" ||
+		cfg.Security.TLSCertFile != "/run/secrets/relay_tls_cert" ||
+		cfg.Security.TLSKeyFile != "/run/secrets/relay_tls_key" {
 		t.Fatalf("relay configuration lost fields: %#v", cfg)
 	}
 }

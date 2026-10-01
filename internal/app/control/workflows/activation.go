@@ -87,14 +87,32 @@ type Activation struct {
 	random     io.Reader
 }
 
-func NewActivation(uow ActivationUnitOfWork, records InviteReader, snapshots SnapshotReader, challenges ChallengeRepository, root ed25519.PublicKey, network string, now func() time.Time, random io.Reader) *Activation {
+func NewActivation(
+	uow ActivationUnitOfWork,
+	records InviteReader,
+	snapshots SnapshotReader,
+	challenges ChallengeRepository,
+	root ed25519.PublicKey,
+	network string,
+	now func() time.Time,
+	random io.Reader,
+) *Activation {
 	if now == nil {
 		now = time.Now
 	}
 	if random == nil {
 		random = rand.Reader
 	}
-	return &Activation{uow: uow, invites: records, snapshots: snapshots, challenges: challenges, root: bytes.Clone(root), network: network, now: now, random: random}
+	return &Activation{
+		uow:        uow,
+		invites:    records,
+		snapshots:  snapshots,
+		challenges: challenges,
+		root:       bytes.Clone(root),
+		network:    network,
+		now:        now,
+		random:     random,
+	}
 }
 
 func (a *Activation) ApproveSigned(ctx context.Context, signed invite.SignedApproval) (invites.ApprovalResult, error) {
@@ -111,7 +129,14 @@ func (a *Activation) ApproveSigned(ctx context.Context, signed invite.SignedAppr
 		if err != nil {
 			return err
 		}
-		expected := invite.Approval{Version: invite.Version, InviteID: r.InviteID, ProfileID: r.ProfileID, DeviceID: r.DeviceID, DevicePublicKey: r.DevicePublic, WireGuardPublicKey: r.WireGuardPublicKey}
+		expected := invite.Approval{
+			Version:            invite.Version,
+			InviteID:           r.InviteID,
+			ProfileID:          r.ProfileID,
+			DeviceID:           r.DeviceID,
+			DevicePublicKey:    r.DevicePublic,
+			WireGuardPublicKey: r.WireGuardPublicKey,
+		}
 		// Verify exact diff even on an approved retry: approval is not a bypass.
 		if err = invite.VerifyApproval(signed, a.root, expected); err != nil {
 			return err
@@ -135,7 +160,15 @@ func (a *Activation) ApproveSigned(ctx context.Context, signed invite.SignedAppr
 			}
 			var wg wgtypes.Key
 			copy(wg[:], r.WireGuardPublicKey)
-			d := devices.Device{ID: r.DeviceID, Name: r.DeviceID, Role: devices.RoleClient, Status: devices.StatusActive, IdentityPublicKey: base64.RawURLEncoding.EncodeToString(r.DevicePublic), WireGuardPublicKey: wg.String(), CreatedAt: now}
+			d := devices.Device{
+				ID:                 r.DeviceID,
+				Name:               r.DeviceID,
+				Role:               devices.RoleClient,
+				Status:             devices.StatusActive,
+				IdentityPublicKey:  base64.RawURLEncoding.EncodeToString(r.DevicePublic),
+				WireGuardPublicKey: wg.String(),
+				CreatedAt:          now,
+			}
 			if err = tx.Devices.CreateIdentity(ctx, d); err != nil {
 				return err
 			}
@@ -151,7 +184,13 @@ func (a *Activation) ApproveSigned(ctx context.Context, signed invite.SignedAppr
 				}
 			}
 		}
-		result = invites.ApprovalResult{Record: r, InviteID: r.InviteID, DeviceID: r.DeviceID, ProfileID: r.ProfileID, Status: r.Status}
+		result = invites.ApprovalResult{
+			Record:    r,
+			InviteID:  r.InviteID,
+			DeviceID:  r.DeviceID,
+			ProfileID: r.ProfileID,
+			Status:    r.Status,
+		}
 		return nil
 	})
 	if err != nil {
@@ -163,11 +202,11 @@ func (a *Activation) ApproveSigned(ctx context.Context, signed invite.SignedAppr
 // ClaimChallenge uses canonical unpadded base64url only for nonce and signature.
 // WireGuard public keys remain standard wgtypes.String() throughout storage.
 type ClaimChallenge struct {
-	Version   uint16 `json:"version" cbor:"version"`
+	Version   uint16 `json:"version"    cbor:"version"`
 	NetworkID string `json:"network_id" cbor:"network_id"`
-	InviteID  string `json:"invite_id" cbor:"invite_id"`
-	DeviceID  string `json:"device_id" cbor:"device_id"`
-	Nonce     string `json:"nonce" cbor:"nonce"`
+	InviteID  string `json:"invite_id"  cbor:"invite_id"`
+	DeviceID  string `json:"device_id"  cbor:"device_id"`
+	Nonce     string `json:"nonce"      cbor:"nonce"`
 	ExpiresAt int64  `json:"expires_at" cbor:"expires_at"`
 }
 type ClaimProof struct {
@@ -212,7 +251,10 @@ func SignClaim(c ClaimChallenge, key ed25519.PrivateKey) (ClaimProof, error) {
 	if err != nil {
 		return ClaimProof{}, err
 	}
-	return ClaimProof{Challenge: c, Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, append([]byte(claimDomain), p...)))}, nil
+	return ClaimProof{
+		Challenge: c,
+		Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, append([]byte(claimDomain), p...))),
+	}, nil
 }
 
 func (a *Activation) ready(ctx context.Context, id string) (invites.Record, error) {
@@ -238,7 +280,9 @@ func (a *Activation) ready(ctx context.Context, id string) (invites.Record, erro
 	copy(wg[:], r.WireGuardPublicKey)
 	matching := false
 	for _, d := range value.Devices {
-		if d.ID == r.DeviceID && d.Role == "client" && d.IdentityPublicKey == base64.RawURLEncoding.EncodeToString(r.DevicePublic) && d.WireGuardPublicKey == wg.String() {
+		if d.ID == r.DeviceID && d.Role == "client" &&
+			d.IdentityPublicKey == base64.RawURLEncoding.EncodeToString(r.DevicePublic) &&
+			d.WireGuardPublicKey == wg.String() {
 			matching = true
 		}
 	}
@@ -264,7 +308,14 @@ func (a *Activation) Challenge(ctx context.Context, id string) (ClaimChallenge, 
 	if _, err = io.ReadFull(a.random, nonce[:]); err != nil {
 		return ClaimChallenge{}, err
 	}
-	c := ClaimChallenge{Version: 1, NetworkID: a.network, InviteID: id, DeviceID: r.DeviceID, Nonce: base64.RawURLEncoding.EncodeToString(nonce[:]), ExpiresAt: a.now().UTC().Add(ClaimTTL).Unix()}
+	c := ClaimChallenge{
+		Version:   1,
+		NetworkID: a.network,
+		InviteID:  id,
+		DeviceID:  r.DeviceID,
+		Nonce:     base64.RawURLEncoding.EncodeToString(nonce[:]),
+		ExpiresAt: a.now().UTC().Add(ClaimTTL).Unix(),
+	}
 	p, err := claimPayload(c)
 	if err != nil {
 		return ClaimChallenge{}, err
@@ -281,7 +332,9 @@ func (a *Activation) Claim(ctx context.Context, id string, proof ClaimProof) (Cl
 		return ClaimResult{}, err
 	}
 	c := proof.Challenge
-	if c.NetworkID != a.network || c.InviteID != id || c.DeviceID != r.DeviceID || a.now().UTC().Unix() >= c.ExpiresAt || c.ExpiresAt > a.now().UTC().Add(ClaimTTL).Unix() {
+	if c.NetworkID != a.network || c.InviteID != id || c.DeviceID != r.DeviceID ||
+		a.now().UTC().Unix() >= c.ExpiresAt ||
+		c.ExpiresAt > a.now().UTC().Add(ClaimTTL).Unix() {
 		return ClaimResult{}, ErrInvalidClaim
 	}
 	p, err := claimPayload(c)
@@ -320,7 +373,10 @@ func (a *Activation) Claim(ctx context.Context, id string, proof ClaimProof) (Cl
 		if lockErr != nil {
 			return lockErr
 		}
-		if current.Status != invites.StatusApproved || current.DeviceID != r.DeviceID || current.ProfileID != r.ProfileID || !bytes.Equal(current.DevicePublic, r.DevicePublic) || !bytes.Equal(current.WireGuardPublicKey, r.WireGuardPublicKey) {
+		if current.Status != invites.StatusApproved || current.DeviceID != r.DeviceID ||
+			current.ProfileID != r.ProfileID ||
+			!bytes.Equal(current.DevicePublic, r.DevicePublic) ||
+			!bytes.Equal(current.WireGuardPublicKey, r.WireGuardPublicKey) {
 			return ErrInvalidClaim
 		}
 		now := a.now().UTC()
@@ -330,10 +386,15 @@ func (a *Activation) Claim(ctx context.Context, id string, proof ClaimProof) (Cl
 		}
 		var wg wgtypes.Key
 		copy(wg[:], r.WireGuardPublicKey)
-		if d.IdentityPublicKey != base64.RawURLEncoding.EncodeToString(r.DevicePublic) || d.WireGuardPublicKey != wg.String() || d.Role != devices.RoleClient {
+		if d.IdentityPublicKey != base64.RawURLEncoding.EncodeToString(r.DevicePublic) ||
+			d.WireGuardPublicKey != wg.String() ||
+			d.Role != devices.RoleClient {
 			return ErrInvalidClaim
 		}
-		return tx.Outbox.Append(ctx, devices.Event{Type: "device.credential_claimed", AggregateID: r.DeviceID, OccurredAt: now})
+		return tx.Outbox.Append(
+			ctx,
+			devices.Event{Type: "device.credential_claimed", AggregateID: r.DeviceID, OccurredAt: now},
+		)
 	})
 	if err != nil {
 		return ClaimResult{}, err

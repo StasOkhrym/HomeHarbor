@@ -59,7 +59,12 @@ func checkDomainImports(t *testing.T, repositoryRoot, packagePath string, visite
 				continue
 			}
 			if strings.HasPrefix(importPath, "github.com/sokhrym/go-tunnels/internal/") {
-				checkDomainImports(t, repositoryRoot, strings.TrimPrefix(importPath, "github.com/sokhrym/go-tunnels/"), visited)
+				checkDomainImports(
+					t,
+					repositoryRoot,
+					strings.TrimPrefix(importPath, "github.com/sokhrym/go-tunnels/"),
+					visited,
+				)
 			}
 		}
 	}
@@ -87,24 +92,27 @@ func TestDomainBoundaryRejectsNeutralStorageAdapters(t *testing.T) {
 
 func TestControlModulesDoNotUseDotImports(t *testing.T) {
 	for _, module := range []string{"identity", "devices", "routes", "policy", "services", "invites", "snapshots", "audit"} {
-		err := filepath.WalkDir(filepath.Join("..", "control", module), func(path string, entry os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if entry.IsDir() || !strings.HasSuffix(path, ".go") {
-				return nil
-			}
-			file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
-			if err != nil {
-				return err
-			}
-			for _, spec := range file.Imports {
-				if spec.Name != nil && spec.Name.Name == "." {
-					t.Errorf("%s uses a dot import of %s", path, spec.Path.Value)
+		err := filepath.WalkDir(
+			filepath.Join("..", "control", module),
+			func(path string, entry os.DirEntry, err error) error {
+				if err != nil {
+					return err
 				}
-			}
-			return nil
-		})
+				if entry.IsDir() || !strings.HasSuffix(path, ".go") {
+					return nil
+				}
+				file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+				if err != nil {
+					return err
+				}
+				for _, spec := range file.Imports {
+					if spec.Name != nil && spec.Name.Name == "." {
+						t.Errorf("%s uses a dot import of %s", path, spec.Path.Value)
+					}
+				}
+				return nil
+			},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
