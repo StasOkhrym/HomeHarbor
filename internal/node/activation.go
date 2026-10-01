@@ -55,11 +55,16 @@ func strictInviteBytes(raw string, n int) ([]byte, error) {
 
 // PrepareInviteProof consumes fragment authority locally. Only signed public
 // proof material is returned; the code and private keys never enter HTTP JSON.
-func PrepareInviteProof(p InviteEnrollment, state State, now time.Time) (invite.SignedPermit, invite.Proof, error) {
+func PrepareInviteProof(
+	p InviteEnrollment,
+	state State,
+	now time.Time,
+) (invite.SignedPermit, invite.Proof, error) {
 	if err := state.Validate(); err != nil {
 		return invite.SignedPermit{}, invite.Proof{}, err
 	}
-	if p.DeviceID == "" || state.DeviceID != "" && state.DeviceID != p.DeviceID || len(p.Code) != 8 {
+	if p.DeviceID == "" || state.DeviceID != "" && state.DeviceID != p.DeviceID ||
+		len(p.Code) != 8 {
 		return invite.SignedPermit{}, invite.Proof{}, invite.ErrInvalidProof
 	}
 	for _, c := range p.Code {
@@ -72,7 +77,8 @@ func PrepareInviteProof(p InviteEnrollment, state State, now time.Time) (invite.
 		return invite.SignedPermit{}, invite.Proof{}, invite.ErrInvalidPermit
 	}
 	fragment, err := url.ParseQuery(u.Fragment)
-	if err != nil || len(fragment) != 2 || len(fragment["permit"]) != 1 || len(fragment["invite_key"]) != 1 {
+	if err != nil || len(fragment) != 2 || len(fragment["permit"]) != 1 ||
+		len(fragment["invite_key"]) != 1 {
 		return invite.SignedPermit{}, invite.Proof{}, invite.ErrInvalidPermit
 	}
 	encoded, err := strictInviteBytes(fragment.Get("permit"), -1)
@@ -149,17 +155,26 @@ func PrepareInviteProof(p InviteEnrollment, state State, now time.Time) (invite.
 
 func activationOrigin(raw string) (string, error) {
 	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
+		u.Path != "" {
 		return "", errors.New("control URL must be an origin")
 	}
 	if u.Scheme == "https" ||
-		u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1") {
+		u.Scheme == "http" &&
+			(u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1") {
 		return strings.TrimRight(raw, "/"), nil
 	}
+
 	return "", errors.New("control URL must use HTTPS or local HTTP")
 }
 
-func activationRequest(ctx context.Context, client *http.Client, target string, body any, result any) (int, error) {
+func activationRequest(
+	ctx context.Context,
+	client *http.Client,
+	target string,
+	body any,
+	result any,
+) (int, error) {
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -195,7 +210,12 @@ func activationRequest(ctx context.Context, client *http.Client, target string, 
 // topology, then claims and atomically saves a credential using existing State
 // keys. Lost claim responses are recovered with a fresh challenge/credential.
 // Context cancellation bounds polling; a caller may retry with the same state.
-func EnrollByInvite(ctx context.Context, httpClient *http.Client, p InviteEnrollment, state *State) error {
+func EnrollByInvite(
+	ctx context.Context,
+	httpClient *http.Client,
+	p InviteEnrollment,
+	state *State,
+) error {
 	if state == nil || p.StatePath == "" {
 		return errors.New("state and state path are required")
 	}
@@ -252,7 +272,8 @@ func EnrollByInvite(ctx context.Context, httpClient *http.Client, p InviteEnroll
 			status, err = activationRequest(ctx, &client, endpoint+"/claim", signed, &result)
 			if err == nil && status == http.StatusOK {
 				d := result.Device
-				if d.ID != p.DeviceID || d.Status != devices.StatusActive || d.Role != devices.RoleClient ||
+				if d.ID != p.DeviceID || d.Status != devices.StatusActive ||
+					d.Role != devices.RoleClient ||
 					d.IdentityPublicKey != state.IdentityPublicKey ||
 					d.WireGuardPublicKey != state.WireGuard.PublicKey {
 					return errors.New("claim returned a different device identity")

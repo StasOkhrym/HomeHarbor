@@ -23,11 +23,21 @@ func TestCoordinationRuntimeJoinsHijackedWebSockets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	envelope, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, key, "root")
+	envelope, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
+		key,
+		"root",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler(coordinationAuthStub{}, nil, coordinationSnapshotStub{envelope: envelope}, nil, nil)
+	h := NewHandler(
+		coordinationAuthStub{},
+		nil,
+		coordinationSnapshotStub{envelope: envelope},
+		nil,
+		nil,
+	)
 	s := httptest.NewServer(h)
 	defer s.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

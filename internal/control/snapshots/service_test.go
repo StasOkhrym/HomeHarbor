@@ -16,7 +16,11 @@ func TestPublishEnforcesSequentialSignedSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := NewService(NewMemoryStore(), publicKey, "home")
-	first, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, privateKey, "root-1")
+	first, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
+		privateKey,
+		"root-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +30,11 @@ func TestPublishEnforcesSequentialSignedSnapshots(t *testing.T) {
 	if _, err := service.Latest(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	gap, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 3}, privateKey, "root-1")
+	gap, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 3},
+		privateKey,
+		"root-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

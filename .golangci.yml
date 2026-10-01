@@ -2,6 +2,10 @@ version: "2"
 
 # `make fmt` writes; `make verify` and `make lint` only report.
 linters:
+  exclusions:
+    paths:
+      - node_modules/
+      - \.superpowers/
   default: none
   enable:
     - errcheck
@@ -11,6 +15,10 @@ linters:
     - unused
 
 formatters:
+  exclusions:
+    paths:
+      - node_modules/
+      - \.superpowers/
   enable:
     - gofumpt
     - gci

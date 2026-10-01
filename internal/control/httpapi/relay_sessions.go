@@ -34,7 +34,8 @@ func (s *Server) issueRelaySession(w http.ResponseWriter, r *http.Request) {
 	// MVP relay sessions connect one external client to one LAN gateway. Do
 	// not accidentally turn the relay into an unrestricted device mesh before
 	// an explicit peer-policy model exists.
-	if source.Role == destination.Role || (source.Role != devices.RoleClient && source.Role != devices.RoleGateway) {
+	if source.Role == destination.Role ||
+		(source.Role != devices.RoleClient && source.Role != devices.RoleGateway) {
 		writeError(w, http.StatusForbidden, "device peer role is not allowed")
 		return
 	}
@@ -47,7 +48,12 @@ func (s *Server) issueRelaySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !slices.Contains(input.Capabilities, protocol.CapabilityUDPPairV2) {
-		writeErrorCode(w, http.StatusUpgradeRequired, protocol.ErrorUpgradeRequired, "udp_pair_v2 capability required")
+		writeErrorCode(
+			w,
+			http.StatusUpgradeRequired,
+			protocol.ErrorUpgradeRequired,
+			"udp_pair_v2 capability required",
+		)
 		return
 	}
 	if !strings.HasPrefix(s.relayURL, "wss://") || !strings.HasSuffix(s.relayURL, "/relay/udp/v2") {
@@ -58,7 +64,12 @@ func (s *Server) issueRelaySession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "relay sessions are unavailable")
 		return
 	}
-	ticket, err := s.relayIssuer.IssueForPeer(input.SessionID, source.ID, destination.ID, s.relayTTL)
+	ticket, err := s.relayIssuer.IssueForPeer(
+		input.SessionID,
+		source.ID,
+		destination.ID,
+		s.relayTTL,
+	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "issue relay session")
 		return

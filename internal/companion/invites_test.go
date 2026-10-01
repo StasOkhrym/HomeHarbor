@@ -37,7 +37,12 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := local.Proof("phone", devicePrivate, local.Code, []byte("01234567890123456789012345678901"))
+	proof, err := local.Proof(
+		"phone",
+		devicePrivate,
+		local.Code,
+		[]byte("01234567890123456789012345678901"),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +57,11 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 	if err := inviteService.SubmitProof(context.Background(), permit, proof); err != nil {
 		t.Fatal(err)
 	}
-	snapshotService := controlsnapshots.NewService(controlsnapshots.NewMemoryStore(), rootPublic, "home")
+	snapshotService := controlsnapshots.NewService(
+		controlsnapshots.NewMemoryStore(),
+		rootPublic,
+		"home",
+	)
 	initial, err := snapshot.Sign(
 		snapshot.NetworkSnapshot{
 			NetworkID: "home",
@@ -77,10 +86,19 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 		KeyID:       "root-1",
 		OverlayPool: netip.MustParsePrefix("10.200.0.0/29"),
 	}
-	if err := approver.Approve(context.Background(), local.Permit.InviteID, local.Code, rootPrivate); err != nil {
+	if err := approver.Approve(
+		context.Background(),
+		local.Permit.InviteID,
+		local.Code,
+		rootPrivate,
+	); err != nil {
 		t.Fatal(err)
 	}
-	if err := approver.PublishSnapshot(context.Background(), local.Permit.InviteID, rootPrivate); err != nil {
+	if err := approver.PublishSnapshot(
+		context.Background(),
+		local.Permit.InviteID,
+		rootPrivate,
+	); err != nil {
 		t.Fatal(err)
 	}
 	latest, err := snapshotService.Latest(context.Background())
@@ -91,10 +109,13 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(value.Devices) != 1 || value.Devices[0].ID != "phone" || value.Devices[0].OverlayAddress != "10.200.0.1/32" {
+	if len(value.Devices) != 1 || value.Devices[0].ID != "phone" ||
+		value.Devices[0].OverlayAddress != "10.200.0.1/32" {
 		t.Fatalf("published device=%#v", value.Devices)
 	}
-	if value.Devices[0].WireGuardPublicKey != base64.StdEncoding.EncodeToString(proof.WireGuardPublicKey) {
+	if value.Devices[0].WireGuardPublicKey != base64.StdEncoding.EncodeToString(
+		proof.WireGuardPublicKey,
+	) {
 		t.Fatalf("published nonstandard WireGuard key %q", value.Devices[0].WireGuardPublicKey)
 	}
 }
@@ -104,9 +125,14 @@ func TestRemoteApproverPublishesSignedDeviceRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshotService := controlsnapshots.NewService(controlsnapshots.NewMemoryStore(), rootPublic, "home")
+	snapshotService := controlsnapshots.NewService(
+		controlsnapshots.NewMemoryStore(),
+		rootPublic,
+		"home",
+	)
 	initial, err := snapshot.Sign(snapshot.NetworkSnapshot{
-		NetworkID: "home", Revision: 1,
+		NetworkID: "home",
+		Revision:  1,
 		Devices: []snapshot.Device{
 			{
 				ID:                 "phone",
@@ -116,7 +142,9 @@ func TestRemoteApproverPublishesSignedDeviceRemoval(t *testing.T) {
 				OverlayAddress:     "10.200.0.2/32",
 			},
 		},
-		Profiles: []snapshot.AccessProfile{{ID: "family", Name: "Family", DeviceIDs: []string{"phone"}}},
+		Profiles: []snapshot.AccessProfile{
+			{ID: "family", Name: "Family", DeviceIDs: []string{"phone"}},
+		},
 	}, rootPrivate, "root-1")
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +158,11 @@ func TestRemoteApproverPublishesSignedDeviceRemoval(t *testing.T) {
 	defer server.Close()
 
 	approver := RemoteApprover{Endpoint: server.URL, KeyID: "root-1"}
-	if err := approver.PublishDeviceRemoval(context.Background(), "phone", rootPrivate); err != nil {
+	if err := approver.PublishDeviceRemoval(
+		context.Background(),
+		"phone",
+		rootPrivate,
+	); err != nil {
 		t.Fatal(err)
 	}
 	latest, err := snapshotService.Latest(context.Background())
@@ -141,7 +173,8 @@ func TestRemoteApproverPublishesSignedDeviceRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(value.Devices) != 0 || len(value.Profiles) != 1 || len(value.Profiles[0].DeviceIDs) != 0 {
+	if len(value.Devices) != 0 || len(value.Profiles) != 1 ||
+		len(value.Profiles[0].DeviceIDs) != 0 {
 		t.Fatalf("device removal was not published: %#v", value)
 	}
 }
@@ -164,7 +197,12 @@ func TestRemoteApproverBlocksInviteAfterFiveInvalidCodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := local.Proof("phone", devicePrivate, local.Code, []byte("01234567890123456789012345678901"))
+	proof, err := local.Proof(
+		"phone",
+		devicePrivate,
+		local.Code,
+		[]byte("01234567890123456789012345678901"),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,17 +221,31 @@ func TestRemoteApproverBlocksInviteAfterFiveInvalidCodes(t *testing.T) {
 		httpapi.WithInviteService(service),
 	).Handler())
 	defer server.Close()
-	approver := RemoteApprover{Endpoint: server.URL, KeyID: "root-1", Attempts: NewMemoryInviteAttemptStore()}
+	approver := RemoteApprover{
+		Endpoint: server.URL,
+		KeyID:    "root-1",
+		Attempts: NewMemoryInviteAttemptStore(),
+	}
 	wrongCode := "00000000"
 	if wrongCode == local.Code {
 		wrongCode = "00000001"
 	}
 	for range 5 {
-		if err := approver.Approve(context.Background(), local.Permit.InviteID, wrongCode, rootPrivate); err == nil {
+		if err := approver.Approve(
+			context.Background(),
+			local.Permit.InviteID,
+			wrongCode,
+			rootPrivate,
+		); err == nil {
 			t.Fatal("invalid code unexpectedly approved")
 		}
 	}
-	if err := approver.Approve(context.Background(), local.Permit.InviteID, local.Code, rootPrivate); err == nil {
+	if err := approver.Approve(
+		context.Background(),
+		local.Permit.InviteID,
+		local.Code,
+		rootPrivate,
+	); err == nil {
 		t.Fatal("correct code succeeded after five invalid attempts")
 	}
 }

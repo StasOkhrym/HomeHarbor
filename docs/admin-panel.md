@@ -20,17 +20,17 @@ Control failures can therefore be distinguished from an unconfigured network.
 
 ## Navigation and supported actions
 
-| Screen | Supported actions |
-| --- | --- |
-| Overview | Counts, pending routes, dependency readiness, published signed revision |
+| Screen      | Supported actions                                                               |
+| ----------- | ------------------------------------------------------------------------------- |
+| Overview    | Counts, pending routes, dependency readiness, published signed revision         |
 | Setup guide | Companion, gateway enrollment, route/DNS, catalog and verification instructions |
-| Devices | Registration details, public identities, confirmed credential revoke |
-| Services | List and create web/native services, optional app and HTTPS health URLs |
-| Access | Create profiles by names; structured or JSON ACL preview and replacement |
-| Network | Create LAN route/DNS settings; approve or reject saved advertisements |
-| Invites | Companion instructions, status by invite ID, separate legacy token issuance |
-| Activity | Read recent audit events with a limit of 1–200 |
-| Security | Account/recovery guidance, signing trust and sign-out |
+| Devices     | Registration details, public identities, confirmed credential revoke            |
+| Services    | List and create web/native services, optional app and HTTPS health URLs         |
+| Access      | Create profiles by names; structured or JSON ACL preview and replacement        |
+| Network     | Create LAN route/DNS settings; approve or reject saved advertisements           |
+| Invites     | Companion instructions, status by invite ID, separate legacy token issuance     |
+| Activity    | Read recent audit events with a limit of 1–200                                  |
+| Security    | Account/recovery guidance, signing trust and sign-out                           |
 
 There is no edit/delete UI, global invite list, service health probe, passkey
 management or recovery-code regeneration: those application operations are not

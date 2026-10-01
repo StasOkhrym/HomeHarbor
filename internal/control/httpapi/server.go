@@ -74,7 +74,10 @@ type Server struct {
 }
 
 type RouteService interface {
-	Advertise(context.Context, controlroutes.AdvertisementRequest) (controlroutes.Advertisement, error)
+	Advertise(
+		context.Context,
+		controlroutes.AdvertisementRequest,
+	) (controlroutes.Advertisement, error)
 	Approve(context.Context, string) error
 	Reject(context.Context, string) error
 	List(context.Context) ([]controlroutes.Advertisement, error)
@@ -107,7 +110,9 @@ func WithBrowserHandlers(
 	}
 }
 
-func WithMutationAuthorizer(authorize func(context.Context, *http.Request) (bool, error)) ServerOption {
+func WithMutationAuthorizer(
+	authorize func(context.Context, *http.Request) (bool, error),
+) ServerOption {
 	return func(s *Server) { s.mutationAuthorizer = authorize }
 }
 
@@ -116,8 +121,33 @@ func WithMutationAuthorizer(authorize func(context.Context, *http.Request) (bool
 // independent of Redis availability.
 func WithSharedRateLimits(store RateLimitStore) ServerOption {
 	return func(s *Server) {
-		s.authLimiter = NewSharedRateLimiter(store, "auth", 5, time.Minute)
-		s.deviceLimiter = NewSharedRateLimiter(store, "onboarding", 10, time.Minute)
+		s.authLimiter.shared, s.authLimiter.bucket = store, "auth"
+		s.deviceLimiter.shared, s.deviceLimiter.bucket = store, "onboarding"
+		// Explicit shared authority must never fall back to the test memory map,
+		// including a missing dependency. Middleware returns 503 in that case.
+		s.authLimiter.clients = nil
+		s.deviceLimiter.clients = nil
+	}
+}
+
+// WithRateLimits applies validated quotas without changing their shared store.
+func WithRateLimits(auth, onboarding, api int, storeTimeout time.Duration) ServerOption {
+	return func(s *Server) {
+		s.authLimiter.limit = auth
+		s.deviceLimiter.limit = onboarding
+		s.apiLimiter.limit = api
+		s.authLimiter.storeTimeout = storeTimeout
+		s.deviceLimiter.storeTimeout = storeTimeout
+	}
+}
+
+// WithCompanionTTL changes challenge issuance, never proof validation rules.
+func WithCompanionTTL(ttl time.Duration) ServerOption {
+	return func(s *Server) {
+		if s.companionChallenges == nil {
+			s.companionChallenges = newCompanionChallengeStore()
+		}
+		s.companionChallenges.ttl = ttl
 	}
 }
 
@@ -155,7 +185,11 @@ type RelaySessionIssuer interface {
 // without making the HTTP package depend on snapshot persistence.
 type RelayPeerAuthorizer func(context.Context, devices.Device, devices.Device) bool
 
-func WithRelaySessionIssuer(issuer RelaySessionIssuer, relayURL string, ttl time.Duration) ServerOption {
+func WithRelaySessionIssuer(
+	issuer RelaySessionIssuer,
+	relayURL string,
+	ttl time.Duration,
+) ServerOption {
 	return func(server *Server) {
 		server.relayIssuer = issuer
 		server.relayURL = strings.TrimRight(relayURL, "/")
@@ -212,7 +246,10 @@ type ServiceCatalog interface {
 	Create(context.Context, controlservices.Service) (controlservices.Service, error)
 	List(context.Context) ([]controlservices.Service, error)
 	ListForDevice(context.Context, string) ([]controlservices.Service, error)
-	CreateProfile(context.Context, controlservices.AccessProfile) (controlservices.AccessProfile, error)
+	CreateProfile(
+		context.Context,
+		controlservices.AccessProfile,
+	) (controlservices.AccessProfile, error)
 	Profiles(context.Context) ([]controlservices.AccessProfile, error)
 }
 
@@ -254,7 +291,11 @@ func WithSnapshotBroadcaster(broadcaster SnapshotBroadcaster) ServerOption {
 func WithCompanionRootKey(publicKey ed25519.PublicKey) ServerOption {
 	return func(server *Server) {
 		server.companionRoot = append(ed25519.PublicKey(nil), publicKey...)
-		server.companionChallenges = newCompanionChallengeStore()
+		// Constructor options may already supply a lifetime or shared authority;
+		// setting the trust root must not reset either to the memory defaults.
+		if server.companionChallenges == nil {
+			server.companionChallenges = newCompanionChallengeStore()
+		}
 	}
 }
 
@@ -268,7 +309,11 @@ func WithServiceCatalog(catalog ServiceCatalog) ServerOption {
 	return func(server *Server) { server.services = catalog }
 }
 
-func NewServer(deviceService DeviceService, authorizer Authorizer, options ...ServerOption) *Server {
+func NewServer(
+	deviceService DeviceService,
+	authorizer Authorizer,
+	options ...ServerOption,
+) *Server {
 	server := &Server{
 		devices:       deviceService,
 		authorizer:    authorizer,

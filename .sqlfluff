@@ -1,0 +1,11 @@
+[sqlfluff]
+dialect = postgres
+max_line_length = 100
+[sqlfluff:indentation]
+indent_unit = space
+tab_space_size = 4
+
+# Existing public schema names are valid PostgreSQL unreserved identifiers.
+# This exception avoids a semantic schema rename for a style-only cleanup.
+[sqlfluff:rules:references.keywords]
+ignore_words = name,role,action,prefix,snapshot,hash

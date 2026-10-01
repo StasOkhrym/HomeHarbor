@@ -81,7 +81,10 @@ func TestKernelRelayPathOwnerAwaitsCancelledBridge(t *testing.T) {
 
 func TestNodeUDPV2LoopPreservesSocketDuringRenewalAndControlFailure(t *testing.T) {
 	i := relay.TicketIssuer{Key: []byte("01234567890123456789012345678901")}
-	r, err := relay.NewUDPPairV2(i, relay.UDPPairV2Config{ListenIP: net.ParseIP("127.0.0.1"), MaxPeersPerDevice: 1})
+	r, err := relay.NewUDPPairV2(
+		i,
+		relay.UDPPairV2Config{ListenIP: net.ParseIP("127.0.0.1"), MaxPeersPerDevice: 1},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -43,14 +43,16 @@ func (a *BrowserAuth) csrfCookie(sessionToken string, expires time.Time) (*http.
 func (a *BrowserAuth) validCSRF(request *http.Request, sessionToken string) bool {
 	cookie, err := request.Cookie(csrfCookieName)
 	header := request.Header.Get(csrfHeaderName)
-	if header == "" && strings.HasPrefix(request.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+	if header == "" &&
+		strings.HasPrefix(request.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
 		// Browser forms cannot set a custom header. ParseForm caches the body so
 		// the subsequent form handler sees the same values, while JSON API
 		// requests continue to require the explicit CSRF header.
 		_ = request.ParseForm()
 		header = request.PostForm.Get("_csrf")
 	}
-	if err != nil || header == "" || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(header)) != 1 {
+	if err != nil || header == "" ||
+		subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(header)) != 1 {
 		return false
 	}
 	parts := strings.Split(cookie.Value, ".")

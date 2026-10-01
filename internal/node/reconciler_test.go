@@ -38,33 +38,45 @@ func TestGatewayStagedCommitKeepsGuardAcrossOtherOwnerFailure(t *testing.T) {
 		false,
 		func(context.Context, string, string, []netip.Prefix) error { return nil },
 	)
-	r.policies = nft.NewApplierWithRunner("wg0", nil, func(_ context.Context, s string) error { live = s; return nil })
+	r.policies = nft.NewApplierWithRunner(
+		"wg0",
+		nil,
+		func(_ context.Context, s string) error { live = s; return nil },
+	)
 	stage, ok := any(r).(stagedGateway)
 	if !ok {
 		t.Fatal("gateway lacks staged parent integration API")
 	}
+
 	ctx := context.Background()
+
 	v := gatewaySnapshotForReconciler()
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := stage.Prepare(ctx, v); err != nil {
 			t.Fatal(err)
 		}
+
 		if err := stage.Guard(ctx, v); err != nil {
 			t.Fatal(err)
 		}
+
 		if err := stage.ApplyPrepared(ctx, v); err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(live, " accept comment") || !strings.Contains(live, "iifname \"wg0\" drop") ||
+
+		if strings.Contains(live, " accept comment") ||
+			!strings.Contains(live, "iifname \"wg0\" drop") ||
 			stage.Revision() != 0 {
 			t.Fatalf("partial revision exposed traffic: rev=%d script=%s", stage.Revision(), live)
 		}
 		// First attempt models a later WireGuard failure: parent returns
 		// without Commit and retries the same desired revision.
 	}
+
 	if err := stage.Commit(ctx, v); err != nil {
 		t.Fatal(err)
 	}
+
 	if stage.Revision() != 1 || !strings.Contains(live, "tcp dport 8080 accept") {
 		t.Fatalf("commit did not release matching policy: rev=%d script=%s", stage.Revision(), live)
 	}
@@ -79,35 +91,50 @@ func TestGatewayGuardBeforeEnsureFailureAndRevokedGateway(t *testing.T) {
 		nil,
 		false,
 		func(context.Context, string, string, []netip.Prefix) error {
-			if !strings.Contains(live, "iifname \"wg0\" drop") || strings.Contains(live, " accept comment") {
+			if !strings.Contains(live, "iifname \"wg0\" drop") ||
+				strings.Contains(live, " accept comment") {
 				t.Error("interface opened without deny guard")
 			}
+
 			if fail {
 				return errors.New("route failure")
 			}
+
 			return nil
 		},
 	)
-	r.policies = nft.NewApplierWithRunner("wg0", nil, func(_ context.Context, s string) error { live = s; return nil })
+	r.policies = nft.NewApplierWithRunner(
+		"wg0",
+		nil,
+		func(_ context.Context, s string) error { live = s; return nil },
+	)
 	r.routes.run = func(context.Context, ...string) error { return nil }
+
 	v := gatewaySnapshotForReconciler()
+
 	if err := r.Apply(context.Background(), v); err == nil {
 		t.Fatal("expected route failure")
 	}
+
 	if strings.Contains(live, " accept comment") {
 		t.Fatal("partial apply left tunnel open")
 	}
+
 	fail = false
+
 	if err := r.Apply(context.Background(), v); err != nil {
 		t.Fatal(err)
 	}
+
 	v.Revision = 2
 	v.Gateways = nil
 	v.Routes = nil
 	v.ACL = nil
+
 	if err := r.Apply(context.Background(), v); err != nil {
 		t.Fatal(err)
 	}
+
 	if strings.Contains(live, " accept comment") {
 		t.Fatal("gateway removal retained ACL")
 	}
@@ -235,35 +262,52 @@ func TestGatewayFinalFirewallFailureLeavesGuardAndRetries(t *testing.T) {
 		if commitFailure && strings.Contains(s, " accept comment") {
 			return errors.New("nft commit failed")
 		}
+
 		live = s
+
 		return nil
 	})
+
 	v := gatewaySnapshotForReconciler()
+
 	if err := r.Apply(context.Background(), v); err == nil {
 		t.Fatal("expected commit failure")
 	}
-	if r.Revision() != 0 || r.policies.Revision() != 0 || strings.Contains(live, " accept comment") {
+
+	if r.Revision() != 0 || r.policies.Revision() != 0 ||
+		strings.Contains(live, " accept comment") {
 		t.Fatalf("commit failure exposed partial state: %s", live)
 	}
+
 	commitFailure = false
+
 	if err := r.Apply(context.Background(), v); err != nil {
 		t.Fatal(err)
 	}
+
 	if r.Revision() != 1 {
 		t.Fatal("same desired revision did not converge")
 	}
+
 	v.Routes[0].DomainSuffix = "other.home.arpa"
 	before := live
+
 	if err := r.Apply(context.Background(), v); err == nil || live != before {
 		t.Fatal("changed metadata at committed revision mutated live state")
 	}
 }
 
 func TestClientPrepareRejectsMissingLocalBeforeOtherOwners(t *testing.T) {
-	r := NewClientReconcilerWithEnsurer("wg0", "client", func(context.Context, string, string, []netip.Prefix) error {
-		t.Fatal("prepare mutated interface")
-		return nil
-	})
+	r := NewClientReconcilerWithEnsurer(
+		"wg0",
+		"client",
+		func(context.Context, string, string, []netip.Prefix) error {
+			t.Fatal("prepare mutated interface")
+
+			return nil
+		},
+	)
+
 	if err := r.Prepare(context.Background(), snapshot.NetworkSnapshot{}); err == nil {
 		t.Fatal("Prepare accepted missing local device")
 	}

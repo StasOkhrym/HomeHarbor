@@ -138,7 +138,10 @@ func (s State) Validate() error {
 	}
 	identityPublic, err := base64.RawURLEncoding.DecodeString(s.IdentityPublicKey)
 	if err != nil || len(identityPublic) != ed25519.PublicKeySize ||
-		!bytes.Equal(ed25519.PrivateKey(identityPrivate).Public().(ed25519.PublicKey), identityPublic) {
+		!bytes.Equal(
+			ed25519.PrivateKey(identityPrivate).Public().(ed25519.PublicKey),
+			identityPublic,
+		) {
 		return errors.New("node identity public key does not match private key")
 	}
 	wireGuardPrivate, err := wgtypes.ParseKey(s.WireGuard.PrivateKey)

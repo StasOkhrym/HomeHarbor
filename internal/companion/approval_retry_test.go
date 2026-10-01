@@ -77,10 +77,14 @@ func (f approvalFixture) ApproveSigned(
 
 func TestCompanionRetriesApprovedRecordAfterPermitExpiry(t *testing.T) {
 	root, key, _ := ed25519.GenerateKey(rand.Reader)
+
 	_, device, _ := ed25519.GenerateKey(rand.Reader)
+
 	now := time.Now().UTC()
 	local, _ := invite.New("home", "family", time.Minute, now, rand.Reader)
+
 	permit, _ := invite.SignPermit(local.Permit, key, "root-1")
+
 	proof, _ := local.Proof("linux", device, local.Code, bytes.Repeat([]byte{7}, 32))
 	r := invites.Record{
 		InviteID:           proof.InviteID,
@@ -93,36 +97,44 @@ func TestCompanionRetriesApprovedRecordAfterPermitExpiry(t *testing.T) {
 		Status:             invites.StatusApproved,
 		ApprovedAt:         &now,
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if request.Method == http.MethodGet {
-			_ = json.NewEncoder(w).Encode(r)
-			return
-		}
-		var input struct {
-			Approval invite.SignedApproval `json:"approval"`
-		}
-		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
-			t.Error(err)
-		}
-		if err := invite.VerifyApproval(
-			input.Approval,
-			root,
-			invite.Approval{
-				Version:            1,
-				InviteID:           r.InviteID,
-				ProfileID:          r.ProfileID,
-				DeviceID:           r.DeviceID,
-				DevicePublicKey:    r.DevicePublic,
-				WireGuardPublicKey: r.WireGuardPublicKey,
-			},
-		); err != nil {
-			t.Error(err)
-		}
-		_ = json.NewEncoder(w).
-			Encode(invites.ApprovalResult{InviteID: r.InviteID, DeviceID: r.DeviceID, ProfileID: r.ProfileID, Status: invites.StatusApproved})
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			if request.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(r)
+				return
+			}
+
+			var input struct {
+				Approval invite.SignedApproval `json:"approval"`
+			}
+
+			if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+				t.Error(err)
+			}
+
+			if err := invite.VerifyApproval(
+				input.Approval,
+				root,
+				invite.Approval{
+					Version:            1,
+					InviteID:           r.InviteID,
+					ProfileID:          r.ProfileID,
+					DeviceID:           r.DeviceID,
+					DevicePublicKey:    r.DevicePublic,
+					WireGuardPublicKey: r.WireGuardPublicKey,
+				},
+			); err != nil {
+				t.Error(err)
+			}
+
+			_ = json.NewEncoder(w).
+				Encode(invites.ApprovalResult{InviteID: r.InviteID, DeviceID: r.DeviceID, ProfileID: r.ProfileID, Status: invites.StatusApproved})
+		}),
+	)
 	defer server.Close()
+
 	a := RemoteApprover{Endpoint: server.URL, Now: func() time.Time { return now.Add(time.Hour) }}
+
 	if err := a.Approve(context.Background(), r.InviteID, local.Code, key); err != nil {
 		t.Fatal("approved retry failed:", err)
 	}
@@ -130,10 +142,13 @@ func TestCompanionRetriesApprovedRecordAfterPermitExpiry(t *testing.T) {
 
 func TestCompanionRejectsApprovalCredentialResponse(t *testing.T) {
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
+
 	_, device, _ := ed25519.GenerateKey(rand.Reader)
 	now := time.Now()
 	local, _ := invite.New("home", "family", time.Hour, now, rand.Reader)
+
 	permit, _ := invite.SignPermit(local.Permit, key, "root-1")
+
 	proof, _ := local.Proof("linux", device, local.Code, bytes.Repeat([]byte{7}, 32))
 	r := invites.Record{
 		InviteID:           proof.InviteID,
@@ -145,15 +160,25 @@ func TestCompanionRejectsApprovalCredentialResponse(t *testing.T) {
 		Proof:              proof,
 		Status:             invites.StatusPending,
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if request.Method == http.MethodGet {
-			_ = json.NewEncoder(w).Encode(r)
-			return
-		}
-		_, _ = w.Write([]byte(`{"device":{"credential":"secret"}}`))
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			if request.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(r)
+				return
+			}
+
+			_, _ = w.Write([]byte(`{"device":{"credential":"secret"}}`))
+		}),
+	)
 	defer server.Close()
-	err := (RemoteApprover{Endpoint: server.URL}).Approve(context.Background(), r.InviteID, local.Code, key)
+
+	err := (RemoteApprover{Endpoint: server.URL}).Approve(
+		context.Background(),
+		r.InviteID,
+		local.Code,
+		key,
+	)
+
 	if err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("unsafe approval response accepted or echoed: %v", err)
 	}

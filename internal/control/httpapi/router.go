@@ -120,9 +120,11 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		if strings.HasPrefix(request.URL.Path, "/api/") || strings.HasPrefix(request.URL.Path, "/admin") {
+		if strings.HasPrefix(request.URL.Path, "/api/") ||
+			strings.HasPrefix(request.URL.Path, "/admin") {
 			w.Header().Set("Cache-Control", "no-store")
 		}
+
 		next.ServeHTTP(w, request)
 	})
 }

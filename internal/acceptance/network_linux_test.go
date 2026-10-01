@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux && network_acceptance
 
 package acceptance
 
@@ -111,9 +111,23 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 	configureTopology(t, clientNS, gatewayNS, lanNS, false)
 	// Bootstrap default-deny BEFORE bringing up the encrypted interface.
 	// With no ACL even a valid WireGuard handshake conveys no LAN authority.
-	applyDefaultDenyPolicy(t, gatewayNS, "wg0", nil, policy.Snapshot{DefaultAction: policy.ActionDeny})
+	applyDefaultDenyPolicy(
+		t,
+		gatewayNS,
+		"wg0",
+		nil,
+		policy.Snapshot{DefaultAction: policy.ActionDeny},
+	)
 	configureWireGuard(t, clientNS, gatewayNS)
-	if err := runInNamespace(lanNS, "ip", "route", "replace", "10.200.0.0/24", "via", "192.168.50.1"); err != nil {
+	if err := runInNamespace(
+		lanNS,
+		"ip",
+		"route",
+		"replace",
+		"10.200.0.0/24",
+		"via",
+		"192.168.50.1",
+	); err != nil {
 		t.Fatal(err)
 	}
 	servers := startHTTPServers(t, lanNS)
@@ -266,7 +280,11 @@ func verifyUnrelatedForwarding(t *testing.T, clientNS, gatewayNS, lanNS string) 
 
 // Keep one real TCP connection through a policy update: new-connection curl
 // assertions alone cannot detect an established/related acceptance bypass.
-func verifyEstablishedRevoke(t *testing.T, clientNS, gatewayNS, lanNS, link string, peers map[string]netip.Prefix) {
+func verifyEstablishedRevoke(
+	t *testing.T,
+	clientNS, gatewayNS, lanNS, link string,
+	peers map[string]netip.Prefix,
+) {
 	t.Helper()
 	const echo = `import socket,threading
 s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
@@ -361,6 +379,7 @@ with s:
 func configureWireGuard(t *testing.T, clientNS, gatewayNS string) {
 	t.Helper()
 	clientPrivate, clientPublic := generateWireGuardKey(t)
+
 	gatewayPrivate, gatewayPublic := generateWireGuardKey(t)
 
 	for _, setup := range [][]string{
@@ -375,6 +394,7 @@ func configureWireGuard(t *testing.T, clientNS, gatewayNS string) {
 			t.Fatal(err)
 		}
 	}
+
 	if err := runWithInput(
 		gatewayNS,
 		gatewayPrivate+"\n",
@@ -396,6 +416,7 @@ func configureWireGuard(t *testing.T, clientNS, gatewayNS string) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := runWithInput(
 		clientNS,
 		clientPrivate+"\n",
@@ -417,10 +438,28 @@ func configureWireGuard(t *testing.T, clientNS, gatewayNS string) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := runInNamespace(gatewayNS, "ip", "route", "add", "10.200.0.2/32", "dev", "wg0"); err != nil {
+
+	if err := runInNamespace(
+		gatewayNS,
+		"ip",
+		"route",
+		"add",
+		"10.200.0.2/32",
+		"dev",
+		"wg0",
+	); err != nil {
 		t.Fatal(err)
 	}
-	if err := runInNamespace(clientNS, "ip", "route", "add", "192.168.50.0/24", "dev", "wg0"); err != nil {
+
+	if err := runInNamespace(
+		clientNS,
+		"ip",
+		"route",
+		"add",
+		"192.168.50.0/24",
+		"dev",
+		"wg0",
+	); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -435,27 +474,57 @@ func generateWireGuardKey(t *testing.T) (private, public string) {
 
 func createVethTopology(t *testing.T, clientNS, gatewayNS, lanNS string) {
 	t.Helper()
-	if err := run("ip", "link", "add", "gt-client-peer", "type", "veth", "peer", "name", "gt0"); err != nil {
+
+	if err := run(
+		"ip",
+		"link",
+		"add",
+		"gt-client-peer",
+		"type",
+		"veth",
+		"peer",
+		"name",
+		"gt0",
+	); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := run("ip", "link", "set", "gt-client-peer", "netns", clientNS); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := run("ip", "link", "set", "gt0", "netns", gatewayNS); err != nil {
 		t.Fatal(err)
 	}
-	if err := run("ip", "link", "add", "gt-lan-peer", "type", "veth", "peer", "name", "lan0"); err != nil {
+
+	if err := run(
+		"ip",
+		"link",
+		"add",
+		"gt-lan-peer",
+		"type",
+		"veth",
+		"peer",
+		"name",
+		"lan0",
+	); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := run("ip", "link", "set", "gt-lan-peer", "netns", gatewayNS); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := run("ip", "link", "set", "lan0", "netns", lanNS); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func configureTopology(t *testing.T, clientNS, gatewayNS, lanNS string, routeLANViaOuterNetwork bool) {
+func configureTopology(
+	t *testing.T,
+	clientNS, gatewayNS, lanNS string,
+	routeLANViaOuterNetwork bool,
+) {
 	t.Helper()
 	commands := [][]string{
 		{clientNS, "ip", "link", "set", "lo", "up"},
@@ -473,8 +542,12 @@ func configureTopology(t *testing.T, clientNS, gatewayNS, lanNS string, routeLAN
 		{gatewayNS, "sysctl", "-w", "net.ipv4.ip_forward=1"},
 	}
 	if routeLANViaOuterNetwork {
-		commands = append(commands, []string{clientNS, "ip", "route", "add", "192.168.50.0/24", "via", "100.64.0.1"})
+		commands = append(
+			commands,
+			[]string{clientNS, "ip", "route", "add", "192.168.50.0/24", "via", "100.64.0.1"},
+		)
 	}
+
 	for _, command := range commands {
 		if err := runInNamespace(command[0], command[1:]...); err != nil {
 			t.Fatal(err)
@@ -605,12 +678,20 @@ if not data.startswith(b"SSH-2.0-"): raise SystemExit(1)`
 
 func runWithInput(namespace, input string, command ...string) error {
 	arguments := append([]string{"netns", "exec", namespace}, command...)
+
 	process := exec.Command("ip", arguments...)
 	process.Stdin = strings.NewReader(input)
+
 	output, err := process.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("ip %s: %w (%s)", strings.Join(arguments, " "), err, strings.TrimSpace(string(output)))
+		return fmt.Errorf(
+			"ip %s: %w (%s)",
+			strings.Join(arguments, " "),
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
+
 	return nil
 }
 
@@ -639,10 +720,18 @@ func run(command string, arguments ...string) error {
 func commandOutput(t *testing.T, command string, arguments ...string) string {
 	t.Helper()
 	process := exec.Command(command, arguments...)
+
 	output, err := process.CombinedOutput()
 	if err != nil {
-		t.Fatalf("%s %s: %v (%s)", command, strings.Join(arguments, " "), err, strings.TrimSpace(string(output)))
+		t.Fatalf(
+			"%s %s: %v (%s)",
+			command,
+			strings.Join(arguments, " "),
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
+
 	return string(output)
 }
 
@@ -650,9 +739,17 @@ func commandOutputWithInput(t *testing.T, input, command string, arguments ...st
 	t.Helper()
 	process := exec.Command(command, arguments...)
 	process.Stdin = strings.NewReader(input)
+
 	output, err := process.CombinedOutput()
 	if err != nil {
-		t.Fatalf("%s %s: %v (%s)", command, strings.Join(arguments, " "), err, strings.TrimSpace(string(output)))
+		t.Fatalf(
+			"%s %s: %v (%s)",
+			command,
+			strings.Join(arguments, " "),
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
+
 	return string(output)
 }

@@ -103,14 +103,20 @@ func (s *MemoryStore) HasCredentials(_ context.Context) (bool, error) {
 	return false, nil
 }
 
-func (s *MemoryStore) Credentials(_ context.Context, userHandle []byte) ([]webauthn.Credential, error) {
+func (s *MemoryStore) Credentials(
+	_ context.Context,
+	userHandle []byte,
+) ([]webauthn.Credential, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	credentials := s.credentials[string(userHandle)]
 	return append([]webauthn.Credential(nil), credentials...), nil
 }
 
-func (s *MemoryStore) Credential(_ context.Context, userHandle, credentialID []byte) (webauthn.Credential, error) {
+func (s *MemoryStore) Credential(
+	_ context.Context,
+	userHandle, credentialID []byte,
+) (webauthn.Credential, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, credential := range s.credentials[string(userHandle)] {
@@ -121,7 +127,11 @@ func (s *MemoryStore) Credential(_ context.Context, userHandle, credentialID []b
 	return webauthn.Credential{}, ErrInvalidCredential
 }
 
-func (s *MemoryStore) SaveCredential(_ context.Context, userHandle []byte, credential webauthn.Credential) error {
+func (s *MemoryStore) SaveCredential(
+	_ context.Context,
+	userHandle []byte,
+	credential webauthn.Credential,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// The first credential closes bootstrap under the same lock that performs
@@ -133,7 +143,11 @@ func (s *MemoryStore) SaveCredential(_ context.Context, userHandle []byte, crede
 	return nil
 }
 
-func (s *MemoryStore) UpdateCredential(_ context.Context, userHandle []byte, credential webauthn.Credential) error {
+func (s *MemoryStore) UpdateCredential(
+	_ context.Context,
+	userHandle []byte,
+	credential webauthn.Credential,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for index, stored := range s.credentials[string(userHandle)] {
@@ -156,7 +170,11 @@ func (s *MemoryStore) SaveCeremony(_ context.Context, ceremony Ceremony) error {
 	return nil
 }
 
-func (s *MemoryStore) ConsumeCeremony(_ context.Context, hash [32]byte, now time.Time) (Ceremony, error) {
+func (s *MemoryStore) ConsumeCeremony(
+	_ context.Context,
+	hash [32]byte,
+	now time.Time,
+) (Ceremony, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ceremony, ok := s.ceremonies[hash]

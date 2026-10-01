@@ -30,7 +30,11 @@ type Negotiated struct {
 	Capabilities []string `json:"capabilities"`
 }
 
-func (n Negotiated) Has(capability string) bool { return slices.Contains(n.Capabilities, capability) }
+func (n Negotiated) Has(
+	capability string,
+) bool {
+	return slices.Contains(n.Capabilities, capability)
+}
 
 type ProtocolError struct {
 	Code    string `json:"code"`
@@ -99,6 +103,7 @@ func (u CandidateUpdate) Validate() error {
 	if len(u.Candidates) == 0 || len(u.Candidates) > maxCandidates {
 		return fmt.Errorf("candidate count must be between 1 and %d", maxCandidates)
 	}
+
 	seen := make(map[string]struct{}, len(u.Candidates))
 	for _, candidate := range u.Candidates {
 		switch candidate.Type {
@@ -106,19 +111,25 @@ func (u CandidateUpdate) Validate() error {
 		default:
 			return fmt.Errorf("unsupported candidate type %q", candidate.Type)
 		}
+
 		if candidate.Priority == 0 {
 			return fmt.Errorf("candidate priority must be positive")
 		}
+
 		address, err := netip.ParseAddrPort(candidate.Address)
-		if err != nil || !address.IsValid() || address.Port() == 0 || address.Addr().IsUnspecified() {
+		if err != nil || !address.IsValid() || address.Port() == 0 ||
+			address.Addr().IsUnspecified() {
 			return fmt.Errorf("invalid candidate address %q", candidate.Address)
 		}
+
 		key := string(candidate.Type) + "\x00" + address.String()
 		if _, exists := seen[key]; exists {
 			return fmt.Errorf("duplicate candidate %q", candidate.Address)
 		}
+
 		seen[key] = struct{}{}
 	}
+
 	return nil
 }
 

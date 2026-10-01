@@ -10,12 +10,12 @@ disk: "30GiB"
 containerd:
   system: false
   user: false
-mounts:
-  - location: "~"
-    writable: true
+# vm-up selects only this checkout, read-only. Test state lives in guest /tmp.
+mounts: []
 provision:
   - mode: system
     script: |
       apt-get update
-      apt-get install -y nftables iproute2 wireguard-tools docker.io curl python3
-      modprobe tun || true
+      apt-get install -y nftables iproute2 wireguard-tools docker.io curl python3 systemd-resolved
+      modprobe tun
+      systemctl enable --now systemd-resolved

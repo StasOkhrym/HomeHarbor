@@ -18,7 +18,10 @@ const stunProbeTimeout = 5 * time.Second
 // STUN binding request. Reusing the socket matters: a NAT may allocate a
 // different public port for a separate discovery socket, making the resulting
 // candidate unusable for the WireGuard packets this bridge actually carries.
-func (b *UDPPairBridge) DiscoverServerReflexive(ctx context.Context, serverURI string) (netip.AddrPort, error) {
+func (b *UDPPairBridge) DiscoverServerReflexive(
+	ctx context.Context,
+	serverURI string,
+) (netip.AddrPort, error) {
 	if b == nil || b.udp == nil {
 		return netip.AddrPort{}, errors.New("UDP pair bridge is not initialized")
 	}

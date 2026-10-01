@@ -12,7 +12,13 @@ import (
 
 type unavailableLimitStore struct{}
 
-func (unavailableLimitStore) Allow(context.Context, string, string, int, time.Duration) (bool, time.Duration, error) {
+func (unavailableLimitStore) Allow(
+	context.Context,
+	string,
+	string,
+	int,
+	time.Duration,
+) (bool, time.Duration, error) {
 	return false, 0, errors.New("redis unavailable")
 }
 
@@ -30,6 +36,28 @@ func TestSharedLimiterFailsClosedOnStoreFailure(t *testing.T) {
 
 	if response.Code != http.StatusServiceUnavailable || called {
 		t.Fatalf("status=%d handler called=%v", response.Code, called)
+	}
+}
+
+func TestConfiguredRateLimitsPreserveSharedFailure(t *testing.T) {
+	for _, options := range [][]ServerOption{
+		{WithRateLimits(6, 12, 140, 2*time.Second), WithSharedRateLimits(unavailableLimitStore{})},
+		{WithSharedRateLimits(unavailableLimitStore{}), WithRateLimits(6, 12, 140, 2*time.Second)},
+		{WithRateLimits(6, 12, 140, 2*time.Second), WithSharedRateLimits(nil)},
+	} {
+		s := NewServer(nil, nil, options...)
+		if s.authLimiter.limit != 6 || s.deviceLimiter.limit != 12 {
+			t.Fatal("option order reset configured quotas")
+		}
+		response := httptest.NewRecorder()
+		s.authLimiter.Middleware(func(*http.Request) string { return "client" })(
+			http.HandlerFunc(
+				func(http.ResponseWriter, *http.Request) { t.Fatal("shared failure admitted request") },
+			),
+		).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/login", nil))
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d", response.Code)
+		}
 	}
 }
 

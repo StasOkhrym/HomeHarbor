@@ -132,7 +132,11 @@ func probeV2(t *testing.T, u *net.UDPConn, offer UDPPairV2Message) (string, *net
 	return string(b[5:n]), a
 }
 
-func (f *v2Fixture) bind(t *testing.T, ticket string, u *net.UDPConn) (UDPPairV2Message, *net.UDPAddr) {
+func (f *v2Fixture) bind(
+	t *testing.T,
+	ticket string,
+	u *net.UDPConn,
+) (UDPPairV2Message, *net.UDPAddr) {
 	t.Helper()
 	c, offer := f.offer(t, ticket)
 	challenge, _ := probeV2(t, u, offer)
@@ -257,7 +261,11 @@ func TestUDPV2ConfirmRequiresReturnChallengeAndAdmissionExpiry(t *testing.T) {
 			if mode == "expired" {
 				offset.Store(120)
 			}
-			_ = wsjson.Write(f.ctx, c, UDPPairV2Message{Protocol: "udp_pair_v2", Kind: "confirm", Challenge: challenge})
+			_ = wsjson.Write(
+				f.ctx,
+				c,
+				UDPPairV2Message{Protocol: "udp_pair_v2", Kind: "confirm", Challenge: challenge},
+			)
 			var reply UDPPairV2Message
 			if err := wsjson.Read(f.ctx, c, &reply); err == nil {
 				t.Fatalf("invalid confirmation accepted: %+v", reply)

@@ -193,13 +193,16 @@ func validateURL(label, raw string, requireHTTPS bool) error {
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
 		return fmt.Errorf("%s must not contain credentials or fragments", label)
 	}
+
 	scheme := strings.ToLower(parsed.Scheme)
 	if requireHTTPS && scheme != "https" {
 		return fmt.Errorf("%s must be HTTPS", label)
 	}
-	if !requireHTTPS && (scheme == "javascript" || scheme == "data" || scheme == "file" || scheme == "vbscript") {
+	if !requireHTTPS &&
+		(scheme == "javascript" || scheme == "data" || scheme == "file" || scheme == "vbscript") {
 		return fmt.Errorf("%s uses a disallowed scheme", label)
 	}
+
 	return nil
 }
 

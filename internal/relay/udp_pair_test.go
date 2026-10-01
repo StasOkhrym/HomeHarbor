@@ -16,7 +16,8 @@ func TestUDPPairDatagramRoundTripAndBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Kind != UDPPairKindData || decoded.Ticket != "ticket" || string(decoded.Payload) != "ciphertext" {
+	if decoded.Kind != UDPPairKindData || decoded.Ticket != "ticket" ||
+		string(decoded.Payload) != "ciphertext" {
 		t.Fatalf("decoded=%#v", decoded)
 	}
 	if _, err := EncodeUDPPairDatagram("", []byte("ciphertext")); err == nil {
@@ -114,7 +115,13 @@ func mustUDPClient(t *testing.T) *net.UDPConn {
 	return connection
 }
 
-func sendPairDatagram(t *testing.T, connection *net.UDPConn, destination *net.UDPAddr, ticket string, payload []byte) {
+func sendPairDatagram(
+	t *testing.T,
+	connection *net.UDPConn,
+	destination *net.UDPAddr,
+	ticket string,
+	payload []byte,
+) {
 	t.Helper()
 	data, err := EncodeUDPPairDatagram(ticket, payload)
 	if err != nil {

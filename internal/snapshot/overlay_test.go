@@ -21,10 +21,17 @@ func TestAllocateOverlayAddressSkipsReservedAndUsedHosts(t *testing.T) {
 
 func TestAllocateOverlayAddressRejectsPublicAndDefaultPools(t *testing.T) {
 	for _, pool := range []string{"0.0.0.0/0", "192.0.2.0/24", "203.0.113.0/24"} {
-		if _, err := AllocateOverlayAddress(netip.MustParsePrefix(pool), nil); !errors.Is(err, ErrInvalidOverlayPool) {
+		if _, err := AllocateOverlayAddress(
+			netip.MustParsePrefix(pool),
+			nil,
+		); !errors.Is(
+			err,
+			ErrInvalidOverlayPool,
+		) {
 			t.Fatalf("pool %s error=%v", pool, err)
 		}
 	}
+
 	if address, err := AllocateOverlayAddress(
 		netip.MustParsePrefix("100.64.0.0/30"),
 		nil,
@@ -36,6 +43,7 @@ func TestAllocateOverlayAddressRejectsPublicAndDefaultPools(t *testing.T) {
 
 func TestAllocateOverlayAddressReportsExhaustionAndInvalidUsedState(t *testing.T) {
 	pool := netip.MustParsePrefix("10.0.0.0/30")
+
 	if _, err := AllocateOverlayAddress(
 		pool,
 		[]string{"10.0.0.1/32", "10.0.0.2/32"},
@@ -45,7 +53,14 @@ func TestAllocateOverlayAddressReportsExhaustionAndInvalidUsedState(t *testing.T
 	) {
 		t.Fatalf("exhaustion error=%v", err)
 	}
-	if _, err := AllocateOverlayAddress(pool, []string{"not-an-address"}); !errors.Is(err, ErrInvalidOverlayPool) {
+
+	if _, err := AllocateOverlayAddress(
+		pool,
+		[]string{"not-an-address"},
+	); !errors.Is(
+		err,
+		ErrInvalidOverlayPool,
+	) {
 		t.Fatalf("invalid used error=%v", err)
 	}
 }

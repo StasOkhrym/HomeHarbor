@@ -84,9 +84,14 @@ func TestCompositePreparesEveryOwnerBeforeKernelMutation(t *testing.T) {
 	guard := &compositeGuard{calls: &calls}
 	peer := &compositeOwner{calls: &calls, failPrepare: true}
 	value := snapshot.NetworkSnapshot{Revision: 2}
-	if err := NewCompositeSnapshotApplier(guard, peer).Apply(context.Background(), value); err == nil {
+
+	if err := NewCompositeSnapshotApplier(
+		guard,
+		peer,
+	).Apply(context.Background(), value); err == nil {
 		t.Fatal("accepted invalid peer")
 	}
+
 	if !reflect.DeepEqual(calls, []string{"validate-gateway", "validate-peer"}) || guard.denied {
 		t.Fatalf("validation mutated kernel: calls=%v guard=%v", calls, guard.denied)
 	}
@@ -98,23 +103,35 @@ func TestCompositeFailureLeavesGuardUntilCompleteRetry(t *testing.T) {
 	peer := &compositeOwner{calls: &calls, failApply: true}
 	app := NewCompositeSnapshotApplier(guard, peer)
 	value := snapshot.NetworkSnapshot{Revision: 2}
+
 	if err := app.Apply(context.Background(), value); err == nil {
 		t.Fatal("hidden kernel failure")
 	}
+
 	if !guard.denied || guard.revision != 1 {
 		t.Fatalf("failed apply exposed mixed state: %#v", guard)
 	}
+
 	peer.failApply = false
 	calls = nil
+
 	if err := app.Apply(context.Background(), value); err != nil {
 		t.Fatal(err)
 	}
+
 	if guard.denied || guard.revision != 2 {
 		t.Fatalf("retry did not commit: %#v", guard)
 	}
 	if !reflect.DeepEqual(
 		calls,
-		[]string{"validate-gateway", "validate-peer", "deny", "apply-gateway", "apply-peer", "commit"},
+		[]string{
+			"validate-gateway",
+			"validate-peer",
+			"deny",
+			"apply-gateway",
+			"apply-peer",
+			"commit",
+		},
 	) {
 		t.Fatalf("unsafe order: %v", calls)
 	}

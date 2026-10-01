@@ -24,11 +24,12 @@ const maxTrackedRateLimitClients = 10_000
 // endpoints. It bounds credential guessing without pretending to be a global
 // distributed quota; multiple control replicas should add a shared edge limit.
 type RateLimiter struct {
-	shared RateLimitStore
-	bucket string
-	limit  int
-	window time.Duration
-	now    func() time.Time
+	shared       RateLimitStore
+	bucket       string
+	limit        int
+	window       time.Duration
+	storeTimeout time.Duration
+	now          func() time.Time
 
 	mu      sync.Mutex
 	clients map[string]rateWindow
@@ -36,21 +37,41 @@ type RateLimiter struct {
 
 // NewSharedRateLimiter never falls back to a process-local quota. The memory
 // constructor remains available for deterministic unit tests only.
-func NewSharedRateLimiter(store RateLimitStore, bucket string, limit int, window time.Duration) *RateLimiter {
-	return &RateLimiter{shared: store, bucket: bucket, limit: limit, window: window}
+func NewSharedRateLimiter(
+	store RateLimitStore,
+	bucket string,
+	limit int,
+	window time.Duration,
+) *RateLimiter {
+	return &RateLimiter{
+		shared:       store,
+		bucket:       bucket,
+		limit:        limit,
+		window:       window,
+		storeTimeout: time.Second,
+	}
 }
 
 func NewRateLimiter(limit int, window time.Duration, now func() time.Time) *RateLimiter {
 	if limit < 1 {
 		limit = 1
 	}
+
 	if window <= 0 {
 		window = time.Minute
 	}
+
 	if now == nil {
 		now = time.Now
 	}
-	return &RateLimiter{limit: limit, window: window, now: now, clients: make(map[string]rateWindow)}
+
+	return &RateLimiter{
+		limit:        limit,
+		window:       window,
+		storeTimeout: time.Second,
+		now:          now,
+		clients:      make(map[string]rateWindow),
+	}
 }
 
 func (l *RateLimiter) Allow(key string) bool {
@@ -102,8 +123,9 @@ func (l *RateLimiter) Middleware(key func(*http.Request) string) func(http.Handl
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			allowed, retry := false, l.window
 			if l.shared != nil {
-				ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+				ctx, cancel := context.WithTimeout(r.Context(), l.storeTimeout)
 				var err error
+
 				allowed, retry, err = l.shared.Allow(ctx, l.bucket, key(r), l.limit, l.window)
 				cancel()
 				if err != nil {
@@ -116,11 +138,14 @@ func (l *RateLimiter) Middleware(key func(*http.Request) string) func(http.Handl
 				writeError(w, http.StatusServiceUnavailable, "security state unavailable")
 				return
 			}
+
 			if !allowed {
-				w.Header().Set("Retry-After", strconv.FormatInt(max(1, int64((retry+time.Second-1)/time.Second)), 10))
+				w.Header().
+					Set("Retry-After", strconv.FormatInt(max(1, int64((retry+time.Second-1)/time.Second)), 10))
 				writeError(w, http.StatusTooManyRequests, "too many requests")
 				return
 			}
+
 			next.ServeHTTP(w, r)
 		})
 	}

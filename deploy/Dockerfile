@@ -1,7 +1,8 @@
 FROM golang:1.27.1-alpine AS build
 ARG TARGETARCH
 WORKDIR /src
-RUN apk add --no-cache ca-certificates git
+# The Go base already includes CA roots; public modules use the HTTPS proxy.
+# Git metadata is excluded from the build context, so no extra apk tools are needed.
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
@@ -22,5 +23,4 @@ ENTRYPOINT ["/relay"]
 
 FROM gcr.io/distroless/static-debian12:nonroot AS migrate
 COPY --from=build /out/migrate /migrate
-COPY --from=build /out/healthcheck /healthcheck
 ENTRYPOINT ["/migrate"]

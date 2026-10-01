@@ -7,7 +7,9 @@ import (
 )
 
 func TestNegotiateSelectsCurrentVersion(t *testing.T) {
-	result, err := Negotiate(Hello{Versions: []uint16{1}, Capabilities: []string{CapabilityRelay, CapabilityDirectUDP}})
+	result, err := Negotiate(
+		Hello{Versions: []uint16{1}, Capabilities: []string{CapabilityRelay, CapabilityDirectUDP}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,22 +82,34 @@ func TestCandidateUpdateValidateAcceptsBoundedEndpoints(t *testing.T) {
 
 func TestCandidateUpdateValidateRejectsUnsafeCandidates(t *testing.T) {
 	cases := []CandidateUpdate{
-		{Candidates: []Candidate{{Type: CandidateHost, Address: "192.168.1.10:51820", Priority: 1}}},
 		{
-			DestinationDeviceID: "gateway",
-			Candidates:          []Candidate{{Type: "unknown", Address: "192.168.1.10:51820", Priority: 1}},
+			Candidates: []Candidate{
+				{Type: CandidateHost, Address: "192.168.1.10:51820", Priority: 1},
+			},
 		},
 		{
 			DestinationDeviceID: "gateway",
-			Candidates:          []Candidate{{Type: CandidateHost, Address: "0.0.0.0:51820", Priority: 1}},
+			Candidates: []Candidate{
+				{Type: "unknown", Address: "192.168.1.10:51820", Priority: 1},
+			},
 		},
 		{
 			DestinationDeviceID: "gateway",
-			Candidates:          []Candidate{{Type: CandidateHost, Address: "192.168.1.10:0", Priority: 1}},
+			Candidates: []Candidate{
+				{Type: CandidateHost, Address: "0.0.0.0:51820", Priority: 1},
+			},
 		},
 		{
 			DestinationDeviceID: "gateway",
-			Candidates:          []Candidate{{Type: CandidateHost, Address: "192.168.1.10:51820", Priority: 0}},
+			Candidates: []Candidate{
+				{Type: CandidateHost, Address: "192.168.1.10:0", Priority: 1},
+			},
+		},
+		{
+			DestinationDeviceID: "gateway",
+			Candidates: []Candidate{
+				{Type: CandidateHost, Address: "192.168.1.10:51820", Priority: 0},
+			},
 		},
 		{
 			DestinationDeviceID: "gateway",
@@ -113,14 +127,19 @@ func TestCandidateUpdateValidateRejectsUnsafeCandidates(t *testing.T) {
 }
 
 func TestCandidateUpdateValidateRejectsOversizedList(t *testing.T) {
-	update := CandidateUpdate{DestinationDeviceID: "gateway", Candidates: make([]Candidate, maxCandidates+1)}
+	update := CandidateUpdate{
+		DestinationDeviceID: "gateway",
+		Candidates:          make([]Candidate, maxCandidates+1),
+	}
 	for index := range update.Candidates {
 		update.Candidates[index] = Candidate{
-			Type:     CandidateHost,
-			Address:  netip.AddrPortFrom(netip.MustParseAddr("192.168.1.10"), uint16(51820+index)).String(),
+			Type: CandidateHost,
+			Address: netip.AddrPortFrom(netip.MustParseAddr("192.168.1.10"), uint16(51820+index)).
+				String(),
 			Priority: uint32(index + 1),
 		}
 	}
+
 	if err := update.Validate(); err == nil {
 		t.Fatal("Validate() error=nil")
 	}

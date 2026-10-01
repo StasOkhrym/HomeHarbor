@@ -38,7 +38,8 @@ func TestPostgresPolicyRevisionAndRulesRollbackTogether(t *testing.T) {
 		t.Fatal("invalid foreign key accepted")
 	}
 	latest, err := repo.Latest(ctx)
-	if err != nil || latest.Revision != 1 || len(latest.Rules) != 1 || latest.Rules[0].SourceDeviceID != "client" {
+	if err != nil || latest.Revision != 1 || len(latest.Rules) != 1 ||
+		latest.Rules[0].SourceDeviceID != "client" {
 		t.Fatalf("failed replacement mutated history: %#v %v", latest, err)
 	}
 	var source string

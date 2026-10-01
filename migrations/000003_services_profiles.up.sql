@@ -16,13 +16,13 @@ CREATE TABLE access_profiles (
 );
 
 CREATE TABLE access_profile_services (
-    profile_id text NOT NULL REFERENCES access_profiles(id) ON DELETE CASCADE,
-    service_id text NOT NULL REFERENCES services(id) ON DELETE RESTRICT,
+    profile_id text NOT NULL REFERENCES access_profiles (id) ON DELETE CASCADE,
+    service_id text NOT NULL REFERENCES services (id) ON DELETE RESTRICT,
     PRIMARY KEY (profile_id, service_id)
 );
 
 CREATE TABLE access_profile_devices (
-    profile_id text NOT NULL REFERENCES access_profiles(id) ON DELETE CASCADE,
-    device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    profile_id text NOT NULL REFERENCES access_profiles (id) ON DELETE CASCADE,
+    device_id text NOT NULL REFERENCES devices (id) ON DELETE CASCADE,
     PRIMARY KEY (profile_id, device_id)
 );

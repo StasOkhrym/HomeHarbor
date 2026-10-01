@@ -288,7 +288,11 @@ func (a *BrowserAuth) finishBootstrap(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if _, err := a.passkeys.FinishBootstrap(r.Context(), input.CeremonyID, input.Response); err != nil {
+	if _, err := a.passkeys.FinishBootstrap(
+		r.Context(),
+		input.CeremonyID,
+		input.Response,
+	); err != nil {
 		if errors.Is(err, identity.ErrSecurityStateUnavailable) {
 			writeError(w, http.StatusServiceUnavailable, "security state unavailable")
 			return

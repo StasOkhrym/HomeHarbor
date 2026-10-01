@@ -50,7 +50,12 @@ type Service struct {
 	random   io.Reader
 }
 
-func NewService(store Repository, sessions SessionRepository, now func() time.Time, random io.Reader) *Service {
+func NewService(
+	store Repository,
+	sessions SessionRepository,
+	now func() time.Time,
+	random io.Reader,
+) *Service {
 	if now == nil {
 		now = time.Now
 	}

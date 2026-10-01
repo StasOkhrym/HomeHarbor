@@ -21,6 +21,8 @@ __pypackages__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.ansible/
+.cache/
 .hypothesis/
 .tox/
 .nox/
@@ -31,3 +33,9 @@ htmlcov/
 *.egg-info/
 *.egg
 state/
+
+node_modules/
+apps/ios/.build/
+apps/android/.gradle/
+apps/android/build/
+apps/android/local.properties

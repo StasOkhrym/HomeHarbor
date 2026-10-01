@@ -41,7 +41,12 @@ func NewAuditPipeline(bus interface {
 	message.Subscriber
 }, sink AuditSink,
 ) *AuditPipeline {
-	return &AuditPipeline{bus: bus, sink: sink, ready: make(chan struct{}), done: make(chan struct{})}
+	return &AuditPipeline{
+		bus:   bus,
+		sink:  sink,
+		ready: make(chan struct{}),
+		done:  make(chan struct{}),
+	}
 }
 
 // Ready closes after subscription registration, before any outbox dispatch.
@@ -87,7 +92,8 @@ func (p *AuditPipeline) Run(ctx context.Context) error {
 			}
 			var event devices.Event
 			err := json.Unmarshal(msg.Payload, &event)
-			if err == nil && (event.Type == "" || event.AggregateID == "" || event.OccurredAt.IsZero()) {
+			if err == nil &&
+				(event.Type == "" || event.AggregateID == "" || event.OccurredAt.IsZero()) {
 				err = errors.New("invalid outbox audit event")
 			}
 			if err == nil {

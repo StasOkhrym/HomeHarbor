@@ -8,4 +8,4 @@ CREATE TABLE event_outbox (
     last_error text
 );
 
-CREATE INDEX event_outbox_pending_idx ON event_outbox(id) WHERE published_at IS NULL;
+CREATE INDEX event_outbox_pending_idx ON event_outbox (id) WHERE published_at IS NULL;

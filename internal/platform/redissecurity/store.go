@@ -36,10 +36,16 @@ func (s *Store) key(purpose, key string) string {
 
 // PutChallenge refuses replacement: a collision must never change the proof
 // that an outstanding one-time nonce authorizes.
-func (s *Store) PutChallenge(ctx context.Context, purpose, key string, value []byte, ttl time.Duration) error {
+func (s *Store) PutChallenge(
+	ctx context.Context,
+	purpose, key string,
+	value []byte,
+	ttl time.Duration,
+) error {
 	if ttl < time.Millisecond || len(value) == 0 || len(value) > 64<<10 {
 		return errors.New("invalid challenge bounds")
 	}
+
 	stored, err := s.client.SetNX(ctx, s.key(purpose, key), value, ttl).Result()
 	if err != nil {
 		return fmt.Errorf("%w: save challenge", ErrUnavailable)
@@ -47,6 +53,7 @@ func (s *Store) PutChallenge(ctx context.Context, purpose, key string, value []b
 	if !stored {
 		return errors.New("challenge already exists")
 	}
+
 	return nil
 }
 

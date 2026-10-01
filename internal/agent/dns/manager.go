@@ -42,43 +42,57 @@ func (m *Manager) Apply(ctx context.Context, resolver netip.Addr, suffixes []str
 	if m == nil {
 		return errors.New("dns manager is nil")
 	}
+
 	canonical, err := ValidateSettings(resolver, suffixes)
 	if err != nil {
 		return err
 	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	previousActive := m.active
 	previousResolver := m.resolver
 	previousSuffixes := slices.Clone(m.suffixes)
 	m.dirty = true
+
 	if err := m.run(ctx, "revert", m.link); err != nil {
 		return fmt.Errorf("reset split DNS link: %w", err)
 	}
+
 	if err := m.applySettings(ctx, resolver, canonical); err != nil {
 		// Reapply the previous valid settings when an update fails. A bare
 		// revert would restore the host resolver but silently break existing
 		// private-name resolution during a transient command failure.
 		if previousActive {
-			if restoreErr := m.restoreSettings(previousResolver, previousSuffixes); restoreErr != nil {
+			if restoreErr := m.restoreSettings(
+				previousResolver,
+				previousSuffixes,
+			); restoreErr != nil {
 				m.active = false
 				m.resolver = netip.Addr{}
 				m.suffixes = nil
+
 				return errors.Join(err, fmt.Errorf("restore previous split DNS: %w", restoreErr))
 			}
 		} else {
 			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
+
 			if cleanupErr := m.run(cleanup, "revert", m.link); cleanupErr != nil {
 				return errors.Join(err, fmt.Errorf("revert failed split DNS: %w", cleanupErr))
 			}
+
 			m.dirty = false
 		}
+
 		return err
 	}
+
 	m.active = true
 	m.resolver = resolver
 	m.suffixes = canonical
+
 	return nil
 }
 
@@ -143,13 +157,15 @@ func (m *Manager) Close(ctx context.Context) error {
 
 // ValidateSettings is the pure preparation boundary shared by snapshot owners.
 func ValidateSettings(resolver netip.Addr, suffixes []string) ([]string, error) {
-	if !resolver.IsValid() || resolver.IsUnspecified() || resolver.IsMulticast() || resolver.Is4In6() ||
+	if !resolver.IsValid() || resolver.IsUnspecified() || resolver.IsMulticast() ||
+		resolver.Is4In6() ||
 		resolver.Zone() != "" {
 		return nil, errors.New("a concrete DNS resolver address is required")
 	}
 	if len(suffixes) == 0 {
 		return nil, errors.New("split DNS requires route-only suffixes")
 	}
+
 	return canonicalSuffixes(suffixes)
 }
 
@@ -158,27 +174,35 @@ func canonicalSuffixes(values []string) ([]string, error) {
 	result := make([]string, 0, len(values))
 	for _, value := range values {
 		value = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
-		if value == "" || strings.ContainsAny(value, "/\\:,@;\"'") || strings.HasPrefix(value, ".") ||
+		if value == "" || strings.ContainsAny(value, "/\\:,@;\"'") ||
+			strings.HasPrefix(value, ".") ||
 			strings.HasPrefix(value, "-") ||
 			strings.HasSuffix(value, "-") {
 			return nil, fmt.Errorf("invalid DNS suffix %q", value)
 		}
+
 		for _, label := range strings.Split(value, ".") {
-			if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") ||
+				strings.HasSuffix(label, "-") {
 				return nil, fmt.Errorf("invalid DNS suffix %q", value)
 			}
+
 			for _, character := range label {
-				if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
+				if (character < 'a' || character > 'z') && (character < '0' || character > '9') &&
+					character != '-' {
 					return nil, fmt.Errorf("invalid DNS suffix %q", value)
 				}
 			}
 		}
+
 		if _, exists := seen[value]; exists {
 			continue
 		}
+
 		seen[value] = struct{}{}
 		result = append(result, value)
 	}
+
 	slices.Sort(result)
 	return result, nil
 }
@@ -195,7 +219,13 @@ func runResolvectl(ctx context.Context, args ...string) error {
 	command := exec.CommandContext(ctx, "resolvectl", args...)
 	output, err := command.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("resolvectl %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+		return fmt.Errorf(
+			"resolvectl %s: %w (%s)",
+			strings.Join(args, " "),
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
+
 	return nil
 }

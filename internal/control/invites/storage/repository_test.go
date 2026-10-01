@@ -21,12 +21,16 @@ import (
 func TestPostgresInviteBlocksAfterFiveInvalidCodes(t *testing.T) {
 	pool := invitesTestPool(t)
 	store := New(pool)
+
 	rootPublic, rootPrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	now := time.Now().UTC()
+
 	profileID := uniqueInviteIntegrationID()
+
 	if _, err := pool.Exec(
 		context.Background(),
 		`INSERT INTO access_profiles(id,name,created_at) VALUES($1,$2,$3)`,
@@ -36,30 +40,43 @@ func TestPostgresInviteBlocksAfterFiveInvalidCodes(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	local, err := invite.New("home", profileID, time.Hour, now, rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	permit, err := invite.SignPermit(local.Permit, rootPrivate, "root-1")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	_, devicePrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := local.Proof(uniqueInviteIntegrationID(), devicePrivate, local.Code, bytes.Repeat([]byte{4}, 32))
+
+	proof, err := local.Proof(
+		uniqueInviteIntegrationID(),
+		devicePrivate,
+		local.Code,
+		bytes.Repeat([]byte{4}, 32),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	service := invites.NewService(store, rootPublic, "home", func() time.Time { return now })
+
 	if err := service.SubmitProof(context.Background(), permit, proof); err != nil {
 		t.Fatal(err)
 	}
+
 	wrongCode := "00000000"
 	if wrongCode == local.Code {
 		wrongCode = "00000001"
 	}
+
 	for range 4 {
 		if _, err := service.Approve(
 			context.Background(),
@@ -72,6 +89,7 @@ func TestPostgresInviteBlocksAfterFiveInvalidCodes(t *testing.T) {
 			t.Fatalf("invalid code error=%v, want ErrInvalidCode", err)
 		}
 	}
+
 	if _, err := service.Approve(
 		context.Background(),
 		local.Permit.InviteID,
@@ -82,11 +100,14 @@ func TestPostgresInviteBlocksAfterFiveInvalidCodes(t *testing.T) {
 	) {
 		t.Fatalf("fifth invalid code error=%v, want ErrInviteBlocked", err)
 	}
+
 	record, err := service.Get(context.Background(), local.Permit.InviteID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Status != invites.StatusBlocked || record.FailedCodeAttempts != invites.MaxInvalidCodeAttempts ||
+
+	if record.Status != invites.StatusBlocked ||
+		record.FailedCodeAttempts != invites.MaxInvalidCodeAttempts ||
 		record.BlockedAt == nil {
 		t.Fatalf("lockout record=%#v", record)
 	}

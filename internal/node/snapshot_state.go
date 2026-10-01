@@ -20,7 +20,11 @@ const maxSnapshotEnvelopeBytes = 64 << 10
 // cannot repair an invalid checkpoint or make an uncertain fsync durable.
 var ErrSnapshotState = errors.New("snapshot checkpoint unavailable or invalid")
 
-func loadSnapshotState(path string, root ed25519.PublicKey, networkID string) (snapshot.Envelope, error) {
+func loadSnapshotState(
+	path string,
+	root ed25519.PublicKey,
+	networkID string,
+) (snapshot.Envelope, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return snapshot.Envelope{}, err
@@ -28,11 +32,13 @@ func loadSnapshotState(path string, root ed25519.PublicKey, networkID string) (s
 	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
 		return snapshot.Envelope{}, errors.New("snapshot checkpoint must be a regular 0600 file")
 	}
+
 	file, err := os.Open(path)
 	if err != nil {
 		return snapshot.Envelope{}, err
 	}
 	defer func() { _ = file.Close() }()
+
 	data, err := io.ReadAll(io.LimitReader(file, maxSnapshotEnvelopeBytes+1))
 	if err != nil {
 		return snapshot.Envelope{}, err
@@ -40,13 +46,17 @@ func loadSnapshotState(path string, root ed25519.PublicKey, networkID string) (s
 	if len(data) > maxSnapshotEnvelopeBytes {
 		return snapshot.Envelope{}, errors.New("snapshot checkpoint exceeds envelope limit")
 	}
+
 	var envelope snapshot.Envelope
+
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return snapshot.Envelope{}, err
 	}
+
 	if _, err := snapshot.Verify(envelope, root, networkID); err != nil {
 		return snapshot.Envelope{}, err
 	}
+
 	return envelope, nil
 }
 

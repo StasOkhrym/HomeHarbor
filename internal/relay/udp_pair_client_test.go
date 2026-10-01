@@ -44,7 +44,10 @@ func TestUDPPairBridgeDiscoversReflexiveEndpointOnOwnedSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = bridge.udp.Close() }()
-	endpoint, err := bridge.DiscoverServerReflexive(context.Background(), "stun:"+stunServer.LocalAddr().String())
+	endpoint, err := bridge.DiscoverServerReflexive(
+		context.Background(),
+		"stun:"+stunServer.LocalAddr().String(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

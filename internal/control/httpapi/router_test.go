@@ -14,7 +14,10 @@ import (
 )
 
 func TestRouterAddsRequestID(t *testing.T) {
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		allowAuthorizer{},
+	).Handler()
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if response.Header().Get("X-Request-ID") == "" {
@@ -23,7 +26,10 @@ func TestRouterAddsRequestID(t *testing.T) {
 }
 
 func TestRouterPreservesIncomingRequestID(t *testing.T) {
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		allowAuthorizer{},
+	).Handler()
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	request.Header.Set("X-Request-ID", "external-request-id")
 	response := httptest.NewRecorder()
@@ -34,7 +40,10 @@ func TestRouterPreservesIncomingRequestID(t *testing.T) {
 }
 
 func TestRouterReplacesUnsafeRequestID(t *testing.T) {
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		allowAuthorizer{},
+	).Handler()
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	request.Header.Set("X-Request-ID", "request\nwith-secret")
 	response := httptest.NewRecorder()
@@ -45,7 +54,10 @@ func TestRouterReplacesUnsafeRequestID(t *testing.T) {
 }
 
 func TestRouterRejectsOversizedAPIBody(t *testing.T) {
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAuthorizer{}).Handler()
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		allowAuthorizer{},
+	).Handler()
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/enroll",
@@ -59,11 +71,17 @@ func TestRouterRejectsOversizedAPIBody(t *testing.T) {
 }
 
 func TestRecoverMiddlewareReturnsStableInternalError(t *testing.T) {
-	handler := recoverMiddleware(slog.Default())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		panic("database password=secret")
-	}))
+	handler := recoverMiddleware(
+		slog.Default(),
+	)(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			panic("database password=secret")
+		}),
+	)
 	response := httptest.NewRecorder()
+
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d", response.Code)
 	}
@@ -78,7 +96,10 @@ type readOnlyAuthorizer struct{}
 func (readOnlyAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) { return true, nil }
 
 func TestAdminMutationRequiresExplicitMutationAuthorization(t *testing.T) {
-	server := NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), readOnlyAuthorizer{})
+	server := NewServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		readOnlyAuthorizer{},
+	)
 	response := httptest.NewRecorder()
 	server.Handler().
 		ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/admin/enrollment-tokens", strings.NewReader(`{"role":"client","ttl_seconds":60}`)))

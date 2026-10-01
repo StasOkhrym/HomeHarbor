@@ -13,7 +13,10 @@ import (
 
 func TestTicketRoundTripAndExpiry(t *testing.T) {
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
-	issuer := TicketIssuer{Key: []byte("01234567890123456789012345678901"), Now: func() time.Time { return now }}
+	issuer := TicketIssuer{
+		Key: []byte("01234567890123456789012345678901"),
+		Now: func() time.Time { return now },
+	}
 	token, err := issuer.Issue("session-1", "device-1", time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +39,10 @@ func TestTicketRoundTripAndExpiry(t *testing.T) {
 
 func TestTicketRejectsMalformedClaims(t *testing.T) {
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
-	issuer := TicketIssuer{Key: []byte("01234567890123456789012345678901"), Now: func() time.Time { return now }}
+	issuer := TicketIssuer{
+		Key: []byte("01234567890123456789012345678901"),
+		Now: func() time.Time { return now },
+	}
 	token, err := issuer.Issue("session-1", "device-1", time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +87,12 @@ func TestPeerTicketBindsDestination(t *testing.T) {
 
 func TestPacketRoundTrip(t *testing.T) {
 	encoded, err := EncodePacket(
-		Packet{SessionID: "session-1", SourceDeviceID: "a", DestinationDeviceID: "b", Payload: []byte{1, 2, 3}},
+		Packet{
+			SessionID:           "session-1",
+			SourceDeviceID:      "a",
+			DestinationDeviceID: "b",
+			Payload:             []byte{1, 2, 3},
+		},
 	)
 	if err != nil {
 		t.Fatal(err)

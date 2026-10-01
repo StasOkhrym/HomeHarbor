@@ -11,7 +11,12 @@ import (
 
 func TestGenerateRecoveryCodesStoresOnlyHashes(t *testing.T) {
 	store := NewMemoryStore()
-	service := NewService(store, store, func() time.Time { return time.Unix(100, 0) }, &sequenceReader{next: 'r'})
+	service := NewService(
+		store,
+		store,
+		func() time.Time { return time.Unix(100, 0) },
+		&sequenceReader{next: 'r'},
+	)
 
 	codes, err := service.GenerateRecoveryCodes(context.Background(), 3)
 	if err != nil {
@@ -32,7 +37,12 @@ func TestGenerateRecoveryCodesStoresOnlyHashes(t *testing.T) {
 
 func TestRecoveryCodeCanBeConsumedOnlyOnceConcurrently(t *testing.T) {
 	store := NewMemoryStore()
-	service := NewService(store, store, func() time.Time { return time.Unix(100, 0) }, &sequenceReader{next: 'c'})
+	service := NewService(
+		store,
+		store,
+		func() time.Time { return time.Unix(100, 0) },
+		&sequenceReader{next: 'c'},
+	)
 	codes, err := service.GenerateRecoveryCodes(context.Background(), 1)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +78,13 @@ func TestSessionExpiresAndCanBeRevoked(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Hour)
-	if _, err = service.ValidateSession(context.Background(), issued.Token); !errors.Is(err, ErrInvalidCredential) {
+	if _, err = service.ValidateSession(
+		context.Background(),
+		issued.Token,
+	); !errors.Is(
+		err,
+		ErrInvalidCredential,
+	) {
 		t.Fatalf("expired error = %v", err)
 	}
 
@@ -80,14 +96,26 @@ func TestSessionExpiresAndCanBeRevoked(t *testing.T) {
 	if err = service.RevokeSession(context.Background(), issued.Token); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.ValidateSession(context.Background(), issued.Token); !errors.Is(err, ErrInvalidCredential) {
+	if _, err = service.ValidateSession(
+		context.Background(),
+		issued.Token,
+	); !errors.Is(
+		err,
+		ErrInvalidCredential,
+	) {
 		t.Fatalf("revoked error = %v", err)
 	}
 }
 
 func TestInvalidSessionTokenUsesGenericError(t *testing.T) {
 	service := NewService(NewMemoryStore(), NewMemoryStore(), time.Now, &sequenceReader{next: 'x'})
-	if _, err := service.ValidateSession(context.Background(), "unknown"); !errors.Is(err, ErrInvalidCredential) {
+	if _, err := service.ValidateSession(
+		context.Background(),
+		"unknown",
+	); !errors.Is(
+		err,
+		ErrInvalidCredential,
+	) {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -105,10 +133,22 @@ func (unavailableSessions) RevokeSession(context.Context, [32]byte, time.Time) e
 func TestSessionStoreOutageIsNotAnInvalidCredential(t *testing.T) {
 	store := unavailableSessions{NewMemoryStore()}
 	service := NewService(store, store, time.Now, nil)
-	if _, err := service.ValidateSession(context.Background(), "opaque"); !errors.Is(err, ErrSecurityStateUnavailable) {
+	if _, err := service.ValidateSession(
+		context.Background(),
+		"opaque",
+	); !errors.Is(
+		err,
+		ErrSecurityStateUnavailable,
+	) {
 		t.Fatalf("lookup outage was hidden: %v", err)
 	}
-	if err := service.RevokeSession(context.Background(), "opaque"); !errors.Is(err, ErrSecurityStateUnavailable) {
+	if err := service.RevokeSession(
+		context.Background(),
+		"opaque",
+	); !errors.Is(
+		err,
+		ErrSecurityStateUnavailable,
+	) {
 		t.Fatalf("revoke outage was hidden: %v", err)
 	}
 }

@@ -134,22 +134,33 @@ var canonicalMode = func() cbor.EncMode {
 	return mode
 }()
 
-func New(networkID, profileID string, ttl time.Duration, now time.Time, random io.Reader) (Invite, error) {
-	if strings.TrimSpace(networkID) == "" || strings.TrimSpace(profileID) == "" || ttl <= 0 || random == nil {
+func New(
+	networkID, profileID string,
+	ttl time.Duration,
+	now time.Time,
+	random io.Reader,
+) (Invite, error) {
+	if strings.TrimSpace(networkID) == "" || strings.TrimSpace(profileID) == "" || ttl <= 0 ||
+		random == nil {
 		return Invite{}, errors.New("network, profile, TTL, and random source are required")
 	}
+
 	var idBytes [16]byte
+
 	if _, err := io.ReadFull(random, idBytes[:]); err != nil {
 		return Invite{}, err
 	}
+
 	publicKey, privateKey, err := ed25519.GenerateKey(random)
 	if err != nil {
 		return Invite{}, err
 	}
+
 	code, err := rand.Int(random, big.NewInt(100_000_000))
 	if err != nil {
 		return Invite{}, err
 	}
+
 	return Invite{
 		Permit: Permit{
 			Version:      Version,
@@ -165,15 +176,18 @@ func New(networkID, profileID string, ttl time.Duration, now time.Time, random i
 }
 
 func SignPermit(permit Permit, root ed25519.PrivateKey, keyID string) (SignedPermit, error) {
-	if len(root) != ed25519.PrivateKeySize || strings.TrimSpace(keyID) == "" || permit.Version != Version ||
+	if len(root) != ed25519.PrivateKeySize || strings.TrimSpace(keyID) == "" ||
+		permit.Version != Version ||
 		permit.InviteID == "" ||
 		len(permit.InvitePublic) != ed25519.PublicKeySize {
 		return SignedPermit{}, ErrInvalidPermit
 	}
+
 	payload, err := canonicalMode.Marshal(permit)
 	if err != nil {
 		return SignedPermit{}, err
 	}
+
 	return SignedPermit{
 		Version:   Version,
 		KeyID:     keyID,
@@ -182,16 +196,24 @@ func SignPermit(permit Permit, root ed25519.PrivateKey, keyID string) (SignedPer
 	}, nil
 }
 
-func VerifyPermit(signed SignedPermit, root ed25519.PublicKey, networkID string, now time.Time) error {
+func VerifyPermit(
+	signed SignedPermit,
+	root ed25519.PublicKey,
+	networkID string,
+	now time.Time,
+) error {
 	if signed.Version != Version || len(root) != ed25519.PublicKeySize || signed.KeyID == "" ||
 		len(signed.Signature) != ed25519.SignatureSize ||
 		!ed25519.Verify(root, append([]byte(permitDomain), signed.Payload...), signed.Signature) {
 		return ErrInvalidPermit
 	}
+
 	var permit Permit
+
 	if err := cbor.Unmarshal(signed.Payload, &permit); err != nil {
 		return ErrInvalidPermit
 	}
+
 	canonical, err := canonicalMode.Marshal(permit)
 	if err != nil || string(canonical) != string(signed.Payload) || permit.Version != Version ||
 		permit.NetworkID != networkID ||
@@ -201,6 +223,7 @@ func VerifyPermit(signed SignedPermit, root ed25519.PublicKey, networkID string,
 	if now.Unix() >= permit.ExpiresAt {
 		return ErrExpiredInvite
 	}
+
 	return nil
 }
 
@@ -278,6 +301,7 @@ func (i Invite) Proof(
 
 func VerifyProof(signed SignedPermit, proof Proof, profileID string, now time.Time) error {
 	var permit Permit
+
 	if err := cbor.Unmarshal(
 		signed.Payload,
 		&permit,
@@ -285,6 +309,7 @@ func VerifyProof(signed SignedPermit, proof Proof, profileID string, now time.Ti
 		len(proof.CodeDigest) != sha256.Size {
 		return ErrInvalidProof
 	}
+
 	payload, err := canonicalMode.Marshal(struct {
 		Version            uint16 `cbor:"version"`
 		InviteID           string `cbor:"invite_id"`
@@ -293,10 +318,20 @@ func VerifyProof(signed SignedPermit, proof Proof, profileID string, now time.Ti
 		WireGuardPublicKey []byte `cbor:"wireguard_public_key"`
 		CodeDigest         []byte `cbor:"code_digest"`
 	}{proof.Version, proof.InviteID, proof.DeviceID, proof.DevicePublicKey, proof.WireGuardPublicKey, proof.CodeDigest})
-	if err != nil || !ed25519.Verify(permit.InvitePublic, append([]byte(proofDomain), payload...), proof.Signature) ||
-		!ed25519.Verify(proof.DevicePublicKey, append([]byte(proofDomain), payload...), proof.DeviceSignature) {
+	if err != nil ||
+		!ed25519.Verify(
+			permit.InvitePublic,
+			append([]byte(proofDomain), payload...),
+			proof.Signature,
+		) ||
+		!ed25519.Verify(
+			proof.DevicePublicKey,
+			append([]byte(proofDomain), payload...),
+			proof.DeviceSignature,
+		) {
 		return ErrInvalidProof
 	}
+
 	return nil
 }
 
@@ -311,28 +346,38 @@ func validWireGuardPublicKey(value []byte) bool {
 // VerifyProofWithCode is intended for the trusted companion. The control
 // plane can verify the one-time signature, but only the companion knows the
 // separately delivered code and can complete the proof verification.
-func VerifyProofWithCode(signed SignedPermit, proof Proof, profileID, code string, now time.Time) error {
+func VerifyProofWithCode(
+	signed SignedPermit,
+	proof Proof,
+	profileID, code string,
+	now time.Time,
+) error {
 	if err := VerifyProof(signed, proof, profileID, now); err != nil {
 		return err
 	}
+
 	if !bytes.Equal(proof.CodeDigest, codeDigest(code)) {
 		return ErrInvalidProof
 	}
+
 	return nil
 }
 
 func SignApproval(approval Approval, root ed25519.PrivateKey) (SignedApproval, error) {
-	if len(root) != ed25519.PrivateKeySize || approval.Version != Version || approval.InviteID == "" ||
+	if len(root) != ed25519.PrivateKeySize || approval.Version != Version ||
+		approval.InviteID == "" ||
 		approval.ProfileID == "" ||
 		approval.DeviceID == "" ||
 		len(approval.DevicePublicKey) != ed25519.PublicKeySize ||
 		len(approval.WireGuardPublicKey) != 32 {
 		return SignedApproval{}, ErrInvalidApproval
 	}
+
 	payload, err := canonicalMode.Marshal(approval)
 	if err != nil {
 		return SignedApproval{}, err
 	}
+
 	return SignedApproval{
 		Version:   Version,
 		Payload:   payload,

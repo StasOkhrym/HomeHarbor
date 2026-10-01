@@ -1,0 +1,14 @@
+**/*.min.js
+**/*.min.css
+**/vendor/**
+**/generated/**
+.git/
+.local/
+.superpowers/
+.worktrees/
+state/
+secrets/
+node_modules/
+apps/
+**/*.html
+**/*.toml

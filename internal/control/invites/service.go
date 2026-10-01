@@ -116,18 +116,25 @@ func NewService(
 	return service
 }
 
-func (s *Service) SubmitProof(ctx context.Context, permit invite.SignedPermit, proof invite.Proof) error {
+func (s *Service) SubmitProof(
+	ctx context.Context,
+	permit invite.SignedPermit,
+	proof invite.Proof,
+) error {
 	now := s.now().UTC()
 	if err := invite.VerifyPermit(permit, s.root, s.networkID, now); err != nil {
 		return err
 	}
+
 	profileID, err := invite.PermitProfile(permit)
 	if err != nil {
 		return err
 	}
+
 	if err = invite.VerifyProof(permit, proof, profileID, now); err != nil {
 		return err
 	}
+
 	return s.store.Save(
 		ctx,
 		Record{
@@ -159,6 +166,7 @@ func (s *Service) Approve(ctx context.Context, inviteID, code string) (Record, e
 	if record.Status != StatusPending {
 		return Record{}, ErrInviteConsumed
 	}
+
 	if err = invite.VerifyProofWithCode(
 		record.Permit,
 		record.Proof,
@@ -166,20 +174,30 @@ func (s *Service) Approve(ctx context.Context, inviteID, code string) (Record, e
 		code,
 		s.now().UTC(),
 	); err != nil {
-		if recordErr := s.store.RecordInvalidCodeAttempt(ctx, inviteID, s.now().UTC()); recordErr != nil {
+		if recordErr := s.store.RecordInvalidCodeAttempt(
+			ctx,
+			inviteID,
+			s.now().UTC(),
+		); recordErr != nil {
 			return Record{}, recordErr
 		}
+
 		return Record{}, ErrInvalidCode
 	}
+
 	return s.store.Approve(ctx, inviteID, s.now().UTC())
 }
 
 // ApproveSigned accepts only the companion's root-signed exact diff. The
 // control plane verifies the pending record first, so a valid root signature
 // cannot be replayed against another device or profile.
-func (s *Service) ApproveSigned(ctx context.Context, signed invite.SignedApproval) (ApprovalResult, error) {
+func (s *Service) ApproveSigned(
+	ctx context.Context,
+	signed invite.SignedApproval,
+) (ApprovalResult, error) {
 	if s.workflow == nil {
 		return ApprovalResult{}, errors.New("invite approval workflow is required")
 	}
+
 	return s.workflow.ApproveSigned(ctx, signed)
 }

@@ -13,6 +13,26 @@ import (
 	relayruntime "github.com/sokhrym/go-tunnels/internal/relay"
 )
 
+func TestRelayConfiguredRuntimeReachesHTTPServer(t *testing.T) {
+	cfg := config.RelayServer{Runtime: config.DefaultRuntime(true)}
+	cfg.Server.ListenAddress = "127.0.0.1:0"
+	cfg.Server.UDPListenAddress = "127.0.0.1:0"
+	cfg.Security.TicketKey = "01234567890123456789012345678901"
+	cfg.Runtime.HTTPReadTimeout = 3 * time.Second
+	a := New(cfg, nil)
+	if a.initErr != nil {
+		t.Fatal(a.initErr)
+	}
+	t.Cleanup(func() {
+		if a.udpV2 != nil {
+			_ = a.udpV2.Close()
+		}
+	})
+	if a.server.ReadTimeout != 3*time.Second {
+		t.Fatal("configured HTTP read timeout ignored")
+	}
+}
+
 func TestRelayReadinessFollowsUDPListenerLifecycle(t *testing.T) {
 	cfg := config.RelayServer{}
 	cfg.Server.ListenAddress = "127.0.0.1:0"
@@ -114,7 +134,11 @@ func TestRelayReadinessStaysFalseWhenUDPBindFails(t *testing.T) {
 		t.Fatal("Run() error=nil, want UDP bind failure")
 	}
 	if status := readinessStatus(app); status != http.StatusServiceUnavailable {
-		t.Fatalf("failed startup readiness status=%d, want %d", status, http.StatusServiceUnavailable)
+		t.Fatalf(
+			"failed startup readiness status=%d, want %d",
+			status,
+			http.StatusServiceUnavailable,
+		)
 	}
 }
 
@@ -129,7 +153,11 @@ func TestRelayExplicitRangeSelectsStartupPort(t *testing.T) {
 	cfg.Server.ListenAddress = "127.0.0.1:0"
 	cfg.Server.UDPListenAddress = "127.0.0.1:0"
 	cfg.Security.TicketKey = "01234567890123456789012345678901"
-	a := NewWithOptions(cfg, nil, Options{UDPV2: relayruntime.UDPPairV2Config{PortMin: port, PortMax: port}})
+	a := NewWithOptions(
+		cfg,
+		nil,
+		Options{UDPV2: relayruntime.UDPPairV2Config{PortMin: port, PortMax: port}},
+	)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- a.Run(ctx) }()

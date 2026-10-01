@@ -20,10 +20,24 @@ import (
 // The import graph is the module boundary: a domain must not acquire storage
 // or HTTP dependencies when another adapter is added to the composition root.
 func TestDomainModulesDoNotImportAdapters(t *testing.T) {
-	modules := []string{"identity", "devices", "routes", "policy", "services", "invites", "snapshots", "audit"}
+	modules := []string{
+		"identity",
+		"devices",
+		"routes",
+		"policy",
+		"services",
+		"invites",
+		"snapshots",
+		"audit",
+	}
 	for _, module := range modules {
 		t.Run(module, func(t *testing.T) {
-			checkDomainImports(t, filepath.Join("..", ".."), "internal/control/"+module, make(map[string]bool))
+			checkDomainImports(
+				t,
+				filepath.Join("..", ".."),
+				"internal/control/"+module,
+				make(map[string]bool),
+			)
 		})
 	}
 }
@@ -41,7 +55,8 @@ func checkDomainImports(t *testing.T, repositoryRoot, packagePath string, visite
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") ||
+			strings.HasSuffix(entry.Name(), "_test.go") {
 			continue
 		}
 		path := filepath.Join(root, entry.Name())

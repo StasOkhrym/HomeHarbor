@@ -39,25 +39,36 @@ func (a *stateApplier) Apply(_ context.Context, value snapshot.NetworkSnapshot) 
 
 func signedHistory(t *testing.T, count int) (ed25519.PublicKey, []snapshot.Envelope) {
 	t.Helper()
+
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	page := []snapshot.Envelope{}
 	var hash []byte
 	for i := 1; i <= count; i++ {
-		value := snapshot.NetworkSnapshot{NetworkID: "home", Revision: uint64(i), PreviousHash: hash}
+		value := snapshot.NetworkSnapshot{
+			NetworkID:    "home",
+			Revision:     uint64(i),
+			PreviousHash: hash,
+		}
 		// Earlier revisions intentionally do not contain the joining node.
 		if i == count {
-			value.Devices = []snapshot.Device{{ID: "device-1", Role: "client", OverlayAddress: "100.64.0.2/32"}}
+			value.Devices = []snapshot.Device{
+				{ID: "device-1", Role: "client", OverlayAddress: "100.64.0.2/32"},
+			}
 		}
+
 		envelope, err := snapshot.Sign(value, private, "root")
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		page = append(page, envelope)
 		hash = envelope.Hash
 	}
+
 	return public, page
 }
 
@@ -69,22 +80,30 @@ func historyServer(
 ) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/coordination/snapshots" || r.Header.Get("Authorization") != "Bearer credential" {
+		if r.URL.Path != "/api/v1/coordination/snapshots" ||
+			r.Header.Get("Authorization") != "Bearer credential" {
 			t.Errorf("unauthenticated history request: %s", r.URL)
+
 			w.WriteHeader(401)
 			return
 		}
+
 		after, err := strconv.ParseUint(r.URL.Query().Get("after_revision"), 10, 64)
 		if err != nil {
 			t.Error(err)
+
 			w.WriteHeader(400)
 			return
 		}
+
 		*cursors = append(*cursors, after)
+
 		limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+
 		if err != nil || limit < 1 || limit > 16 {
 			t.Errorf("limit=%d err=%v", limit, err)
 		}
+
 		result := []snapshot.Envelope{}
 		for _, envelope := range page {
 			value, _ := snapshot.Decode(envelope)
@@ -95,9 +114,11 @@ func historyServer(
 				}
 			}
 		}
+
 		if transform != nil {
 			result = transform(result)
 		}
+
 		_ = json.NewEncoder(w).Encode(result)
 	}))
 }
@@ -105,8 +126,10 @@ func historyServer(
 func TestSnapshotCatchUpVerifiesEveryPageAndAppliesOnlyTarget(t *testing.T) {
 	public, history := signedHistory(t, 5)
 	var cursors []uint64
+
 	server := historyServer(t, history, nil, &cursors)
 	defer server.Close()
+
 	cfg := CoordinationConfig{
 		URL:           "ws" + server.URL[len("http"):],
 		Credential:    "credential",
@@ -116,31 +139,56 @@ func TestSnapshotCatchUpVerifiesEveryPageAndAppliesOnlyTarget(t *testing.T) {
 		StatePath:     filepath.Join(t.TempDir(), "head.json"),
 	}
 	applier, cursor := &stateApplier{}, &coordinationCursor{}
-	if err := reconcileSnapshotHead(context.Background(), cfg, applier, cursor, history[4]); err != nil {
+
+	if err := reconcileSnapshotHead(
+		context.Background(),
+		cfg,
+		applier,
+		cursor,
+		history[4],
+	); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cursors, []uint64{0, 2, 4}) || !reflect.DeepEqual(applier.revisions, []uint64{5}) ||
+
+	if !reflect.DeepEqual(cursors, []uint64{0, 2, 4}) ||
+		!reflect.DeepEqual(applier.revisions, []uint64{5}) ||
 		cursor.revision != 5 {
 		t.Fatalf("requests=%v applied=%v cursor=%d", cursors, applier.revisions, cursor.revision)
 	}
+
 	info, err := os.Stat(cfg.StatePath)
+
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("checkpoint mode=%v err=%v", info, err)
 	}
+
 	restoredApplier := &stateApplier{}
+
 	restored, err := restoreSnapshotCursor(context.Background(), cfg, restoredApplier)
-	if err != nil || restored.revision != 5 || !reflect.DeepEqual(restoredApplier.revisions, []uint64{5}) {
+
+	if err != nil || restored.revision != 5 ||
+		!reflect.DeepEqual(restoredApplier.revisions, []uint64{5}) {
 		t.Fatalf("restore cursor=%v applied=%v err=%v", restored, restoredApplier.revisions, err)
 	}
-	if err := reconcileSnapshotHead(context.Background(), cfg, restoredApplier, &restored, history[4]); err != nil {
+
+	if err := reconcileSnapshotHead(
+		context.Background(),
+		cfg,
+		restoredApplier,
+		&restored,
+		history[4],
+	); err != nil {
 		t.Fatal(err)
 	}
+
 	if len(restoredApplier.revisions) != 1 || len(cursors) != 3 {
 		t.Fatal("valid same head fetched or reapplied")
 	}
+
 	forged := history[4]
 	forged.Signature = append([]byte(nil), forged.Signature...)
 	forged.Signature[0] ^= 1
+
 	if err := reconcileSnapshotHead(
 		context.Background(),
 		cfg,
@@ -166,13 +214,16 @@ func TestSnapshotCatchUpRejectsMissingGappedAndTamperedHistory(t *testing.T) {
 		{"signature", func(page []snapshot.Envelope) []snapshot.Envelope {
 			page[0].Signature = append([]byte(nil), page[0].Signature...)
 			page[0].Signature[0] ^= 1
+
 			return page
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var cursors []uint64
+
 			server := historyServer(t, history, test.change, &cursors)
 			defer server.Close()
+
 			cfg := CoordinationConfig{
 				URL:           "ws" + server.URL[len("http"):],
 				Credential:    "credential",
@@ -181,12 +232,21 @@ func TestSnapshotCatchUpRejectsMissingGappedAndTamperedHistory(t *testing.T) {
 				StatePath:     filepath.Join(t.TempDir(), "head.json"),
 			}
 			applier, cursor := &stateApplier{}, &coordinationCursor{}
-			if err := reconcileSnapshotHead(context.Background(), cfg, applier, cursor, history[3]); err == nil {
+
+			if err := reconcileSnapshotHead(
+				context.Background(),
+				cfg,
+				applier,
+				cursor,
+				history[3],
+			); err == nil {
 				t.Fatal("invalid history accepted")
 			}
+
 			if len(applier.revisions) != 0 || cursor.revision != 0 {
 				t.Fatal("invalid history mutated state")
 			}
+
 			if _, err := os.Stat(cfg.StatePath); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("checkpoint exists: %v", err)
 			}

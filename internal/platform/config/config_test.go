@@ -15,13 +15,25 @@ func TestLoadControlResolvesFileSecretAndEnvironmentOverride(t *testing.T) {
 	if err := os.WriteFile(secretPath, []byte("secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(signingKeyPath, []byte("01234567890123456789012345678901\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		signingKeyPath,
+		[]byte("01234567890123456789012345678901\n"),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(ceremonyKeyPath, []byte("abcdefghijklmnopqrstuvwxyzABCDEF\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		ceremonyKeyPath,
+		[]byte("abcdefghijklmnopqrstuvwxyzABCDEF\n"),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(relayKeyPath, []byte("01234567890123456789012345678901\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		relayKeyPath,
+		[]byte("01234567890123456789012345678901\n"),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(dir, "control.toml")
@@ -154,7 +166,11 @@ func TestControlValidationRequiresTrustedRootPublicKey(t *testing.T) {
 
 func TestLoadControlRejectsMissingRequiredValues(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.toml")
-	if err := os.WriteFile(path, []byte("[server]\nlisten_address = \":8080\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		path,
+		[]byte("[server]\nlisten_address = \":8080\"\n"),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadControl(path); err == nil {
@@ -166,7 +182,9 @@ func TestLoadRelayServerEnvironmentSecretOverridesMissingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relay.toml")
 	if err := os.WriteFile(
 		path,
-		[]byte("[server]\nlisten_address = \"127.0.0.1:0\"\n[security]\nticket_key_file = \"/missing/relay-ticket\"\n"),
+		[]byte(
+			"[server]\nlisten_address = \"127.0.0.1:0\"\n[security]\nticket_key_file = \"/missing/relay-ticket\"\n",
+		),
 		0o600,
 	); err != nil {
 		t.Fatal(err)
@@ -177,7 +195,8 @@ func TestLoadRelayServerEnvironmentSecretOverridesMissingFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Security.TicketKey != "01234567890123456789012345678901" || cfg.Server.UDPListenAddress != "127.0.0.1:0" {
+	if cfg.Security.TicketKey != "01234567890123456789012345678901" ||
+		cfg.Server.UDPListenAddress != "127.0.0.1:0" {
 		t.Fatalf("config=%#v", cfg)
 	}
 }
@@ -220,7 +239,8 @@ candidates = "203.0.113.2:51820"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Identity.StatePath != "state/custom-client.json" || cfg.Identity.Token != "invite-token" ||
+	if cfg.Identity.StatePath != "state/custom-client.json" ||
+		cfg.Identity.Token != "invite-token" ||
 		cfg.Relay.Ticket != "relay-ticket" ||
 		cfg.WireGuard.ListenPort != 51830 ||
 		cfg.Direct.Candidates != "203.0.113.2:51820" {
@@ -249,7 +269,11 @@ func TestLoadAgentAppliesSafeDefaults(t *testing.T) {
 func TestLoadAdminReadsDefaultsAndPassphraseFile(t *testing.T) {
 	dir := t.TempDir()
 	passphrasePath := filepath.Join(dir, "root-passphrase")
-	if err := os.WriteFile(passphrasePath, []byte("correct horse battery staple\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		passphrasePath,
+		[]byte("correct horse battery staple\n"),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(dir, "admin.toml")

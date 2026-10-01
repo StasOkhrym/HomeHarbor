@@ -29,13 +29,17 @@ type companionChallengeStore struct {
 	shared ChallengeRepository
 	mu     sync.Mutex
 	nonces map[string]time.Time
+	ttl    time.Duration
 }
 
 func newCompanionChallengeStore() *companionChallengeStore {
-	return &companionChallengeStore{nonces: make(map[string]time.Time)}
+	return &companionChallengeStore{nonces: make(map[string]time.Time), ttl: companionChallengeTTL}
 }
 
-func (s *companionChallengeStore) issue(ctx context.Context, now time.Time) (string, time.Time, error) {
+func (s *companionChallengeStore) issue(
+	ctx context.Context,
+	now time.Time,
+) (string, time.Time, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for nonce, expiresAt := range s.nonces {
@@ -51,14 +55,14 @@ func (s *companionChallengeStore) issue(ctx context.Context, now time.Time) (str
 		return "", time.Time{}, err
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(raw)
-	expiresAt := now.Add(companionChallengeTTL)
+	expiresAt := now.Add(s.ttl)
 	if s.shared != nil {
 		if err := s.shared.PutChallenge(
 			ctx,
 			"companion-read",
 			nonce,
 			[]byte("read"),
-			companionChallengeTTL,
+			s.ttl,
 		); err != nil {
 			return "", time.Time{}, err
 		}
@@ -68,7 +72,11 @@ func (s *companionChallengeStore) issue(ctx context.Context, now time.Time) (str
 	return nonce, expiresAt, nil
 }
 
-func (s *companionChallengeStore) consume(ctx context.Context, nonce string, now time.Time) (bool, error) {
+func (s *companionChallengeStore) consume(
+	ctx context.Context,
+	nonce string,
+	now time.Time,
+) (bool, error) {
 	if s.shared != nil {
 		value, err := s.shared.ConsumeChallenge(ctx, "companion-read", nonce)
 		return len(value) != 0 && err == nil, err

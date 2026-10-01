@@ -18,7 +18,10 @@ type racingRepository struct {
 	ready chan struct{}
 }
 
-func (r *racingRepository) Latest(ctx context.Context, networkID string) (snapshot.Envelope, error) {
+func (r *racingRepository) Latest(
+	ctx context.Context,
+	networkID string,
+) (snapshot.Envelope, error) {
 	envelope, err := r.MemoryStore.Latest(ctx, networkID)
 	if r.reads.Add(1) == 2 {
 		close(r.ready)
@@ -32,7 +35,11 @@ func TestPublishAcrossServiceInstancesHasOneWinner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, private, "root")
+	first, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
+		private,
+		"root",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +67,11 @@ func TestPublishRejectsSkippedGenesis(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	envelope, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 7}, private, "root")
+	envelope, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 7},
+		private,
+		"root",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +126,14 @@ func TestHistoryIsPagedVerifiedAndNetworkScoped(t *testing.T) {
 	if _, err := service.History(context.Background(), 6, 2); !errors.Is(err, ErrHistoryCursor) {
 		t.Fatalf("unknown cursor: %v", err)
 	}
-	if _, err := service.History(context.Background(), 0, MaxHistoryPageSize+1); !errors.Is(err, ErrHistoryCursor) {
+	if _, err := service.History(
+		context.Background(),
+		0,
+		MaxHistoryPageSize+1,
+	); !errors.Is(
+		err,
+		ErrHistoryCursor,
+	) {
 		t.Fatalf("unbounded page: %v", err)
 	}
 	other := NewService(repository, public, "other")
@@ -124,9 +142,18 @@ func TestHistoryIsPagedVerifiedAndNetworkScoped(t *testing.T) {
 		t.Fatalf("other history=%v err=%v", page, err)
 	}
 	repository.mu.Lock()
-	repository.history["home"] = append(repository.history["home"][:2], repository.history["home"][3:]...)
+	repository.history["home"] = append(
+		repository.history["home"][:2],
+		repository.history["home"][3:]...)
 	repository.mu.Unlock()
-	if _, err := service.History(context.Background(), 1, 4); !errors.Is(err, snapshot.ErrRevisionGap) {
+	if _, err := service.History(
+		context.Background(),
+		1,
+		4,
+	); !errors.Is(
+		err,
+		snapshot.ErrRevisionGap,
+	) {
 		t.Fatalf("missing revision: %v", err)
 	}
 }

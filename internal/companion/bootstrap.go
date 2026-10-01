@@ -96,7 +96,10 @@ func LoadSnapshotManifest(path string) (SnapshotManifest, error) {
 // SignInitialSnapshot creates only revision one. The control plane accepts it
 // only when no signed head exists, so rerunning the command cannot overwrite
 // an established network or silently reset its revision chain.
-func (m SnapshotManifest) SignInitialSnapshot(privateKey ed25519.PrivateKey, keyID string) (snapshot.Envelope, error) {
+func (m SnapshotManifest) SignInitialSnapshot(
+	privateKey ed25519.PrivateKey,
+	keyID string,
+) (snapshot.Envelope, error) {
 	networkID := strings.TrimSpace(m.NetworkID)
 	keyID = strings.TrimSpace(keyID)
 	if len(privateKey) != ed25519.PrivateKeySize || keyID == "" {
@@ -108,6 +111,7 @@ func (m SnapshotManifest) SignInitialSnapshot(privateKey ed25519.PrivateKey, key
 	if len(m.Gateways) == 0 {
 		return snapshot.Envelope{}, errors.New("initial snapshot must declare at least one gateway")
 	}
+
 	value := snapshot.NetworkSnapshot{
 		NetworkID: networkID,
 		Revision:  1,
@@ -130,9 +134,14 @@ func (m SnapshotManifest) SignInitialSnapshot(privateKey ed25519.PrivateKey, key
 			},
 		)
 	}
+
 	for _, gateway := range m.Gateways {
-		value.Gateways = append(value.Gateways, snapshot.Gateway{DeviceID: gateway.DeviceID, Name: gateway.Name})
+		value.Gateways = append(
+			value.Gateways,
+			snapshot.Gateway{DeviceID: gateway.DeviceID, Name: gateway.Name},
+		)
 	}
+
 	for _, route := range m.Routes {
 		value.Routes = append(
 			value.Routes,
@@ -145,6 +154,7 @@ func (m SnapshotManifest) SignInitialSnapshot(privateKey ed25519.PrivateKey, key
 			},
 		)
 	}
+
 	for _, service := range m.Services {
 		value.Services = append(
 			value.Services,
@@ -159,6 +169,7 @@ func (m SnapshotManifest) SignInitialSnapshot(privateKey ed25519.PrivateKey, key
 			},
 		)
 	}
+
 	for _, profile := range m.Profiles {
 		value.Profiles = append(
 			value.Profiles,
@@ -171,6 +182,7 @@ func (m SnapshotManifest) SignInitialSnapshot(privateKey ed25519.PrivateKey, key
 			},
 		)
 	}
+
 	for _, rule := range m.ACL {
 		value.ACL = append(
 			value.ACL,
@@ -184,5 +196,6 @@ func (m SnapshotManifest) SignInitialSnapshot(privateKey ed25519.PrivateKey, key
 			},
 		)
 	}
+
 	return snapshot.Sign(value, privateKey, keyID)
 }

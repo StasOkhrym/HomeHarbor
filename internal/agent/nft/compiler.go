@@ -12,7 +12,11 @@ import (
 
 var interfaceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,15}$`)
 
-func Compile(interfaceName string, peerAddresses map[string]netip.Prefix, snapshot policy.Snapshot) (string, error) {
+func Compile(
+	interfaceName string,
+	peerAddresses map[string]netip.Prefix,
+	snapshot policy.Snapshot,
+) (string, error) {
 	if !interfaceNamePattern.MatchString(interfaceName) {
 		return "", errors.New("invalid tunnel interface name")
 	}
@@ -23,7 +27,8 @@ func Compile(interfaceName string, peerAddresses map[string]netip.Prefix, snapsh
 	for id, prefix := range peerAddresses {
 		// WireGuard binds a key to exactly one overlay host. A subnet or
 		// duplicate identity here would let one peer impersonate another ACL source.
-		if id == "" || !prefix.IsValid() || prefix.Bits() != prefix.Addr().BitLen() || prefix.Addr().IsUnspecified() ||
+		if id == "" || !prefix.IsValid() || prefix.Bits() != prefix.Addr().BitLen() ||
+			prefix.Addr().IsUnspecified() ||
 			prefix.Addr().IsMulticast() ||
 			prefix.Addr().Is4In6() {
 			return "", fmt.Errorf("device %s requires a concrete overlay host prefix", id)
@@ -99,6 +104,11 @@ func Compile(interfaceName string, peerAddresses map[string]netip.Prefix, snapsh
 		}
 		fmt.Fprintf(&b, " accept comment %q\n", "go-tunnels:reply:"+rule.ID)
 	}
-	fmt.Fprintf(&b, "    iifname %q drop\n    oifname %q drop\n  }\n}\n", interfaceName, interfaceName)
+	fmt.Fprintf(
+		&b,
+		"    iifname %q drop\n    oifname %q drop\n  }\n}\n",
+		interfaceName,
+		interfaceName,
+	)
 	return b.String(), nil
 }

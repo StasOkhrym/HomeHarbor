@@ -34,36 +34,56 @@ type InviteIssuer struct {
 	now       func() time.Time
 }
 
-func NewInviteIssuer(session *Session, networkID, baseURL, keyID string, now func() time.Time) *InviteIssuer {
+func NewInviteIssuer(
+	session *Session,
+	networkID, baseURL, keyID string,
+	now func() time.Time,
+) *InviteIssuer {
 	if now == nil {
 		now = time.Now
 	}
-	return &InviteIssuer{Session: session, NetworkID: networkID, BaseURL: baseURL, KeyID: keyID, now: now}
+
+	return &InviteIssuer{
+		Session:   session,
+		NetworkID: networkID,
+		BaseURL:   baseURL,
+		KeyID:     keyID,
+		now:       now,
+	}
 }
 
 // Issue creates a signed permit without persisting the short code remotely.
 // The caller is responsible for showing Code through a different channel.
-func (i *InviteIssuer) Issue(profileID string, ttl time.Duration) (link, code, inviteID string, err error) {
-	if i == nil || i.Session == nil || strings.TrimSpace(i.NetworkID) == "" || strings.TrimSpace(i.BaseURL) == "" ||
+func (i *InviteIssuer) Issue(
+	profileID string,
+	ttl time.Duration,
+) (link, code, inviteID string, err error) {
+	if i == nil || i.Session == nil || strings.TrimSpace(i.NetworkID) == "" ||
+		strings.TrimSpace(i.BaseURL) == "" ||
 		strings.TrimSpace(i.KeyID) == "" {
 		return "", "", "", errors.New("invite issuer is not configured")
 	}
+
 	root, err := i.Session.PrivateKey()
 	if err != nil {
 		return "", "", "", err
 	}
+
 	local, err := invite.New(i.NetworkID, profileID, ttl, i.now().UTC(), rand.Reader)
 	if err != nil {
 		return "", "", "", err
 	}
+
 	permit, err := invite.SignPermit(local.Permit, root, i.KeyID)
 	if err != nil {
 		return "", "", "", err
 	}
+
 	link, err = local.Link(i.BaseURL, permit)
 	if err != nil {
 		return "", "", "", err
 	}
+
 	return link, local.Code, local.Permit.InviteID, nil
 }
 
@@ -78,7 +98,11 @@ type RemoteApprover struct {
 	Attempts    InviteAttemptStore
 }
 
-func (a RemoteApprover) Approve(ctx context.Context, inviteID, code string, root ed25519.PrivateKey) error {
+func (a RemoteApprover) Approve(
+	ctx context.Context,
+	inviteID, code string,
+	root ed25519.PrivateKey,
+) error {
 	if a.Client == nil {
 		a.Client = http.DefaultClient
 	}
@@ -123,20 +147,37 @@ func (a RemoteApprover) Approve(ctx context.Context, inviteID, code string, root
 	if pending.Status == controlinvites.StatusApproved && pending.ApprovedAt != nil {
 		checkAt = pending.ApprovedAt.UTC()
 	}
-	if pending.Status != controlinvites.StatusPending && pending.Status != controlinvites.StatusApproved {
+	if pending.Status != controlinvites.StatusPending &&
+		pending.Status != controlinvites.StatusApproved {
 		return controlinvites.ErrInviteConsumed
 	}
 	network, err := invite.PermitNetworkID(pending.Permit)
 	if err != nil {
 		return err
 	}
-	if err := invite.VerifyPermit(pending.Permit, root.Public().(ed25519.PublicKey), network, checkAt); err != nil {
+	if err := invite.VerifyPermit(
+		pending.Permit,
+		root.Public().(ed25519.PublicKey),
+		network,
+		checkAt,
+	); err != nil {
 		return err
 	}
-	if err := invite.VerifyProofWithCode(pending.Permit, pending.Proof, pending.ProfileID, code, checkAt); err != nil {
+	if err := invite.VerifyProofWithCode(
+		pending.Permit,
+		pending.Proof,
+		pending.ProfileID,
+		code,
+		checkAt,
+	); err != nil {
 		// Only a structurally valid proof can consume a local code attempt. The
 		// plaintext code and its digest remain inside the companion process.
-		if proofErr := invite.VerifyProof(pending.Permit, pending.Proof, pending.ProfileID, checkAt); proofErr != nil {
+		if proofErr := invite.VerifyProof(
+			pending.Permit,
+			pending.Proof,
+			pending.ProfileID,
+			checkAt,
+		); proofErr != nil {
 			return proofErr
 		}
 		if a.Attempts == nil {
@@ -166,7 +207,12 @@ func (a RemoteApprover) Approve(ctx context.Context, inviteID, code string, root
 		return err
 	}
 	approvalURL := fmt.Sprintf("%s/api/v1/invites/%s/approval", base, url.PathEscape(inviteID))
-	request, err = http.NewRequestWithContext(ctx, http.MethodPost, approvalURL, bytes.NewReader(body))
+	request, err = http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		approvalURL,
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return err
 	}
@@ -200,7 +246,11 @@ func (a RemoteApprover) Approve(ctx context.Context, inviteID, code string, root
 // intentionally separate from Approve: activation is durable, while snapshot
 // publication depends on the current control connection and can be retried
 // without consuming another invite or credential.
-func (a RemoteApprover) PublishSnapshot(ctx context.Context, inviteID string, root ed25519.PrivateKey) error {
+func (a RemoteApprover) PublishSnapshot(
+	ctx context.Context,
+	inviteID string,
+	root ed25519.PrivateKey,
+) error {
 	if a.Client == nil {
 		a.Client = http.DefaultClient
 	}
@@ -210,7 +260,8 @@ func (a RemoteApprover) PublishSnapshot(ctx context.Context, inviteID string, ro
 	if a.KeyID == "" {
 		a.KeyID = "root-1"
 	}
-	if strings.TrimSpace(a.Endpoint) == "" || inviteID == "" || len(root) != ed25519.PrivateKeySize ||
+	if strings.TrimSpace(a.Endpoint) == "" || inviteID == "" ||
+		len(root) != ed25519.PrivateKeySize ||
 		!a.OverlayPool.IsValid() {
 		return errors.New("invalid companion snapshot publication request")
 	}
@@ -281,17 +332,23 @@ func (a RemoteApprover) PublishSnapshot(ctx context.Context, inviteID string, ro
 // PublishInitialSnapshot sends revision one after the local companion has
 // signed an operator-authored manifest. The control service performs the
 // authoritative root-signature and empty-store checks.
-func (a RemoteApprover) PublishInitialSnapshot(ctx context.Context, envelope snapshot.Envelope) error {
+func (a RemoteApprover) PublishInitialSnapshot(
+	ctx context.Context,
+	envelope snapshot.Envelope,
+) error {
 	if a.Client == nil {
 		a.Client = http.DefaultClient
 	}
+
 	if strings.TrimSpace(a.Endpoint) == "" {
 		return errors.New("control endpoint is required")
 	}
+
 	base := strings.TrimRight(a.Endpoint, "/")
 	if err := validateControlEndpoint(base); err != nil {
 		return err
 	}
+
 	value, err := snapshot.Decode(envelope)
 	if err != nil {
 		return fmt.Errorf("validate initial snapshot: %w", err)
@@ -299,37 +356,50 @@ func (a RemoteApprover) PublishInitialSnapshot(ctx context.Context, envelope sna
 	if value.Revision != 1 || len(value.PreviousHash) != 0 {
 		return errors.New("initial snapshot must be revision one without a previous hash")
 	}
+
 	return a.publishSignedSnapshot(ctx, base, envelope)
 }
 
 // PublishDeviceRemoval publishes the signed snapshot that revokes one client
 // from the node data plane. The control plane only transports this envelope;
 // it cannot manufacture the removal or broaden it to a gateway/route change.
-func (a RemoteApprover) PublishDeviceRemoval(ctx context.Context, deviceID string, root ed25519.PrivateKey) error {
+func (a RemoteApprover) PublishDeviceRemoval(
+	ctx context.Context,
+	deviceID string,
+	root ed25519.PrivateKey,
+) error {
 	if a.Client == nil {
 		a.Client = http.DefaultClient
 	}
+
 	if a.Now == nil {
 		a.Now = time.Now
 	}
+
 	if a.KeyID == "" {
 		a.KeyID = "root-1"
 	}
-	if strings.TrimSpace(a.Endpoint) == "" || strings.TrimSpace(deviceID) == "" || len(root) != ed25519.PrivateKeySize {
+
+	if strings.TrimSpace(a.Endpoint) == "" || strings.TrimSpace(deviceID) == "" ||
+		len(root) != ed25519.PrivateKeySize {
 		return errors.New("invalid companion device-removal request")
 	}
+
 	base := strings.TrimRight(a.Endpoint, "/")
 	if err := validateControlEndpoint(base); err != nil {
 		return err
 	}
+
 	previous, networkID, err := a.loadSignedSnapshot(ctx, root)
 	if err != nil {
 		return err
 	}
+
 	session := NewSession(a.Now)
 	if err := session.Unlock(root); err != nil {
 		return err
 	}
+
 	next, err := NewSnapshotSigner(
 		session,
 		networkID,
@@ -339,6 +409,7 @@ func (a RemoteApprover) PublishDeviceRemoval(ctx context.Context, deviceID strin
 	if err != nil {
 		return fmt.Errorf("sign device removal for %s: %w", deviceID, err)
 	}
+
 	return a.publishSignedSnapshot(ctx, base, next)
 }
 
@@ -359,7 +430,10 @@ func (a RemoteApprover) loadSignedSnapshot(
 	}
 	if response.StatusCode != http.StatusOK {
 		_ = response.Body.Close()
-		return snapshot.Envelope{}, "", fmt.Errorf("load companion challenge: status %d", response.StatusCode)
+		return snapshot.Envelope{}, "", fmt.Errorf(
+			"load companion challenge: status %d",
+			response.StatusCode,
+		)
 	}
 	var challenge struct {
 		Nonce string `json:"nonce"`
@@ -372,7 +446,13 @@ func (a RemoteApprover) loadSignedSnapshot(
 	if challenge.Nonce == "" {
 		return snapshot.Envelope{}, "", errors.New("companion challenge is empty")
 	}
-	signature, err := protocol.SignCompanionRequest(http.MethodGet, snapshotPath, challenge.Nonce, a.KeyID, root)
+	signature, err := protocol.SignCompanionRequest(
+		http.MethodGet,
+		snapshotPath,
+		challenge.Nonce,
+		a.KeyID,
+		root,
+	)
 	if err != nil {
 		return snapshot.Envelope{}, "", err
 	}
@@ -382,14 +462,20 @@ func (a RemoteApprover) loadSignedSnapshot(
 	}
 	request.Header.Set("X-Go-Tunnels-Companion-Nonce", challenge.Nonce)
 	request.Header.Set("X-Go-Tunnels-Companion-Key-ID", a.KeyID)
-	request.Header.Set("X-Go-Tunnels-Companion-Signature", base64.RawURLEncoding.EncodeToString(signature))
+	request.Header.Set(
+		"X-Go-Tunnels-Companion-Signature",
+		base64.RawURLEncoding.EncodeToString(signature),
+	)
 	response, err = a.Client.Do(request)
 	if err != nil {
 		return snapshot.Envelope{}, "", err
 	}
 	if response.StatusCode != http.StatusOK {
 		_ = response.Body.Close()
-		return snapshot.Envelope{}, "", fmt.Errorf("load signed snapshot: status %d", response.StatusCode)
+		return snapshot.Envelope{}, "", fmt.Errorf(
+			"load signed snapshot: status %d",
+			response.StatusCode,
+		)
 	}
 	var previous snapshot.Envelope
 	if err := json.NewDecoder(response.Body).Decode(&previous); err != nil {
@@ -413,7 +499,11 @@ func snapshotNetworkID(envelope snapshot.Envelope) (string, error) {
 	return value.NetworkID, nil
 }
 
-func (a RemoteApprover) publishSignedSnapshot(ctx context.Context, base string, next snapshot.Envelope) error {
+func (a RemoteApprover) publishSignedSnapshot(
+	ctx context.Context,
+	base string,
+	next snapshot.Envelope,
+) error {
 	body, err := json.Marshal(next)
 	if err != nil {
 		return err
@@ -441,18 +531,23 @@ func (a RemoteApprover) publishSignedSnapshot(ctx context.Context, base string, 
 
 func validateControlEndpoint(raw string) error {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" ||
+		parsed.Fragment != "" ||
 		parsed.Path != "" {
-		return errors.New("control endpoint must be an origin without credentials, path, query, or fragment")
+		return errors.New(
+			"control endpoint must be an origin without credentials, path, query, or fragment",
+		)
 	}
 	if parsed.Scheme == "https" {
 		return nil
 	}
+
 	if parsed.Scheme == "http" {
 		host := parsed.Hostname()
 		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
 			return nil
 		}
 	}
+
 	return errors.New("control endpoint must use HTTPS; HTTP is allowed only for localhost testing")
 }

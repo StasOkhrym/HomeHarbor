@@ -22,7 +22,11 @@ func TestAgentRejectsUnsignedKernelModeBeforeCreatingIdentity(t *testing.T) {
 		args = append(args, "-state", state)
 		output, err := exec.Command(binary, args...).CombinedOutput()
 		if err == nil || !strings.Contains(string(output), "signed coordination") {
-			t.Errorf("unsigned kernel configuration accepted or failed for wrong reason: %v: %s", err, output)
+			t.Errorf(
+				"unsigned kernel configuration accepted or failed for wrong reason: %v: %s",
+				err,
+				output,
+			)
 		}
 		if _, err := os.Stat(state); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("invalid runtime created identity: %v", err)

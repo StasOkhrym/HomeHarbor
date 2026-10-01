@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -109,6 +110,11 @@ func NewPasskeyService(
 	if now == nil {
 		now = time.Now
 	}
+	// Production omits the injectable reader. Nonces and ceremony identifiers
+	// must still use cryptographic entropy; a supplied reader's errors propagate.
+	if random == nil {
+		random = rand.Reader
+	}
 	return &PasskeyService{
 		store:      store,
 		ceremonies: ceremonies,
@@ -194,16 +200,20 @@ func (s *PasskeyService) FinishLogin(
 	if err != nil {
 		return webauthn.Credential{}, fmt.Errorf("parse login response: %w", err)
 	}
-	_, credential, err := s.webAuthn.ValidatePasskeyLogin(func(rawID, userHandle []byte) (webauthn.User, error) {
-		if string(userHandle) != string(adminUserHandle) {
-			return nil, ErrInvalidCredential
-		}
-		stored, lookupErr := s.store.Credential(ctx, userHandle, rawID)
-		if lookupErr != nil {
-			return nil, ErrInvalidCredential
-		}
-		return adminUser{handle: userHandle, credentials: []webauthn.Credential{stored}}, nil
-	}, session, parsed)
+	_, credential, err := s.webAuthn.ValidatePasskeyLogin(
+		func(rawID, userHandle []byte) (webauthn.User, error) {
+			if string(userHandle) != string(adminUserHandle) {
+				return nil, ErrInvalidCredential
+			}
+			stored, lookupErr := s.store.Credential(ctx, userHandle, rawID)
+			if lookupErr != nil {
+				return nil, ErrInvalidCredential
+			}
+			return adminUser{handle: userHandle, credentials: []webauthn.Credential{stored}}, nil
+		},
+		session,
+		parsed,
+	)
 	if err != nil {
 		return webauthn.Credential{}, err
 	}

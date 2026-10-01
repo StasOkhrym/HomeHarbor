@@ -16,10 +16,13 @@ func TestSnapshotSignerAddsOnlyOneClientToExistingProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	session := NewSession(time.Now)
+
 	if err := session.Unlock(privateKey); err != nil {
 		t.Fatal(err)
 	}
+
 	previous, err := snapshot.Sign(snapshot.NetworkSnapshot{
 		NetworkID: "home",
 		Revision:  1,
@@ -32,31 +35,44 @@ func TestSnapshotSignerAddsOnlyOneClientToExistingProfile(t *testing.T) {
 				OverlayAddress:     "10.200.0.1/32",
 			},
 		},
-		Profiles: []snapshot.AccessProfile{{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}}},
-		Services: []snapshot.Service{{ID: "cloud", Name: "Cloud", Kind: "web", URL: "https://cloud.example"}},
+		Profiles: []snapshot.AccessProfile{
+			{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}},
+		},
+		Services: []snapshot.Service{
+			{ID: "cloud", Name: "Cloud", Kind: "web", URL: "https://cloud.example"},
+		},
 	}, privateKey, "root-1")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	signer := NewSnapshotSigner(session, "home", "root-1")
-	next, err := signer.SignDeviceAddition(previous, DeviceAddition{ProfileID: "family", Device: snapshot.Device{
-		ID:                 "phone",
-		Role:               "client",
-		IdentityPublicKey:  "phone-id",
-		WireGuardPublicKey: "phone-wg",
-		OverlayAddress:     "10.200.0.2/32",
-	}})
+
+	next, err := signer.SignDeviceAddition(
+		previous,
+		DeviceAddition{ProfileID: "family", Device: snapshot.Device{
+			ID:                 "phone",
+			Role:               "client",
+			IdentityPublicKey:  "phone-id",
+			WireGuardPublicKey: "phone-wg",
+			OverlayAddress:     "10.200.0.2/32",
+		}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := snapshot.VerifyNext(next, publicKey, "home", 1, previous.Hash); err != nil {
 		t.Fatal(err)
 	}
+
 	value, err := snapshot.Decode(next)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(value.Devices) != 2 || len(value.Profiles) != 1 || len(value.Profiles[0].DeviceIDs) != 1 ||
+
+	if len(value.Devices) != 2 || len(value.Profiles) != 1 ||
+		len(value.Profiles[0].DeviceIDs) != 1 ||
 		value.Profiles[0].DeviceIDs[0] != "phone" {
 		t.Fatalf("unexpected signed diff: %#v", value)
 	}
@@ -70,10 +86,13 @@ func TestSnapshotSignerCopiesOnlyExplicitProfileACLTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	session := NewSession(time.Now)
+
 	if err := session.Unlock(privateKey); err != nil {
 		t.Fatal(err)
 	}
+
 	previous, err := snapshot.Sign(snapshot.NetworkSnapshot{
 		NetworkID: "home",
 		Revision:  1,
@@ -87,7 +106,12 @@ func TestSnapshotSignerCopiesOnlyExplicitProfileACLTemplates(t *testing.T) {
 			},
 		},
 		Profiles: []snapshot.AccessProfile{
-			{ID: "family", Name: "Family", DeviceIDs: []string{"laptop"}, ACLRuleIDs: []string{"lan-web"}},
+			{
+				ID:         "family",
+				Name:       "Family",
+				DeviceIDs:  []string{"laptop"},
+				ACLRuleIDs: []string{"lan-web"},
+			},
 		},
 		ACL: []snapshot.ACLRule{
 			{
@@ -103,6 +127,7 @@ func TestSnapshotSignerCopiesOnlyExplicitProfileACLTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	next, err := NewSnapshotSigner(
 		session,
 		"home",
@@ -117,20 +142,25 @@ func TestSnapshotSignerCopiesOnlyExplicitProfileACLTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	value, err := snapshot.Decode(next)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(value.ACL) != 2 {
 		t.Fatalf("ACL rules=%#v", value.ACL)
 	}
+
 	var copied snapshot.ACLRule
 	for _, rule := range value.ACL {
 		if rule.SourceDeviceID == "phone" {
 			copied = rule
 		}
 	}
-	if copied.ID != "family/phone/lan-web" || copied.Destination != "10.0.0.0/24" || copied.PortFrom != 443 {
+
+	if copied.ID != "family/phone/lan-web" || copied.Destination != "10.0.0.0/24" ||
+		copied.PortFrom != 443 {
 		t.Fatalf("copied ACL=%#v", copied)
 	}
 }
@@ -140,10 +170,13 @@ func TestSnapshotSignerRemovesClientAndItsAccessExactly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	session := NewSession(time.Now)
+
 	if err := session.Unlock(privateKey); err != nil {
 		t.Fatal(err)
 	}
+
 	previous, err := snapshot.Sign(snapshot.NetworkSnapshot{
 		NetworkID: "home", Revision: 1,
 		Devices: []snapshot.Device{
@@ -178,7 +211,12 @@ func TestSnapshotSignerRemovesClientAndItsAccessExactly(t *testing.T) {
 				DeviceIDs:  []string{"phone", "laptop"},
 				ACLRuleIDs: []string{"phone-web", "laptop-web"},
 			},
-			{ID: "admins", Name: "Admins", DeviceIDs: []string{"laptop"}, ACLRuleIDs: []string{"laptop-web"}},
+			{
+				ID:         "admins",
+				Name:       "Admins",
+				DeviceIDs:  []string{"laptop"},
+				ACLRuleIDs: []string{"laptop-web"},
+			},
 		},
 		ACL: []snapshot.ACLRule{
 			{
@@ -211,21 +249,26 @@ func TestSnapshotSignerRemovesClientAndItsAccessExactly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := snapshot.VerifyNext(next, publicKey, "home", 1, previous.Hash); err != nil {
 		t.Fatal(err)
 	}
+
 	value, err := snapshot.Decode(next)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(value.Devices) != 2 {
 		t.Fatalf("devices after removal=%#v", value.Devices)
 	}
+
 	for _, device := range value.Devices {
 		if device.ID == "phone" {
 			t.Fatal("revoked device remained in snapshot")
 		}
 	}
+
 	if len(value.ACL) != 1 || value.ACL[0].ID != "laptop-web" {
 		t.Fatalf("ACL after removal=%#v", value.ACL)
 	}

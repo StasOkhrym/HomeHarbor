@@ -22,11 +22,18 @@ func NewIdentity() (Identity, error) {
 	if err != nil {
 		return Identity{}, fmt.Errorf("generate WireGuard private key: %w", err)
 	}
-	return Identity{PrivateKey: privateKey.String(), PublicKey: privateKey.PublicKey().String()}, nil
+
+	return Identity{
+		PrivateKey: privateKey.String(),
+		PublicKey:  privateKey.PublicKey().String(),
+	}, nil
 }
 
 func (i Identity) EnrollmentPublicKeys(identityPublicKey string) EnrollmentPublicKeys {
-	return EnrollmentPublicKeys{IdentityPublicKey: identityPublicKey, WireGuardPublicKey: i.PublicKey}
+	return EnrollmentPublicKeys{
+		IdentityPublicKey:  identityPublicKey,
+		WireGuardPublicKey: i.PublicKey,
+	}
 }
 
 func (i Identity) Save(path string) error {

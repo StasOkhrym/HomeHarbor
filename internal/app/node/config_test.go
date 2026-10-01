@@ -11,7 +11,9 @@ func TestConfigFlagsOverrideTOMLWithoutLosingOtherFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "node.toml")
 	if err := os.WriteFile(
 		path,
-		[]byte("[node]\nname = 'from-file'\nstate_path = 'private/state.json'\n[wireguard]\nlisten_port = 12345\n"),
+		[]byte(
+			"[node]\nname = 'from-file'\nstate_path = 'private/state.json'\n[wireguard]\nlisten_port = 12345\n",
+		),
 		0o600,
 	); err != nil {
 		t.Fatal(err)

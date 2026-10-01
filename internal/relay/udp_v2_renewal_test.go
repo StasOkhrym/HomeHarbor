@@ -73,7 +73,11 @@ func TestUDPV2FailedRenewalCannotCloseEstablishedIngress(t *testing.T) {
 					if err := wsjson.Write(
 						f.ctx,
 						c,
-						UDPPairV2Message{Protocol: UDPPairV2Protocol, Kind: "confirm", Challenge: "not-proven"},
+						UDPPairV2Message{
+							Protocol:  UDPPairV2Protocol,
+							Kind:      "confirm",
+							Challenge: "not-proven",
+						},
 					); err != nil {
 						t.Fatal(err)
 					}
@@ -129,7 +133,11 @@ func TestUDPV2LostRenewalAcknowledgmentPreservesIngress(t *testing.T) {
 			if err := wsjson.Write(
 				f.ctx,
 				c,
-				UDPPairV2Message{Protocol: UDPPairV2Protocol, Kind: "confirm", Challenge: challenge},
+				UDPPairV2Message{
+					Protocol:  UDPPairV2Protocol,
+					Kind:      "confirm",
+					Challenge: challenge,
+				},
 			); err != nil {
 				t.Fatal(err)
 			}

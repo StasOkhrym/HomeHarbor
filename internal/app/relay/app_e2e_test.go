@@ -88,8 +88,20 @@ func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
 		})
 	}()
 
-	waitForRelayUDP(t, wireGuardGateway, bridgeListenGateway, wireGuardClient, []byte("gateway-to-client"))
-	waitForRelayUDP(t, wireGuardClient, bridgeListenClient, wireGuardGateway, []byte("client-to-gateway"))
+	waitForRelayUDP(
+		t,
+		wireGuardGateway,
+		bridgeListenGateway,
+		wireGuardClient,
+		[]byte("gateway-to-client"),
+	)
+	waitForRelayUDP(
+		t,
+		wireGuardClient,
+		bridgeListenClient,
+		wireGuardGateway,
+		[]byte("client-to-gateway"),
+	)
 
 	cancel()
 	for range 2 {

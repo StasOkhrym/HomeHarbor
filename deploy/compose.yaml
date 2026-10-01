@@ -1,5 +1,5 @@
 services:
-  postgres:
+  db:
     image: postgres:17.6-alpine
     environment:
       POSTGRES_DB: go_tunnels
@@ -30,7 +30,11 @@ services:
           --appendonly no --save ""
     secrets: [redis_password]
     healthcheck:
-      test: ["CMD-SHELL", "REDISCLI_AUTH=$$(cat /run/secrets/redis_password) redis-cli ping | grep -qx PONG"]
+      test:
+        [
+          "CMD-SHELL",
+          "REDISCLI_AUTH=$$(cat /run/secrets/redis_password) redis-cli ping | grep -qx PONG",
+        ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -41,6 +45,7 @@ services:
     cap_drop: [ALL]
     restart: unless-stopped
   control:
+    user: "${RUNTIME_UID:-65532}:${RUNTIME_GID:-65532}"
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -49,10 +54,18 @@ services:
     configs:
       - source: control_config
         target: /etc/go-tunnels/control.toml
-    secrets: [postgres_password, redis_password, session_signing_key, ceremony_encryption_key, relay_ticket_key, root_public_key]
+    secrets:
+      [
+        postgres_password,
+        redis_password,
+        session_signing_key,
+        ceremony_encryption_key,
+        relay_ticket_key,
+        root_public_key,
+      ]
     depends_on:
-      migrate: {condition: service_completed_successfully}
-      redis: {condition: service_healthy}
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "/healthcheck", "http://127.0.0.1:8080/readyz"]
       interval: 5s
@@ -63,10 +76,10 @@ services:
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
-    cap_add: [NET_BIND_SERVICE]
     init: true
     restart: unless-stopped
   migrate:
+    user: "${RUNTIME_UID:-65532}:${RUNTIME_GID:-65532}"
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -79,7 +92,7 @@ services:
     # Its dedicated config loader reads only the database section.
     secrets: [postgres_password]
     depends_on:
-      postgres: {condition: service_healthy}
+      db: { condition: service_healthy }
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
@@ -87,6 +100,7 @@ services:
     init: true
     restart: "no"
   relay:
+    user: "${RUNTIME_UID:-65532}:${RUNTIME_GID:-65532}"
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -100,7 +114,7 @@ services:
       SSL_CERT_FILE: /run/secrets/relay_tls_ca
     ports: ["51820-51851:51820-51851/udp"]
     healthcheck:
-      test: ["CMD", "/healthcheck", "https://127.0.0.1:8081/readyz"]
+      test: ["CMD", "/healthcheck", "https://relay:8081/readyz"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -111,44 +125,61 @@ services:
     cap_drop: [ALL]
     init: true
     restart: unless-stopped
-  caddy:
-    image: caddy:2.10-alpine
-    ports: ["80:80", "443:443", "443:443/udp"]
-    environment:
-      CONTROL_DOMAIN: ${CONTROL_DOMAIN:-control.localhost}
-      RELAY_DOMAIN: ${RELAY_DOMAIN:-relay.localhost}
+  traefik:
+    image: traefik:v3.7.13
+    user: "${RUNTIME_UID:-65532}:${RUNTIME_GID:-65532}"
+    command: ["--configFile=/etc/traefik/traefik.toml"]
+    ports:
+      [
+        "${PROXY_BIND_ADDRESS:-0.0.0.0}:${PROXY_HTTP_PORT:-80}:8080",
+        "${PROXY_BIND_ADDRESS:-0.0.0.0}:${PROXY_HTTPS_PORT:-443}:8443",
+      ]
+    configs:
+      - source: proxy_config
+        target: /etc/traefik/traefik.toml
     volumes:
-      - ./${CADDYFILE:-Caddyfile}:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
+      - ${TRAEFIK_DYNAMIC_DIR:-./traefik/dynamic}:/etc/traefik/dynamic:ro
+      - ${TRAEFIK_STATE_DIR:-../state/traefik}:/var/lib/traefik
     secrets: [relay_tls_ca]
     depends_on:
-      control: {condition: service_healthy}
-      relay: {condition: service_healthy}
+      control: { condition: service_healthy }
+      relay: { condition: service_healthy }
     security_opt: [no-new-privileges:true]
-    # Docker Desktop rejects execve for the Caddy image with an entirely empty
-    # capability set. This is the only capability Caddy needs for the host
-    # ports below; it does not grant network administration or raw sockets.
+    # Unprivileged container ports allow a genuinely empty capability set.
     cap_drop: [ALL]
-    cap_add: [NET_BIND_SERVICE]
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "traefik",
+          "healthcheck",
+          "--ping",
+          "--ping.entrypoint=websecure",
+          "--entrypoints.websecure.address=:8443",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     init: true
     restart: unless-stopped
 configs:
+  proxy_config:
+    file: "${TRAEFIK_CONFIG:-./traefik/traefik.toml}"
   control_config:
     file: "${CONTROL_CONFIG:-../config/control.toml}"
   relay_config:
     file: "${RELAY_CONFIG:-../config/relay.toml}"
 secrets:
-  postgres_password: {file: ../secrets/postgres_password}
-  redis_password: {file: ../secrets/redis_password}
-  relay_ticket_key: {file: ../secrets/relay_ticket_key}
-  session_signing_key: {file: ../secrets/session_signing_key}
-  ceremony_encryption_key: {file: ../secrets/ceremony_encryption_key}
-  root_public_key: {file: ../secrets/root_public_key}
-  relay_tls_cert: {file: ../secrets/relay_tls_cert}
-  relay_tls_key: {file: ../secrets/relay_tls_key}
-  relay_tls_ca: {file: ../secrets/relay_tls_ca}
+  postgres_password: { file: ../secrets/postgres_password }
+  redis_password: { file: ../secrets/redis_password }
+  relay_ticket_key: { file: ../secrets/relay_ticket_key }
+  session_signing_key: { file: ../secrets/session_signing_key }
+  ceremony_encryption_key: { file: ../secrets/ceremony_encryption_key }
+  root_public_key: { file: ../secrets/root_public_key }
+  relay_tls_cert: { file: ../secrets/relay_tls_cert }
+  relay_tls_key: { file: ../secrets/relay_tls_key }
+  relay_tls_ca: { file: ../secrets/relay_tls_ca }
 volumes:
   postgres-data:
-  caddy-data:
-  caddy-config:

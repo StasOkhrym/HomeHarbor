@@ -51,7 +51,11 @@ func (s *Repository) SaveEnrollmentToken(ctx context.Context, token devices.Enro
 	return err
 }
 
-func (s *Repository) ConsumeEnrollmentToken(ctx context.Context, hash [32]byte, now time.Time) (devices.Role, error) {
+func (s *Repository) ConsumeEnrollmentToken(
+	ctx context.Context,
+	hash [32]byte,
+	now time.Time,
+) (devices.Role, error) {
 	var role devices.Role
 	err := s.db.QueryRow(ctx, `UPDATE enrollment_tokens SET used_at=$2 WHERE token_hash=$1 AND used_at IS NULL AND expires_at>$2 RETURNING role`, hash[:], now).
 		Scan(&role)
@@ -85,7 +89,7 @@ func (s *Repository) SaveDevice(ctx context.Context, d devices.Device) error {
 		`INSERT INTO device_credentials(device_id,credential_hash,expires_at) VALUES($1,$2,$3)`,
 		d.ID,
 		d.CredentialHash[:],
-		d.CreatedAt.Add(devices.CredentialTTL),
+		d.CredentialExpiration(),
 	); err != nil {
 		return err
 	}
@@ -99,13 +103,20 @@ func (s *Repository) SaveDevice(ctx context.Context, d devices.Device) error {
 	return tx.Commit(ctx)
 }
 
-func (s *Repository) Enroll(ctx context.Context, hash [32]byte, now time.Time, d devices.Device) (devices.Role, error) {
+func (s *Repository) Enroll(
+	ctx context.Context,
+	hash [32]byte,
+	now time.Time,
+	d devices.Device,
+) (devices.Role, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
 	var role devices.Role
+
 	if err = tx.QueryRow(ctx, `UPDATE enrollment_tokens SET used_at=$2 WHERE token_hash=$1 AND used_at IS NULL AND expires_at>$2 RETURNING role`, hash[:], now).
 		Scan(&role); errors.Is(
 		err,
@@ -115,6 +126,7 @@ func (s *Repository) Enroll(ctx context.Context, hash [32]byte, now time.Time, d
 	} else if err != nil {
 		return "", err
 	}
+
 	if _, err = tx.Exec(
 		ctx,
 		`INSERT INTO devices(id,name,role,status,identity_public_key,wireguard_public_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`,
@@ -128,15 +140,17 @@ func (s *Repository) Enroll(ctx context.Context, hash [32]byte, now time.Time, d
 	); err != nil {
 		return "", err
 	}
+
 	if _, err = tx.Exec(
 		ctx,
 		`INSERT INTO device_credentials(device_id,credential_hash,expires_at) VALUES($1,$2,$3)`,
 		d.ID,
 		d.CredentialHash[:],
-		d.CreatedAt.Add(devices.CredentialTTL),
+		d.CredentialExpiration(),
 	); err != nil {
 		return "", err
 	}
+
 	// The enrollment transaction owns both the one-time token and the device.
 	// Recording the outbox event before commit prevents a successful enrollment
 	// from becoming invisible to audit consumers after a control restart.
@@ -147,9 +161,11 @@ func (s *Repository) Enroll(ctx context.Context, hash [32]byte, now time.Time, d
 	); err != nil {
 		return "", err
 	}
+
 	if err = tx.Commit(ctx); err != nil {
 		return "", err
 	}
+
 	return role, nil
 }
 
@@ -238,7 +254,11 @@ func (s *Repository) RevokeDevice(ctx context.Context, id string, at time.Time) 
 	return tx.Commit(ctx)
 }
 
-func (s *Repository) AuthenticateCredential(ctx context.Context, hash [32]byte, now time.Time) (devices.Device, error) {
+func (s *Repository) AuthenticateCredential(
+	ctx context.Context,
+	hash [32]byte,
+	now time.Time,
+) (devices.Device, error) {
 	var d devices.Device
 	err := s.db.QueryRow(ctx, `SELECT d.id,d.name,d.role,d.status,d.identity_public_key,d.wireguard_public_key,d.created_at,d.revoked_at FROM device_credentials c JOIN devices d ON d.id=c.device_id WHERE c.credential_hash=$1 AND c.revoked_at IS NULL AND c.expires_at>$2 AND d.status='active'`, hash[:], now).
 		Scan(&d.ID, &d.Name, &d.Role, &d.Status, &d.IdentityPublicKey, &d.WireGuardPublicKey, &d.CreatedAt, &d.RevokedAt)
@@ -259,17 +279,21 @@ func (s *Repository) RotateCredential(
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
 	var deviceID string
+
 	// Claim and revoke own the device row before touching credentials. Rotation
 	// must use the same order: INSERT's device FK can otherwise wait on a claim
 	// while holding the credential row that the claim needs, forming a deadlock.
-	err = tx.QueryRow(ctx, `SELECT id FROM devices WHERE id=$1 AND status='active' FOR UPDATE`, id).Scan(&deviceID)
+	err = tx.QueryRow(ctx, `SELECT id FROM devices WHERE id=$1 AND status='active' FOR UPDATE`, id).
+		Scan(&deviceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return devices.ErrDeviceNotFound
 	}
 	if err != nil {
 		return err
 	}
+
 	err = tx.QueryRow(ctx, `UPDATE device_credentials c SET revoked_at=$3 WHERE c.device_id=$1 AND c.credential_hash=$2 AND c.revoked_at IS NULL AND c.expires_at>$3 AND EXISTS (SELECT 1 FROM devices d WHERE d.id=c.device_id AND d.status='active') RETURNING c.device_id`, id, oldHash[:], now).
 		Scan(&deviceID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -278,6 +302,7 @@ func (s *Repository) RotateCredential(
 	if err != nil {
 		return err
 	}
+
 	if _, err = tx.Exec(
 		ctx,
 		`INSERT INTO device_credentials(device_id,credential_hash,expires_at) VALUES($1,$2,$3)`,
@@ -287,6 +312,7 @@ func (s *Repository) RotateCredential(
 	); err != nil {
 		return err
 	}
+
 	if err = s.appendEvent(
 		ctx,
 		tx,
@@ -294,6 +320,7 @@ func (s *Repository) RotateCredential(
 	); err != nil {
 		return err
 	}
+
 	return tx.Commit(ctx)
 }
 

@@ -34,7 +34,10 @@ type CompanionRequest struct {
 
 // SignCompanionRequest signs a challenge-bound HTTP request for the trusted
 // companion snapshot API. The signature contains no private device material.
-func SignCompanionRequest(method, path, nonce, keyID string, privateKey ed25519.PrivateKey) ([]byte, error) {
+func SignCompanionRequest(
+	method, path, nonce, keyID string,
+	privateKey ed25519.PrivateKey,
+) ([]byte, error) {
 	request := CompanionRequest{
 		Version: CurrentVersion,
 		KeyID:   strings.TrimSpace(keyID),
@@ -42,20 +45,27 @@ func SignCompanionRequest(method, path, nonce, keyID string, privateKey ed25519.
 		Path:    path,
 		Nonce:   nonce,
 	}
-	if len(privateKey) != ed25519.PrivateKeySize || request.KeyID == "" || request.Method == "" || request.Path == "" ||
+	if len(privateKey) != ed25519.PrivateKeySize || request.KeyID == "" || request.Method == "" ||
+		request.Path == "" ||
 		request.Nonce == "" {
 		return nil, ErrInvalidCompanionRequest
 	}
+
 	payload, err := companionCanonicalMode.Marshal(request)
 	if err != nil {
 		return nil, err
 	}
+
 	return ed25519.Sign(privateKey, append([]byte(companionRequestDomain), payload...)), nil
 }
 
 // VerifyCompanionRequest validates the exact method/path/nonce tuple before a
 // handler consumes the nonce. Callers must still enforce single-use semantics.
-func VerifyCompanionRequest(method, path, nonce, keyID string, signature []byte, publicKey ed25519.PublicKey) error {
+func VerifyCompanionRequest(
+	method, path, nonce, keyID string,
+	signature []byte,
+	publicKey ed25519.PublicKey,
+) error {
 	request := CompanionRequest{
 		Version: CurrentVersion,
 		KeyID:   strings.TrimSpace(keyID),
@@ -63,14 +73,18 @@ func VerifyCompanionRequest(method, path, nonce, keyID string, signature []byte,
 		Path:    path,
 		Nonce:   nonce,
 	}
-	if len(publicKey) != ed25519.PublicKeySize || request.KeyID == "" || request.Method == "" || request.Path == "" ||
+	if len(publicKey) != ed25519.PublicKeySize || request.KeyID == "" || request.Method == "" ||
+		request.Path == "" ||
 		request.Nonce == "" ||
 		len(signature) != ed25519.SignatureSize {
 		return ErrInvalidCompanionRequest
 	}
+
 	payload, err := companionCanonicalMode.Marshal(request)
-	if err != nil || !ed25519.Verify(publicKey, append([]byte(companionRequestDomain), payload...), signature) {
+	if err != nil ||
+		!ed25519.Verify(publicKey, append([]byte(companionRequestDomain), payload...), signature) {
 		return ErrInvalidCompanionRequest
 	}
+
 	return nil
 }

@@ -17,7 +17,8 @@ func TestSnapshotHistoryHasExplicitHTTPRoute(t *testing.T) {
 		})),
 	)
 	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/coordination/snapshots", nil))
+	server.Handler().
+		ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/coordination/snapshots", nil))
 	if response.Code != http.StatusNoContent || !called {
 		t.Fatalf("missing history route: status=%d called=%v", response.Code, called)
 	}

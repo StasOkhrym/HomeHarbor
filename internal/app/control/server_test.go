@@ -70,8 +70,17 @@ func TestHTTPComponentReturnsListenerFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	_ = listener.Close()
-	if err := serveHTTP(context.Background(), &http.Server{}, listener); !errors.Is(err, net.ErrClosed) {
+
+	if err := serveHTTP(
+		context.Background(),
+		&http.Server{},
+		listener,
+	); !errors.Is(
+		err,
+		net.ErrClosed,
+	) {
 		t.Fatalf("error = %v, want closed listener", err)
 	}
 }

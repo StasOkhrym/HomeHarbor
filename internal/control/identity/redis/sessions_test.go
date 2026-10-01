@@ -79,14 +79,24 @@ func TestRedisSessionSharedTTLAndRevoke(t *testing.T) {
 
 func TestSessionTransportFailureIsUnavailable(t *testing.T) {
 	client := redisclient.NewClient(
-		&redisclient.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 20 * time.Millisecond},
+		&redisclient.Options{
+			Addr:        "127.0.0.1:1",
+			MaxRetries:  -1,
+			DialTimeout: 20 * time.Millisecond,
+		},
 	)
 	if err := client.Close(); err != nil {
 		t.Fatal(err)
 	}
 	store := NewSessions(client, "closed", time.Now)
 	hash := sha256.Sum256([]byte("token"))
-	if _, err := store.Session(t.Context(), hash); !errors.Is(err, identity.ErrSecurityStateUnavailable) {
+	if _, err := store.Session(
+		t.Context(),
+		hash,
+	); !errors.Is(
+		err,
+		identity.ErrSecurityStateUnavailable,
+	) {
 		t.Fatalf("lookup failure=%v", err)
 	}
 	if err := store.RevokeSession(

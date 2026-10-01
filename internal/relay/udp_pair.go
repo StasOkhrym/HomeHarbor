@@ -44,7 +44,8 @@ func EncodeUDPPairDatagram(ticket string, payload []byte) ([]byte, error) {
 }
 
 func encodeUDPPairDatagram(kind uint8, ticket string, payload []byte) ([]byte, error) {
-	if (kind != UDPPairKindData && kind != UDPPairKindBinding) || len(ticket) > maxTicketLength || len(payload) == 0 ||
+	if (kind != UDPPairKindData && kind != UDPPairKindBinding) || len(ticket) > maxTicketLength ||
+		len(payload) == 0 ||
 		len(payload) > maxPacketPayload ||
 		udpPairHeaderSize+len(ticket)+len(payload) > maxUDPPairDatagramSize {
 		return nil, errors.New("invalid UDP pair datagram size")
@@ -66,7 +67,8 @@ func encodeUDPPairDatagram(kind uint8, ticket string, payload []byte) ([]byte, e
 // empty ticket only for server-forwarded frames; the relay's ingress path
 // rejects such frames before session lookup.
 func DecodeUDPPairDatagram(data []byte) (UDPPairDatagram, error) {
-	if len(data) < udpPairHeaderSize || string(data[:4]) != udpPairMagic || data[4] != UDPPairProtocolVersion {
+	if len(data) < udpPairHeaderSize || string(data[:4]) != udpPairMagic ||
+		data[4] != UDPPairProtocolVersion {
 		return UDPPairDatagram{}, errors.New("invalid UDP pair header")
 	}
 	kind := data[5]
@@ -170,7 +172,11 @@ func (r *UDPPairRelay) Run(ctx context.Context) error {
 	}
 }
 
-func (r *UDPPairRelay) processDatagram(data []byte, source *net.UDPAddr, now time.Time) (*net.UDPAddr, []byte, error) {
+func (r *UDPPairRelay) processDatagram(
+	data []byte,
+	source *net.UDPAddr,
+	now time.Time,
+) (*net.UDPAddr, []byte, error) {
 	datagram, err := DecodeUDPPairDatagram(data)
 	if err != nil || datagram.Ticket == "" {
 		return nil, nil, errors.New("invalid authenticated UDP pair datagram")

@@ -51,7 +51,11 @@ type RelayTicketProvider func(context.Context) (string, error)
 
 // RunRelayBridgeLoop retries admission with bounded exponential backoff. V2
 // keeps its local WireGuard socket across retries, renewals and control outages.
-func RunRelayBridgeLoop(ctx context.Context, cfg RelayBridgeConfig, ticketProvider RelayTicketProvider) error {
+func RunRelayBridgeLoop(
+	ctx context.Context,
+	cfg RelayBridgeConfig,
+	ticketProvider RelayTicketProvider,
+) error {
 	if err := validateRelayBridgeConfig(cfg); err != nil {
 		return err
 	}
@@ -82,9 +86,13 @@ func RunRelayBridgeLoop(ctx context.Context, cfg RelayBridgeConfig, ticketProvid
 		if ticketProvider != nil {
 			attemptLifetime = cfg.TicketLifetime
 		}
-		err, renewed := runTicketAttempt(ctx, attemptLifetime, func(attemptContext context.Context) error {
-			return RunRelayBridge(attemptContext, cfg)
-		})
+		err, renewed := runTicketAttempt(
+			ctx,
+			attemptLifetime,
+			func(attemptContext context.Context) error {
+				return RunRelayBridge(attemptContext, cfg)
+			},
+		)
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -108,7 +116,11 @@ const ticketRenewalSkew = 15 * time.Second
 // renewal cancellation is deliberately indistinguishable from normal
 // transport shutdown to the bridge; the boolean lets the outer loop refresh
 // credentials instead of treating an intentional renewal as a failure.
-func runTicketAttempt(ctx context.Context, lifetime time.Duration, run func(context.Context) error) (error, bool) {
+func runTicketAttempt(
+	ctx context.Context,
+	lifetime time.Duration,
+	run func(context.Context) error,
+) (error, bool) {
 	if lifetime <= 0 {
 		return run(ctx), false
 	}
@@ -250,10 +262,13 @@ func validateRelayBridgeConfig(cfg RelayBridgeConfig) error {
 	if cfg.RelayUDPAddress != "" && !usesUDPV2(cfg) {
 		return errors.New("legacy UDP ingress disabled; udp_pair_v2 TLS control required")
 	}
-	if (cfg.RelayURL == "" && cfg.RelayUDPAddress == "") || cfg.Ticket == "" || cfg.SessionID == "" ||
+	if (cfg.RelayURL == "" && cfg.RelayUDPAddress == "") || cfg.Ticket == "" ||
+		cfg.SessionID == "" ||
 		cfg.DeviceID == "" ||
 		cfg.DestinationDeviceID == "" {
-		return errors.New("relay URL or UDP address, ticket, session, and device identities are required")
+		return errors.New(
+			"relay URL or UDP address, ticket, session, and device identities are required",
+		)
 	}
 	if usesUDPV2(cfg) && !strings.HasPrefix(cfg.RelayURL, "wss://") {
 		return errors.New("UDP v2 requires WSS relay control")
@@ -274,9 +289,12 @@ func validateRelayBridgeConfig(cfg RelayBridgeConfig) error {
 // transport. WireGuard receives the bridge's loopback UDP address as its peer
 // endpoint; the bridge then carries the already-encrypted datagrams remotely.
 func RunKernelRelay(ctx context.Context, cfg KernelRelayConfig) error {
-	if cfg.InterfaceName == "" || cfg.PrivateKey == "" || cfg.PeerPublicKey == "" || cfg.OverlayAddress == "" ||
+	if cfg.InterfaceName == "" || cfg.PrivateKey == "" || cfg.PeerPublicKey == "" ||
+		cfg.OverlayAddress == "" ||
 		cfg.ListenPort == 0 {
-		return errors.New("kernel relay interface, keys, overlay address, and listen port are required")
+		return errors.New(
+			"kernel relay interface, keys, overlay address, and listen port are required",
+		)
 	}
 	if err := validateRelayBridgeConfig(cfg.RelayBridgeConfig); err != nil {
 		return err
@@ -325,22 +343,35 @@ func runKernelRelayBridge(
 	bridge relayBridgeRunner,
 	bridgeEndpoint netip.AddrPort,
 ) error {
-	if err := tunnel.EnsureLinuxInterface(ctx, cfg.InterfaceName, cfg.OverlayAddress, cfg.Routes); err != nil {
+	if err := tunnel.EnsureLinuxInterface(
+		ctx,
+		cfg.InterfaceName,
+		cfg.OverlayAddress,
+		cfg.Routes,
+	); err != nil {
 		return err
 	}
+
 	if cfg.EndpointUpdater != nil {
 		if cfg.PathSelector != nil {
 			return runKernelRelayWithPathSelector(ctx, bridge, cfg, bridgeEndpoint)
 		}
-		if err := cfg.EndpointUpdater.SetPeerEndpoint(ctx, cfg.PeerPublicKey, bridgeEndpoint); err != nil {
+
+		if err := cfg.EndpointUpdater.SetPeerEndpoint(
+			ctx,
+			cfg.PeerPublicKey,
+			bridgeEndpoint,
+		); err != nil {
 			return fmt.Errorf("publish relay endpoint: %w", err)
 		}
+
 		bridgeErr := bridge.Run(ctx)
 		clearContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = cfg.EndpointUpdater.ClearPeerEndpoint(clearContext, cfg.PeerPublicKey)
 		cancel()
 		return bridgeErr
 	}
+
 	wireGuardConfig, err := tunnel.BuildWireGuardConfigWithListenPort(
 		cfg.PrivateKey,
 		cfg.ListenPort,
@@ -356,9 +387,11 @@ func runKernelRelayBridge(
 	if err != nil {
 		return err
 	}
+
 	if err := tunnel.ApplyWireGuardConfig(cfg.InterfaceName, wireGuardConfig); err != nil {
 		return err
 	}
+
 	return bridge.Run(ctx)
 }
 
@@ -381,9 +414,11 @@ func runKernelRelayWithPathSelector(
 		if !bridgeFinished {
 			<-bridgeErrors
 		}
+
 		if cfg.PathSelector.Current() != controlprotocol.PathRelay {
 			return
 		}
+
 		clearContext, clearCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = cfg.EndpointUpdater.ClearPeerEndpoint(clearContext, cfg.PeerPublicKey)
 		clearCancel()
@@ -391,10 +426,15 @@ func runKernelRelayWithPathSelector(
 
 	for {
 		if cfg.PathSelector.Current() == controlprotocol.PathRelay {
-			if err := cfg.EndpointUpdater.SetPeerEndpoint(ctx, cfg.PeerPublicKey, bridgeEndpoint); err != nil {
+			if err := cfg.EndpointUpdater.SetPeerEndpoint(
+				ctx,
+				cfg.PeerPublicKey,
+				bridgeEndpoint,
+			); err != nil {
 				return fmt.Errorf("publish relay endpoint: %w", err)
 			}
 		}
+
 		changes := cfg.PathSelector.Changes()
 		select {
 		case err := <-bridgeErrors:
@@ -413,10 +453,17 @@ func runKernelRelayWithPathSelector(
 // after a relay failure. Reapplying the same peer configuration is deliberate:
 // the bridge owns its UDP socket, so a fresh bridge must be bound before the
 // encrypted peer can resume forwarding packets.
-func RunKernelRelayLoop(ctx context.Context, cfg KernelRelayConfig, ticketProvider RelayTicketProvider) error {
-	if cfg.InterfaceName == "" || cfg.PrivateKey == "" || cfg.PeerPublicKey == "" || cfg.OverlayAddress == "" ||
+func RunKernelRelayLoop(
+	ctx context.Context,
+	cfg KernelRelayConfig,
+	ticketProvider RelayTicketProvider,
+) error {
+	if cfg.InterfaceName == "" || cfg.PrivateKey == "" || cfg.PeerPublicKey == "" ||
+		cfg.OverlayAddress == "" ||
 		cfg.ListenPort == 0 {
-		return errors.New("kernel relay interface, keys, overlay address, and listen port are required")
+		return errors.New(
+			"kernel relay interface, keys, overlay address, and listen port are required",
+		)
 	}
 	if err := validateRelayBridgeConfig(cfg.RelayBridgeConfig); err != nil {
 		return err
@@ -427,9 +474,15 @@ func RunKernelRelayLoop(ctx context.Context, cfg KernelRelayConfig, ticketProvid
 			return err
 		}
 		address := bridge.LocalAddr()
-		return runUDPV2Owner(ctx, cfg.RelayBridgeConfig, bridge, ticketProvider, func(runCtx context.Context) error {
-			return runKernelRelayBridge(runCtx, cfg, bridge, address.AddrPort())
-		})
+		return runUDPV2Owner(
+			ctx,
+			cfg.RelayBridgeConfig,
+			bridge,
+			ticketProvider,
+			func(runCtx context.Context) error {
+				return runKernelRelayBridge(runCtx, cfg, bridge, address.AddrPort())
+			},
+		)
 	}
 	backoff := time.Second
 	for {
@@ -451,9 +504,13 @@ func RunKernelRelayLoop(ctx context.Context, cfg KernelRelayConfig, ticketProvid
 		if ticketProvider != nil {
 			attemptLifetime = cfg.TicketLifetime
 		}
-		err, renewed := runTicketAttempt(ctx, attemptLifetime, func(attemptContext context.Context) error {
-			return RunKernelRelay(attemptContext, cfg)
-		})
+		err, renewed := runTicketAttempt(
+			ctx,
+			attemptLifetime,
+			func(attemptContext context.Context) error {
+				return RunKernelRelay(attemptContext, cfg)
+			},
+		)
 		if ctx.Err() != nil {
 			return nil
 		}

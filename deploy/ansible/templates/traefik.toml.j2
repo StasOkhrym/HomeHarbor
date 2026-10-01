@@ -1,0 +1,21 @@
+[entryPoints.web]
+address = ":8080"
+[entryPoints.web.http.redirections.entryPoint]
+to = "websecure"
+scheme = "https"
+port = "443"
+[entryPoints.websecure]
+address = ":8443"
+[providers.file]
+directory = "/etc/traefik/dynamic"
+watch = true
+[ping]
+entryPoint = "websecure"
+[log]
+format = "json"
+level = "INFO"
+[certificatesResolvers.public.acme]
+email = {{ acme_email | to_json }}
+storage = "/var/lib/traefik/acme.json"
+[certificatesResolvers.public.acme.dnsChallenge]
+provider = {{ dns_provider | to_json }}

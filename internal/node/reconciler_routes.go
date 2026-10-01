@@ -32,22 +32,30 @@ func (r *routeOwnership) reconcile(
 	for _, prefix := range desired {
 		wanted[prefix.Masked()] = struct{}{}
 	}
+
 	removed := make([]netip.Prefix, 0)
 	for prefix := range r.installed {
 		if _, ok := wanted[prefix]; !ok {
 			removed = append(removed, prefix)
 		}
 	}
-	slices.SortFunc(removed, func(a, b netip.Prefix) int { return strings.Compare(a.String(), b.String()) })
+
+	slices.SortFunc(
+		removed,
+		func(a, b netip.Prefix) int { return strings.Compare(a.String(), b.String()) },
+	)
 	for _, prefix := range removed {
 		if err := r.run(ctx, "route", "del", prefix.String(), "dev", link); err != nil {
 			return fmt.Errorf("remove revoked tunnel route %s: %w", prefix, err)
 		}
+
 		delete(r.installed, prefix)
 	}
+
 	for prefix := range wanted {
 		r.installed[prefix] = struct{}{}
 	}
+
 	return install()
 }
 

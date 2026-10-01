@@ -17,7 +17,12 @@ func TestHubForwardsOnlyWithinSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer hub.Unregister("s1", "b")
-	packet := Packet{SessionID: "s1", SourceDeviceID: "a", DestinationDeviceID: "b", Payload: []byte("ciphertext")}
+	packet := Packet{
+		SessionID:           "s1",
+		SourceDeviceID:      "a",
+		DestinationDeviceID: "b",
+		Payload:             []byte("ciphertext"),
+	}
 	if err := hub.Forward(context.Background(), "s1", "a", packet); err != nil {
 		t.Fatal(err)
 	}

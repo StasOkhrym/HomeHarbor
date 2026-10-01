@@ -38,7 +38,8 @@ type UDPPairBridge struct {
 
 // NewUDPPairBridge creates a local UDP adapter for one relay session.
 func NewUDPPairBridge(cfg UDPPairBridgeConfig) (*UDPPairBridge, error) {
-	if cfg.Ticket == "" || cfg.RelayAddress == nil || cfg.ListenAddress == nil || cfg.WireGuardAddress == nil {
+	if cfg.Ticket == "" || cfg.RelayAddress == nil || cfg.ListenAddress == nil ||
+		cfg.WireGuardAddress == nil {
 		return nil, errors.New("UDP pair ticket and addresses are required")
 	}
 	udp, err := net.ListenUDP("udp", cfg.ListenAddress)
@@ -124,7 +125,8 @@ func (b *UDPPairBridge) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			if errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			if errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) ||
+				ctx.Err() != nil {
 				return nil
 			}
 			return err
@@ -146,7 +148,10 @@ func (b *UDPPairBridge) Run(ctx context.Context) error {
 				// Data is already authenticated by the local WireGuard peer after
 				// this bridge delivers it; the relay has only selected the peer
 				// address and copied the encrypted bytes.
-				if _, writeErr := b.udp.WriteToUDP(datagram.Payload, b.cfg.WireGuardAddress); writeErr != nil {
+				if _, writeErr := b.udp.WriteToUDP(
+					datagram.Payload,
+					b.cfg.WireGuardAddress,
+				); writeErr != nil {
 					return writeErr
 				}
 				continue
@@ -159,7 +164,10 @@ func (b *UDPPairBridge) Run(ctx context.Context) error {
 			// WireGuard packet. The kernel WireGuard peer remains the authority
 			// for cryptographic authentication; the bridge only delivers bytes
 			// to that local socket and never treats them as plaintext.
-			if _, writeErr := b.udp.WriteToUDP(buffer[:n], b.cfg.WireGuardAddress); writeErr != nil {
+			if _, writeErr := b.udp.WriteToUDP(
+				buffer[:n],
+				b.cfg.WireGuardAddress,
+			); writeErr != nil {
 				return writeErr
 			}
 			continue

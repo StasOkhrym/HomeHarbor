@@ -11,7 +11,10 @@ import (
 )
 
 func TestApplierKeepsLastRevisionWhenNftRejectsUpdate(t *testing.T) {
-	applier := NewApplier("gt0", map[string]netip.Prefix{"client": netip.MustParsePrefix("100.64.0.2/32")})
+	applier := NewApplier(
+		"gt0",
+		map[string]netip.Prefix{"client": netip.MustParsePrefix("100.64.0.2/32")},
+	)
 	var scripts []string
 	applyErr := errors.New("nft syntax error")
 	applier.run = func(_ context.Context, script string) error {
@@ -57,7 +60,11 @@ func TestApplierKeepsLastRevisionWhenNftRejectsUpdate(t *testing.T) {
 func TestPreparedPolicyRejectsForeignOwnerAndRetriesAfterGuard(t *testing.T) {
 	ctx := context.Background()
 	var live string
-	a := NewApplierWithRunner("wg0", nil, func(_ context.Context, s string) error { live = s; return nil })
+	a := NewApplierWithRunner(
+		"wg0",
+		nil,
+		func(_ context.Context, s string) error { live = s; return nil },
+	)
 	b := NewApplierWithRunner(
 		"wg1",
 		nil,

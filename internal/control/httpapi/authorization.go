@@ -15,7 +15,8 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 		if s.authorizer != nil {
 			authorized, err = s.authorizer.IsAdmin(r.Context(), r)
 		}
-		if authorized && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+		if authorized && r.Method != http.MethodGet && r.Method != http.MethodHead &&
+			r.Method != http.MethodOptions {
 			authorized = false
 			if s.mutationAuthorizer != nil {
 				authorized, err = s.mutationAuthorizer(r.Context(), r)
@@ -49,7 +50,9 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 // admin privileges and end-user device access on separate auth paths.
 func (s *Server) requireDevice(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		credential := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		credential := strings.TrimSpace(
+			strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "),
+		)
 		device, err := s.devices.Authenticate(r.Context(), credential)
 		if err != nil || device.Status != devices.StatusActive {
 			writeError(w, http.StatusUnauthorized, "device authentication required")

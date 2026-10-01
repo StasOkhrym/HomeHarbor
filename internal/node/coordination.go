@@ -50,46 +50,61 @@ func NewCompositeSnapshotApplier(
 	guard StagedSnapshotApplier,
 	components ...PreparedSnapshotApplier,
 ) *CompositeSnapshotApplier {
-	return &CompositeSnapshotApplier{guard: guard, components: append([]PreparedSnapshotApplier(nil), components...)}
+	return &CompositeSnapshotApplier{
+		guard:      guard,
+		components: append([]PreparedSnapshotApplier(nil), components...),
+	}
 }
 
-func (a *CompositeSnapshotApplier) Apply(ctx context.Context, value snapshot.NetworkSnapshot) error {
+func (a *CompositeSnapshotApplier) Apply(
+	ctx context.Context,
+	value snapshot.NetworkSnapshot,
+) error {
 	if a == nil || (a.guard == nil && len(a.components) == 0) {
 		return errors.New("snapshot applier has no components")
 	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
 	for _, component := range a.components {
 		if component == nil {
 			return errors.New("nil snapshot owner")
 		}
 	}
+
 	if a.guard != nil {
 		if err := a.guard.Prepare(ctx, value); err != nil {
 			return err
 		}
 	}
+
 	for _, component := range a.components {
 		if err := component.Prepare(ctx, value); err != nil {
 			return err
 		}
 	}
+
 	if a.guard != nil {
 		if err := a.guard.Guard(ctx, value); err != nil {
 			return err
 		}
+
 		if err := a.guard.ApplyPrepared(ctx, value); err != nil {
 			return err
 		}
 	}
+
 	for _, component := range a.components {
 		if err := component.Apply(ctx, value); err != nil {
 			return err
 		}
 	}
+
 	if a.guard != nil {
 		return a.guard.Commit(ctx, value)
 	}
+
 	return nil
 }
 
@@ -119,20 +134,28 @@ type CoordinationConfig struct {
 // RunCoordinationLoop keeps the last verified gateway state active while the
 // control connection is unavailable. A reconnect never resets the revision
 // cursor; the next snapshot must still pass the normal contiguous-chain check.
-func RunCoordinationLoop(ctx context.Context, cfg CoordinationConfig, applier SnapshotApplier) error {
+func RunCoordinationLoop(
+	ctx context.Context,
+	cfg CoordinationConfig,
+	applier SnapshotApplier,
+) error {
 	initial := cfg.ReconnectInitial
 	if initial <= 0 {
 		initial = time.Second
 	}
+
 	maximum := cfg.ReconnectMax
 	if maximum < initial {
 		maximum = 30 * time.Second
 	}
+
 	backoff := initial
+
 	cursor, err := restoreSnapshotCursor(ctx, cfg, applier)
 	if err != nil {
 		return err
 	}
+
 	for {
 		err := runCoordination(ctx, cfg, applier, &cursor)
 		if errors.Is(err, ErrSnapshotState) {
@@ -144,15 +167,18 @@ func RunCoordinationLoop(ctx context.Context, cfg CoordinationConfig, applier Sn
 		if err == nil {
 			return nil
 		}
+
 		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
 				<-timer.C
 			}
+
 			return nil
 		case <-timer.C:
 		}
+
 		backoff = min(backoff*2, maximum)
 	}
 }
@@ -204,7 +230,9 @@ func runCoordination(
 	if cfg.URL == "" || cfg.Credential == "" || cfg.DeviceID == "" || cfg.NetworkID == "" ||
 		len(cfg.RootPublicKey) != ed25519.PublicKeySize ||
 		applier == nil {
-		return errors.New("coordination URL, credentials, device, network, root key, and applier are required")
+		return errors.New(
+			"coordination URL, credentials, device, network, root key, and applier are required",
+		)
 	}
 	header := make(http.Header)
 	header.Set("Authorization", "Bearer "+cfg.Credential)
@@ -282,7 +310,9 @@ func runCoordination(
 			if err != nil {
 				return fmt.Errorf("encode candidate update: %w", err)
 			}
-			if err := write(controlprotocol.Message{Type: "candidate.update", Payload: payload}); err != nil {
+			if err := write(
+				controlprotocol.Message{Type: "candidate.update", Payload: payload},
+			); err != nil {
 				return fmt.Errorf("send candidate update: %w", err)
 			}
 		}

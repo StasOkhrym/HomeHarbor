@@ -10,7 +10,10 @@ import (
 	controlprotocol "github.com/sokhrym/go-tunnels/internal/protocol"
 )
 
-func DiscoverServerReflexive(ctx context.Context, serverURI string) (controlprotocol.Candidate, error) {
+func DiscoverServerReflexive(
+	ctx context.Context,
+	serverURI string,
+) (controlprotocol.Candidate, error) {
 	uri, err := stun.ParseURI(serverURI)
 	if err != nil {
 		return controlprotocol.Candidate{}, fmt.Errorf("parse STUN URI: %w", err)

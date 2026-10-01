@@ -49,7 +49,10 @@ func (s *Repository) HasCredentials(ctx context.Context) (bool, error) {
 	return exists, err
 }
 
-func (s *Repository) Credentials(ctx context.Context, userHandle []byte) ([]webauthn.Credential, error) {
+func (s *Repository) Credentials(
+	ctx context.Context,
+	userHandle []byte,
+) ([]webauthn.Credential, error) {
 	rows, err := s.pool.Query(
 		ctx,
 		`SELECT credential_data FROM webauthn_credentials WHERE user_handle=$1 ORDER BY created_at`,
@@ -59,23 +62,33 @@ func (s *Repository) Credentials(ctx context.Context, userHandle []byte) ([]weba
 		return nil, err
 	}
 	defer rows.Close()
+
 	credentials := []webauthn.Credential{}
 	for rows.Next() {
 		var payload []byte
+
 		if err = rows.Scan(&payload); err != nil {
 			return nil, err
 		}
+
 		var credential webauthn.Credential
+
 		if err = json.Unmarshal(payload, &credential); err != nil {
 			return nil, err
 		}
+
 		credentials = append(credentials, credential)
 	}
+
 	return credentials, rows.Err()
 }
 
-func (s *Repository) Credential(ctx context.Context, userHandle, credentialID []byte) (webauthn.Credential, error) {
+func (s *Repository) Credential(
+	ctx context.Context,
+	userHandle, credentialID []byte,
+) (webauthn.Credential, error) {
 	var payload []byte
+
 	err := s.pool.QueryRow(ctx, `SELECT credential_data FROM webauthn_credentials WHERE user_handle=$1 AND credential_id=$2`, userHandle, credentialID).
 		Scan(&payload)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -84,14 +97,21 @@ func (s *Repository) Credential(ctx context.Context, userHandle, credentialID []
 	if err != nil {
 		return webauthn.Credential{}, err
 	}
+
 	var credential webauthn.Credential
+
 	if err = json.Unmarshal(payload, &credential); err != nil {
 		return webauthn.Credential{}, err
 	}
+
 	return credential, nil
 }
 
-func (s *Repository) SaveCredential(ctx context.Context, userHandle []byte, credential webauthn.Credential) error {
+func (s *Repository) SaveCredential(
+	ctx context.Context,
+	userHandle []byte,
+	credential webauthn.Credential,
+) error {
 	payload, err := json.Marshal(credential)
 	if err != nil {
 		return err
@@ -134,7 +154,11 @@ func (s *Repository) SaveCredential(ctx context.Context, userHandle []byte, cred
 	return tx.Commit(ctx)
 }
 
-func (s *Repository) UpdateCredential(ctx context.Context, userHandle []byte, credential webauthn.Credential) error {
+func (s *Repository) UpdateCredential(
+	ctx context.Context,
+	userHandle []byte,
+	credential webauthn.Credential,
+) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -156,7 +180,8 @@ func (s *Repository) UpdateCredential(ctx context.Context, userHandle []byte, cr
 	}
 	// A non-zero counter must move strictly forward. Holding the row lock makes
 	// this comparison valid even when two login responses arrive concurrently.
-	if stored.Authenticator.SignCount > 0 && credential.Authenticator.SignCount <= stored.Authenticator.SignCount {
+	if stored.Authenticator.SignCount > 0 &&
+		credential.Authenticator.SignCount <= stored.Authenticator.SignCount {
 		return identity.ErrInvalidCredential
 	}
 	payload, err := json.Marshal(credential)

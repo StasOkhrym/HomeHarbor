@@ -42,7 +42,12 @@ func TestMemoryEnrollmentConflictPreservesTokenAndExistingCredential(t *testing.
 		ctx,
 		hash,
 		now,
-		Device{ID: "new", IdentityPublicKey: "new-ed", WireGuardPublicKey: "new-wg", CreatedAt: now},
+		Device{
+			ID:                 "new",
+			IdentityPublicKey:  "new-ed",
+			WireGuardPublicKey: "new-wg",
+			CreatedAt:          now,
+		},
 	); err != nil {
 		t.Fatal("failed enrollment consumed token:", err)
 	}

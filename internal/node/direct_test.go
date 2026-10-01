@@ -17,10 +17,16 @@ type endpointRecorder struct {
 	clear int
 }
 
-func (r *endpointRecorder) SetPeerEndpoint(_ context.Context, _ string, endpoint netip.AddrPort) error {
+func (r *endpointRecorder) SetPeerEndpoint(
+	_ context.Context,
+	_ string,
+	endpoint netip.AddrPort,
+) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	r.set = append(r.set, endpoint)
+
 	return nil
 }
 
@@ -72,7 +78,14 @@ func TestCandidatePathManagerSelectsHighestPriorityHandshake(t *testing.T) {
 	updater := &endpointRecorder{}
 	probe := &handshakeProbeStub{results: []error{errors.New("first candidate timed out"), nil}}
 	selector := controlprotocol.NewPathSelector()
-	manager, err := NewCandidatePathManager("client", "gateway", validPeerKey, updater, selector, probe)
+	manager, err := NewCandidatePathManager(
+		"client",
+		"gateway",
+		validPeerKey,
+		updater,
+		selector,
+		probe,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +94,11 @@ func TestCandidatePathManagerSelectsHighestPriorityHandshake(t *testing.T) {
 		DestinationDeviceID: "client",
 		Candidates: []controlprotocol.Candidate{
 			{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100},
-			{Type: controlprotocol.CandidateServerReflexive, Address: "203.0.113.20:51820", Priority: 200},
+			{
+				Type:     controlprotocol.CandidateServerReflexive,
+				Address:  "203.0.113.20:51820",
+				Priority: 200,
+			},
 		},
 	}
 	if err := manager.HandleCandidateUpdate(context.Background(), update); err != nil {
@@ -104,7 +121,14 @@ func TestCandidatePathManagerFallsBackAfterEveryDirectHandshakeFails(t *testing.
 	updater := &endpointRecorder{}
 	probe := &handshakeProbeStub{results: []error{errors.New("timeout")}}
 	selector := controlprotocol.NewPathSelector()
-	manager, err := NewCandidatePathManager("client", "gateway", validPeerKey, updater, selector, probe)
+	manager, err := NewCandidatePathManager(
+		"client",
+		"gateway",
+		validPeerKey,
+		updater,
+		selector,
+		probe,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,8 +252,11 @@ func TestParseDirectCandidatesRejectsUnspecifiedAddress(t *testing.T) {
 	if _, err := ParseDirectCandidates("0.0.0.0:51820"); err == nil {
 		t.Fatal("unspecified direct candidate was accepted")
 	}
+
 	candidates, err := ParseDirectCandidates("192.168.1.20:51820,203.0.113.20:51821")
-	if err != nil || len(candidates) != 2 || candidates[0].Priority != 2 || candidates[1].Priority != 1 {
+
+	if err != nil || len(candidates) != 2 || candidates[0].Priority != 2 ||
+		candidates[1].Priority != 1 {
 		t.Fatalf("candidates=%#v error=%v", candidates, err)
 	}
 }

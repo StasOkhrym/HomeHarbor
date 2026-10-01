@@ -54,7 +54,13 @@ type InviteTransaction interface {
 }
 type DeviceTransaction interface {
 	CreateIdentity(context.Context, devices.Device) error
-	ReplaceCredential(context.Context, string, [32]byte, time.Time, time.Time) (devices.Device, error)
+	ReplaceCredential(
+		context.Context,
+		string,
+		[32]byte,
+		time.Time,
+		time.Time,
+	) (devices.Device, error)
 }
 type (
 	ProfileTransaction interface {
@@ -77,14 +83,25 @@ type ActivationUnitOfWork interface {
 	WithinActivation(context.Context, func(ActivationTransaction) error) error
 }
 type Activation struct {
-	uow        ActivationUnitOfWork
-	invites    InviteReader
-	snapshots  SnapshotReader
-	challenges ChallengeRepository
-	root       ed25519.PublicKey
-	network    string
-	now        func() time.Time
-	random     io.Reader
+	uow           ActivationUnitOfWork
+	invites       InviteReader
+	snapshots     SnapshotReader
+	challenges    ChallengeRepository
+	root          ed25519.PublicKey
+	network       string
+	now           func() time.Time
+	random        io.Reader
+	claimTTL      time.Duration
+	credentialTTL time.Duration
+}
+
+// ActivationOption supplies dependencies owned by the application boundary.
+type ActivationOption func(*Activation)
+
+// WithLifetimes uses validated issuance limits; ClaimTTL remains the maximum
+// lifetime accepted by existing clients, not a negotiated trust relaxation.
+func WithLifetimes(claim, credential time.Duration) ActivationOption {
+	return func(a *Activation) { a.claimTTL, a.credentialTTL = claim, credential }
 }
 
 func NewActivation(
@@ -96,6 +113,7 @@ func NewActivation(
 	network string,
 	now func() time.Time,
 	random io.Reader,
+	options ...ActivationOption,
 ) *Activation {
 	if now == nil {
 		now = time.Now
@@ -103,19 +121,28 @@ func NewActivation(
 	if random == nil {
 		random = rand.Reader
 	}
-	return &Activation{
-		uow:        uow,
-		invites:    records,
-		snapshots:  snapshots,
-		challenges: challenges,
-		root:       bytes.Clone(root),
-		network:    network,
-		now:        now,
-		random:     random,
+	a := &Activation{
+		uow:           uow,
+		invites:       records,
+		snapshots:     snapshots,
+		challenges:    challenges,
+		root:          bytes.Clone(root),
+		network:       network,
+		now:           now,
+		random:        random,
+		claimTTL:      ClaimTTL,
+		credentialTTL: devices.CredentialTTL,
 	}
+	for _, option := range options {
+		option(a)
+	}
+	return a
 }
 
-func (a *Activation) ApproveSigned(ctx context.Context, signed invite.SignedApproval) (invites.ApprovalResult, error) {
+func (a *Activation) ApproveSigned(
+	ctx context.Context,
+	signed invite.SignedApproval,
+) (invites.ApprovalResult, error) {
 	if a.uow == nil {
 		return invites.ApprovalResult{}, errors.New("activation unit of work is required")
 	}
@@ -226,7 +253,8 @@ var canonical = func() cbor.EncMode {
 }()
 
 func claimPayload(c ClaimChallenge) ([]byte, error) {
-	if c.Version != 1 || c.NetworkID == "" || c.InviteID == "" || c.DeviceID == "" || c.ExpiresAt <= 0 {
+	if c.Version != 1 || c.NetworkID == "" || c.InviteID == "" || c.DeviceID == "" ||
+		c.ExpiresAt <= 0 {
 		return nil, ErrInvalidClaim
 	}
 	if _, err := strictBase64(c.Nonce, 32); err != nil {
@@ -253,29 +281,37 @@ func SignClaim(c ClaimChallenge, key ed25519.PrivateKey) (ClaimProof, error) {
 	}
 	return ClaimProof{
 		Challenge: c,
-		Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, append([]byte(claimDomain), p...))),
+		Signature: base64.RawURLEncoding.EncodeToString(
+			ed25519.Sign(key, append([]byte(claimDomain), p...)),
+		),
 	}, nil
 }
 
 func (a *Activation) ready(ctx context.Context, id string) (invites.Record, error) {
-	if a.invites == nil || a.snapshots == nil || len(a.root) != ed25519.PublicKeySize || a.network == "" {
+	if a.invites == nil || a.snapshots == nil || len(a.root) != ed25519.PublicKeySize ||
+		a.network == "" {
 		return invites.Record{}, ErrNotReady
 	}
+
 	r, err := a.invites.Get(ctx, id)
 	if err != nil {
 		return invites.Record{}, err
 	}
-	if r.Status != invites.StatusApproved || len(r.DevicePublic) != 32 || len(r.WireGuardPublicKey) != 32 {
+	if r.Status != invites.StatusApproved || len(r.DevicePublic) != 32 ||
+		len(r.WireGuardPublicKey) != 32 {
 		return invites.Record{}, ErrNotReady
 	}
+
 	envelope, err := a.snapshots.Latest(ctx)
 	if err != nil {
 		return invites.Record{}, err
 	}
+
 	value, err := snapshot.Verify(envelope, a.root, a.network)
 	if err != nil {
 		return invites.Record{}, ErrNotReady
 	}
+
 	var wg wgtypes.Key
 	copy(wg[:], r.WireGuardPublicKey)
 	matching := false
@@ -286,6 +322,7 @@ func (a *Activation) ready(ctx context.Context, id string) (invites.Record, erro
 			matching = true
 		}
 	}
+
 	if matching {
 		for _, p := range value.Profiles {
 			if p.ID == r.ProfileID && slices.Contains(p.DeviceIDs, r.DeviceID) {
@@ -293,6 +330,7 @@ func (a *Activation) ready(ctx context.Context, id string) (invites.Record, erro
 			}
 		}
 	}
+
 	return invites.Record{}, ErrNotReady
 }
 
@@ -314,13 +352,13 @@ func (a *Activation) Challenge(ctx context.Context, id string) (ClaimChallenge, 
 		InviteID:  id,
 		DeviceID:  r.DeviceID,
 		Nonce:     base64.RawURLEncoding.EncodeToString(nonce[:]),
-		ExpiresAt: a.now().UTC().Add(ClaimTTL).Unix(),
+		ExpiresAt: a.now().UTC().Add(a.claimTTL).Unix(),
 	}
 	p, err := claimPayload(c)
 	if err != nil {
 		return ClaimChallenge{}, err
 	}
-	if err = a.challenges.PutChallenge(ctx, claimPurpose, c.Nonce, p, ClaimTTL); err != nil {
+	if err = a.challenges.PutChallenge(ctx, claimPurpose, c.Nonce, p, a.claimTTL); err != nil {
 		return ClaimChallenge{}, err
 	}
 	return c, nil
@@ -334,7 +372,7 @@ func (a *Activation) Claim(ctx context.Context, id string, proof ClaimProof) (Cl
 	c := proof.Challenge
 	if c.NetworkID != a.network || c.InviteID != id || c.DeviceID != r.DeviceID ||
 		a.now().UTC().Unix() >= c.ExpiresAt ||
-		c.ExpiresAt > a.now().UTC().Add(ClaimTTL).Unix() {
+		c.ExpiresAt > a.now().UTC().Add(a.claimTTL).Unix() {
 		return ClaimResult{}, ErrInvalidClaim
 	}
 	p, err := claimPayload(c)
@@ -380,7 +418,13 @@ func (a *Activation) Claim(ctx context.Context, id string, proof ClaimProof) (Cl
 			return ErrInvalidClaim
 		}
 		now := a.now().UTC()
-		d, lockErr = tx.Devices.ReplaceCredential(ctx, r.DeviceID, hash, now, now.Add(devices.CredentialTTL))
+		d, lockErr = tx.Devices.ReplaceCredential(
+			ctx,
+			r.DeviceID,
+			hash,
+			now,
+			now.Add(a.credentialTTL),
+		)
 		if lockErr != nil {
 			return lockErr
 		}
@@ -393,7 +437,11 @@ func (a *Activation) Claim(ctx context.Context, id string, proof ClaimProof) (Cl
 		}
 		return tx.Outbox.Append(
 			ctx,
-			devices.Event{Type: "device.credential_claimed", AggregateID: r.DeviceID, OccurredAt: now},
+			devices.Event{
+				Type:        "device.credential_claimed",
+				AggregateID: r.DeviceID,
+				OccurredAt:  now,
+			},
 		)
 	})
 	if err != nil {

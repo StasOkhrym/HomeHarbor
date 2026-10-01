@@ -38,7 +38,14 @@ func TestInviteProofIsPendingUntilTrustedCompanionApproves(t *testing.T) {
 	if err = service.SubmitProof(context.Background(), permit, proof); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.Approve(context.Background(), local.Permit.InviteID, "wrong"); !errors.Is(err, ErrInvalidCode) {
+	if _, err = service.Approve(
+		context.Background(),
+		local.Permit.InviteID,
+		"wrong",
+	); !errors.Is(
+		err,
+		ErrInvalidCode,
+	) {
 		t.Fatalf("wrong code error=%v", err)
 	}
 	approved, err := service.Approve(context.Background(), local.Permit.InviteID, local.Code)

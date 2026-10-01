@@ -1,0 +1,20 @@
+{
+  "name": "go-tunnels-tooling",
+  "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "lint": "eslint . && stylelint '**/*.css'",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.11.0",
+    "globals": "17.12.0",
+    "prettier": "3.9.9",
+    "stylelint": "17.15.0",
+    "stylelint-config-standard": "40.0.0"
+  }
+}

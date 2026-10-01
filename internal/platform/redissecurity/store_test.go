@@ -96,9 +96,16 @@ func TestRedisRateLimitSharedAcrossClients(t *testing.T) {
 }
 
 func TestRedisFailureDoesNotAllowRequest(t *testing.T) {
-	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 50 * time.Millisecond})
+	client := redis.NewClient(
+		&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 50 * time.Millisecond},
+	)
 	t.Cleanup(func() { _ = client.Close() })
-	allowed, _, err := New(client, "failure").Allow(context.Background(), "login", "client", 5, time.Minute)
+
+	allowed, _, err := New(
+		client,
+		"failure",
+	).Allow(context.Background(), "login", "client", 5, time.Minute)
+
 	if err == nil || allowed {
 		t.Fatalf("allowed=%v error=%v", allowed, err)
 	}

@@ -57,9 +57,13 @@ func NewService(store Repository, now func() time.Time) *Service {
 	return &Service{store: store, now: now}
 }
 
-func (s *Service) Advertise(ctx context.Context, request AdvertisementRequest) (Advertisement, error) {
+func (s *Service) Advertise(
+	ctx context.Context,
+	request AdvertisementRequest,
+) (Advertisement, error) {
 	suffix := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(request.DomainSuffix)), ".")
-	if request.ID == "" || request.GatewayDeviceID == "" || !request.Prefix.IsValid() || request.Prefix.Bits() == 0 ||
+	if request.ID == "" || request.GatewayDeviceID == "" || !request.Prefix.IsValid() ||
+		request.Prefix.Bits() == 0 ||
 		!request.Resolver.IsValid() ||
 		request.Resolver.IsUnspecified() ||
 		!validDomainSuffix(suffix) {
@@ -74,6 +78,7 @@ func (s *Service) Advertise(ctx context.Context, request AdvertisementRequest) (
 			ErrInvalidAdvertisement,
 		)
 	}
+
 	advertisement := Advertisement{
 		ID:              request.ID,
 		GatewayDeviceID: request.GatewayDeviceID,
@@ -86,6 +91,7 @@ func (s *Service) Advertise(ctx context.Context, request AdvertisementRequest) (
 	if err := s.store.Save(ctx, advertisement); err != nil {
 		return Advertisement{}, err
 	}
+
 	return advertisement, nil
 }
 
@@ -94,19 +100,25 @@ func (s *Service) Advertise(ctx context.Context, request AdvertisementRequest) (
 // label. Canonicalizing before this check makes equivalent trailing-dot input
 // persist as one stable value and keeps snapshot comparisons deterministic.
 func validDomainSuffix(value string) bool {
-	if value == "" || len(value) > 253 || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") {
+	if value == "" || len(value) > 253 || strings.HasPrefix(value, ".") ||
+		strings.HasSuffix(value, ".") {
 		return false
 	}
+
 	for _, label := range strings.Split(value, ".") {
-		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") ||
+			strings.HasSuffix(label, "-") {
 			return false
 		}
+
 		for _, character := range label {
-			if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
+			if (character < 'a' || character > 'z') && (character < '0' || character > '9') &&
+				character != '-' {
 				return false
 			}
 		}
 	}
+
 	return true
 }
 
@@ -123,4 +135,8 @@ func (s *Service) Approved(ctx context.Context) ([]Advertisement, error) {
 	return s.store.List(ctx, &status)
 }
 
-func (s *Service) List(ctx context.Context) ([]Advertisement, error) { return s.store.List(ctx, nil) }
+func (s *Service) List(
+	ctx context.Context,
+) ([]Advertisement, error) {
+	return s.store.List(ctx, nil)
+}

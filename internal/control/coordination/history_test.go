@@ -19,7 +19,10 @@ import (
 
 type historyAuthenticator struct{}
 
-func (historyAuthenticator) Authenticate(_ context.Context, credential string) (devices.Device, error) {
+func (historyAuthenticator) Authenticate(
+	_ context.Context,
+	credential string,
+) (devices.Device, error) {
 	if credential != "credential" {
 		return devices.Device{}, errors.New("invalid credential")
 	}
@@ -50,7 +53,11 @@ func TestHistoryRequiresDeviceAuthAndValidCursorHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := snapshots.NewService(snapshots.NewMemoryStore(), public, "home")
-	first, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, private, "root")
+	first, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
+		private,
+		"root",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +89,11 @@ func TestHistoryRequiresDeviceAuthAndValidCursorHash(t *testing.T) {
 		{"bad cursor", "?after_revision=-1&limit=1", "credential", 400},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/api/v1/coordination/snapshots"+test.path, nil)
+			r := httptest.NewRequest(
+				http.MethodGet,
+				"/api/v1/coordination/snapshots"+test.path,
+				nil,
+			)
 			if test.credential != "" {
 				r.Header.Set("Authorization", "Bearer "+test.credential)
 			}
@@ -114,14 +125,22 @@ func TestSnapshotSignalIsBoundedToOneWebSocketEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	envelope, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, private, "root")
+
+	envelope, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
+		private,
+		"root",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := snapshotMessage(envelope); err != nil {
 		t.Fatal(err)
 	}
+
 	envelope.Payload = make([]byte, 64<<10)
+
 	if _, err := snapshotMessage(envelope); err == nil {
 		t.Fatal("oversized signed-head frame accepted")
 	}

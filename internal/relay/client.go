@@ -164,7 +164,8 @@ func (b *Bridge) readWebSocket(ctx context.Context, errCh chan<- error) {
 			errCh <- err
 			return
 		}
-		if packet.SessionID != b.cfg.SessionID || packet.SourceDeviceID != b.cfg.DestinationDeviceID ||
+		if packet.SessionID != b.cfg.SessionID ||
+			packet.SourceDeviceID != b.cfg.DestinationDeviceID ||
 			packet.DestinationDeviceID != b.cfg.DeviceID {
 			errCh <- errors.New("relay packet identity mismatch")
 			return

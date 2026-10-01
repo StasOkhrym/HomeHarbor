@@ -17,12 +17,26 @@ func (s *Server) issueToken(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	token, err := s.devices.IssueEnrollmentToken(r.Context(), input.Role, time.Duration(input.TTLSeconds)*time.Second)
+	token, err := s.devices.IssueEnrollmentToken(
+		r.Context(),
+		input.Role,
+		time.Duration(input.TTLSeconds)*time.Second,
+	)
 	if err != nil {
 		if errors.Is(err, devices.ErrInvalidTokenRequest) {
-			writeErrorCode(w, http.StatusBadRequest, "invalid_request", "enrollment token request is invalid")
+			writeErrorCode(
+				w,
+				http.StatusBadRequest,
+				"invalid_request",
+				"enrollment token request is invalid",
+			)
 		} else {
-			writeErrorCode(w, http.StatusInternalServerError, "internal_error", "could not create enrollment token")
+			writeErrorCode(
+				w,
+				http.StatusInternalServerError,
+				"internal_error",
+				"could not create enrollment token",
+			)
 		}
 		return
 	}
@@ -39,11 +53,21 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusBadRequest
 		if errors.Is(err, devices.ErrInvalidEnrollmentToken) {
 			status = http.StatusUnauthorized
-			writeErrorCode(w, status, "invalid_enrollment_token", "enrollment token is invalid or expired")
+			writeErrorCode(
+				w,
+				status,
+				"invalid_enrollment_token",
+				"enrollment token is invalid or expired",
+			)
 		} else if errors.Is(err, devices.ErrInvalidEnrollment) {
 			writeErrorCode(w, status, "invalid_request", "enrollment request is invalid")
 		} else {
-			writeErrorCode(w, http.StatusInternalServerError, "internal_error", "could not enroll device")
+			writeErrorCode(
+				w,
+				http.StatusInternalServerError,
+				"internal_error",
+				"could not enroll device",
+			)
 		}
 		return
 	}

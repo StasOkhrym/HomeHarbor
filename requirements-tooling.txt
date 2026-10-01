@@ -1,0 +1,8 @@
+# Python 3.11+. Install in a virtualenv: python3 -m pip install -r requirements-tooling.txt
+ruff==0.16.9
+djlint==1.46.3
+tomlkit==0.15.1
+shellcheck-py==0.11.0.1
+PyYAML==6.0.3
+yamllint==1.38.0
+sqlfluff==4.3.0

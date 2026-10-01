@@ -44,11 +44,17 @@ func (i TicketIssuer) Issue(sessionID, deviceID string, ttl time.Duration) (stri
 // IssueForPeer binds a relay credential to the exact peer it may reach. The
 // WebSocket transport still accepts legacy unbound tickets, while the UDP
 // pair transport requires this stronger claim before it can bind an address.
-func (i TicketIssuer) IssueForPeer(sessionID, deviceID, destinationDeviceID string, ttl time.Duration) (string, error) {
+func (i TicketIssuer) IssueForPeer(
+	sessionID, deviceID, destinationDeviceID string,
+	ttl time.Duration,
+) (string, error) {
 	return i.issue(sessionID, deviceID, destinationDeviceID, ttl)
 }
 
-func (i TicketIssuer) issue(sessionID, deviceID, destinationDeviceID string, ttl time.Duration) (string, error) {
+func (i TicketIssuer) issue(
+	sessionID, deviceID, destinationDeviceID string,
+	ttl time.Duration,
+) (string, error) {
 	if len(i.Key) < 32 {
 		return "", errors.New("relay ticket key must be at least 32 bytes")
 	}
@@ -91,29 +97,37 @@ func (i TicketIssuer) Verify(token string) (TicketClaims, error) {
 	if len(i.Key) < 32 || len(token) == 0 || len(token) > maxTicketLength {
 		return claims, ErrInvalidTicket
 	}
+
 	parts := strings.Split(token, ".")
 	if len(parts) != 2 || !hmac.Equal([]byte(i.sign(parts[0])), []byte(parts[1])) {
 		return claims, ErrInvalidTicket
 	}
+
 	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
 		return claims, ErrInvalidTicket
 	}
+
 	if err = json.Unmarshal(payload, &claims); err != nil {
 		return claims, ErrInvalidTicket
 	}
-	if claims.Version != TicketVersion || claims.Audience != RelayAudience || claims.SessionID == "" ||
+
+	if claims.Version != TicketVersion || claims.Audience != RelayAudience ||
+		claims.SessionID == "" ||
 		claims.DeviceID == "" ||
 		claims.ExpiresAt <= 0 {
 		return TicketClaims{}, ErrInvalidTicket
 	}
+
 	now := time.Now
 	if i.Now != nil {
 		now = i.Now
 	}
+
 	if now().Unix() >= claims.ExpiresAt {
 		return claims, ErrExpiredTicket
 	}
+
 	return claims, nil
 }
 

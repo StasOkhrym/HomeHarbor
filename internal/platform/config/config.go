@@ -14,6 +14,7 @@ import (
 )
 
 type Control struct {
+	Runtime       Runtime         `toml:"runtime"`
 	Server        Server          `toml:"server"`
 	Database      Database        `toml:"database"`
 	Redis         Redis           `toml:"redis"`
@@ -107,7 +108,8 @@ type Observability struct {
 }
 
 type RelayServer struct {
-	Server struct {
+	Runtime Runtime `toml:"runtime"`
+	Server  struct {
 		ListenAddress    string `toml:"listen_address"`
 		UDPListenAddress string `toml:"udp_listen_address"`
 		UDPPortMin       int    `toml:"udp_port_min"`
@@ -175,7 +177,7 @@ func LoadAdmin(path string) (Admin, error) {
 }
 
 func LoadRelayServer(path string) (RelayServer, error) {
-	var cfg RelayServer
+	cfg := RelayServer{Runtime: DefaultRuntime(true)}
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return cfg, fmt.Errorf("decode relay config: %w", err)
 	}
@@ -205,12 +207,18 @@ func LoadRelayServer(path string) (RelayServer, error) {
 		return cfg, errors.New("relay TLS certificate and key files must be configured together")
 	}
 	if cfg.Server.UDPPortMin != 0 || cfg.Server.UDPPortMax != 0 {
-		if cfg.Server.UDPPortMin < 1 || cfg.Server.UDPPortMax < cfg.Server.UDPPortMin || cfg.Server.UDPPortMax > 65535 {
+		if cfg.Server.UDPPortMin < 1 || cfg.Server.UDPPortMax < cfg.Server.UDPPortMin ||
+			cfg.Server.UDPPortMax > 65535 {
 			return cfg, errors.New("relay UDP port range must be ordered within 1..65535")
 		}
 	}
 	if cfg.Server.ListenAddress == "" || len(cfg.Security.TicketKey) < 32 {
-		return cfg, errors.New("relay listen_address and a ticket key of at least 32 bytes are required")
+		return cfg, errors.New(
+			"relay listen_address and a ticket key of at least 32 bytes are required",
+		)
+	}
+	if err := cfg.Runtime.Validate(); err != nil {
+		return cfg, err
 	}
 	return cfg, nil
 }
@@ -239,7 +247,7 @@ func LoadDatabase(path string) (Database, error) {
 }
 
 func LoadControl(path string) (Control, error) {
-	var cfg Control
+	cfg := Control{Runtime: DefaultRuntime(false)}
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return Control{}, fmt.Errorf("decode control config: %w", err)
 	}
@@ -260,9 +268,12 @@ func LoadControl(path string) (Control, error) {
 	}
 	if cfg.Redis.URL != "" {
 		endpoint, err := url.Parse(cfg.Redis.URL)
-		if err != nil || endpoint.Host == "" || (endpoint.Scheme != "redis" && endpoint.Scheme != "rediss") ||
+		if err != nil || endpoint.Host == "" ||
+			(endpoint.Scheme != "redis" && endpoint.Scheme != "rediss") ||
 			endpoint.User != nil {
-			return Control{}, errors.New("redis.url must be a redis/rediss endpoint without embedded credentials")
+			return Control{}, errors.New(
+				"redis.url must be a redis/rediss endpoint without embedded credentials",
+			)
 		}
 	}
 	if value := os.Getenv("GO_TUNNELS_SERVER_LISTEN_ADDRESS"); value != "" {
@@ -305,6 +316,9 @@ func LoadControl(path string) (Control, error) {
 		cfg.Relay.TicketKey = value
 	}
 	if err := cfg.validate(); err != nil {
+		return Control{}, err
+	}
+	if err := cfg.Runtime.Validate(); err != nil {
 		return Control{}, err
 	}
 	return cfg, nil
@@ -363,7 +377,8 @@ func (c Control) validate() error {
 	if address := strings.TrimSpace(c.Relay.PublicUDPAddress); address != "" {
 		host, port, splitErr := net.SplitHostPort(address)
 		portNumber, portErr := strconv.Atoi(port)
-		if splitErr != nil || strings.TrimSpace(host) == "" || portErr != nil || portNumber < 1 || portNumber > 65535 {
+		if splitErr != nil || strings.TrimSpace(host) == "" || portErr != nil || portNumber < 1 ||
+			portNumber > 65535 {
 			return errors.New("relay.public_udp_address must be a host:port with a valid port")
 		}
 	}

@@ -11,7 +11,13 @@ import (
 
 type failingChallenges struct{}
 
-func (failingChallenges) PutChallenge(context.Context, string, string, []byte, time.Duration) error {
+func (failingChallenges) PutChallenge(
+	context.Context,
+	string,
+	string,
+	[]byte,
+	time.Duration,
+) error {
 	return errors.New("unavailable")
 }
 

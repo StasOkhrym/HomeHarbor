@@ -215,7 +215,11 @@ func publishInviteSnapshot(args []string) error {
 	endpoint := flags.String("endpoint", "https://control.example", "control plane URL")
 	keyID := flags.String("key-id", "root-1", "root key identifier")
 	inviteID := flags.String("invite", "", "approved invite ID")
-	overlayPool := flags.String("overlay-pool", "", "IPv4 RFC1918/CGNAT overlay pool, for example 10.200.0.0/24")
+	overlayPool := flags.String(
+		"overlay-pool",
+		"",
+		"IPv4 RFC1918/CGNAT overlay pool, for example 10.200.0.0/24",
+	)
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -257,7 +261,11 @@ func revokeDeviceSnapshot(args []string) error {
 	passphraseFile := flags.String("passphrase-file", "", "file containing the passphrase")
 	endpoint := flags.String("endpoint", "https://control.example", "control plane URL")
 	keyID := flags.String("key-id", "root-1", "root key identifier")
-	deviceID := flags.String("device", "", "client device ID to remove from the signed network snapshot")
+	deviceID := flags.String(
+		"device",
+		"",
+		"client device ID to remove from the signed network snapshot",
+	)
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -317,10 +325,14 @@ func configuredPassphrase(passphraseFile, configured string) (string, error) {
 	if configured != "" {
 		return configured, nil
 	}
-	return "", errors.New("passphrase-file is required; do not pass secrets as command-line arguments")
+	return "", errors.New(
+		"passphrase-file is required; do not pass secrets as command-line arguments",
+	)
 }
 
-func unlockSessionWithPassphrase(path, passphraseFile, configuredSecret string) (*companion.Session, error) {
+func unlockSessionWithPassphrase(
+	path, passphraseFile, configuredSecret string,
+) (*companion.Session, error) {
 	passphrase, err := configuredPassphrase(passphraseFile, configuredSecret)
 	if err != nil {
 		return nil, err
@@ -339,7 +351,9 @@ func unlockSessionWithPassphrase(path, passphraseFile, configuredSecret string) 
 
 func readPassphrase(path string) (string, error) {
 	if path == "" {
-		return "", errors.New("passphrase-file is required; do not pass secrets as command-line arguments")
+		return "", errors.New(
+			"passphrase-file is required; do not pass secrets as command-line arguments",
+		)
 	}
 	value, err := os.ReadFile(path)
 	if err != nil {

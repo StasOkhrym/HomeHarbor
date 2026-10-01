@@ -1,0 +1,8 @@
+# Only this proxy receives the DNS-01 credential. Provider-specific _FILE vars
+# point at one secret mount; API tokens never become process arguments.
+services:
+  traefik:
+    environment: {{ dns_provider_file_environment | to_json }}
+    secrets: [relay_tls_ca, dns_provider_token]
+secrets:
+  dns_provider_token: {file: ../secrets/dns_provider_token}

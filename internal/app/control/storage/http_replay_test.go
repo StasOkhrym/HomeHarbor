@@ -37,7 +37,11 @@ func TestPostgresHTTPClaimReplayReturnsInvalidClaim400(t *testing.T) {
 	}
 	h := httpapi.NewActivationHandler(f.activation, f.activation)
 	for _, want := range []int{http.StatusOK, http.StatusBadRequest} {
-		r := httptest.NewRequest(http.MethodPost, "/api/v1/invites/"+f.record.InviteID+"/claim", bytes.NewReader(body))
+		r := httptest.NewRequest(
+			http.MethodPost,
+			"/api/v1/invites/"+f.record.InviteID+"/claim",
+			bytes.NewReader(body),
+		)
 		r.SetPathValue("id", f.record.InviteID)
 		w := httptest.NewRecorder()
 		h.Claim(w, r)

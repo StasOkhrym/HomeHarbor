@@ -12,7 +12,12 @@ type MemoryStore struct {
 }
 
 func NewMemoryStore() *MemoryStore { return &MemoryStore{} }
-func (s *MemoryStore) Replace(_ context.Context, rules []Rule, compiler Compiler) (Snapshot, error) {
+
+func (s *MemoryStore) Replace(
+	_ context.Context,
+	rules []Rule,
+	compiler Compiler,
+) (Snapshot, error) {
 	return s.replace(rules, compiler, nil)
 }
 

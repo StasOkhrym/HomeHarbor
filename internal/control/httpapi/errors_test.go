@@ -9,7 +9,10 @@ import (
 
 func TestWriteServiceErrorDoesNotExposeInternalDetails(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	writeServiceError(recorder, errors.New("pq: password authentication failed for user go_tunnels"))
+	writeServiceError(
+		recorder,
+		errors.New("pq: password authentication failed for user go_tunnels"),
+	)
 	if recorder.Code != 400 {
 		t.Fatalf("status=%d, want 400", recorder.Code)
 	}

@@ -12,6 +12,76 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
+func TestConfiguredCredentialTTLControlsEnrollmentAndRotation(t *testing.T) {
+	now := time.Now().UTC()
+	s := NewService(
+		NewMemoryStore(),
+		func() time.Time { return now },
+		nil,
+		WithCredentialTTL(2*time.Minute),
+	)
+	token, err := s.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, wg := validPublicKeys(t)
+	d, err := s.Enroll(
+		context.Background(),
+		EnrollRequest{
+			Token:              token.Token,
+			Name:               "ttl-test",
+			IdentityPublicKey:  id,
+			WireGuardPublicKey: wg,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	rotated, err := s.RotateCredential(context.Background(), d.ID, d.Credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Authenticate(context.Background(), d.Credential); err == nil {
+		t.Fatal("old credential remains valid")
+	}
+	now = now.Add(2*time.Minute + time.Second)
+	if _, err = s.Authenticate(context.Background(), rotated); err == nil {
+		t.Fatal("rotation ignored configured credential expiry")
+	}
+}
+
+func TestConfiguredCredentialTTLEnrollmentExpires(t *testing.T) {
+	now := time.Now().UTC()
+	s := NewService(
+		NewMemoryStore(),
+		func() time.Time { return now },
+		nil,
+		WithCredentialTTL(time.Minute),
+	)
+	token, err := s.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, wg := validPublicKeys(t)
+	d, err := s.Enroll(
+		context.Background(),
+		EnrollRequest{
+			Token:              token.Token,
+			Name:               "ttl-test",
+			IdentityPublicKey:  id,
+			WireGuardPublicKey: wg,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute + time.Second)
+	if _, err = s.Authenticate(context.Background(), d.Credential); err == nil {
+		t.Fatal("enrollment ignored configured credential expiry")
+	}
+}
+
 func TestEnrollmentTokenIsSingleUse(t *testing.T) {
 	store := NewMemoryStore()
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
@@ -174,10 +244,20 @@ func TestRotateCredentialRevokesPreviousCredential(t *testing.T) {
 	if rotated == device.Credential {
 		t.Fatal("rotation returned the previous credential")
 	}
-	if _, err := service.Authenticate(context.Background(), device.Credential); !errors.Is(err, ErrDeviceNotFound) {
+	if _, err := service.Authenticate(
+		context.Background(),
+		device.Credential,
+	); !errors.Is(
+		err,
+		ErrDeviceNotFound,
+	) {
 		t.Fatalf("old credential authentication error = %v", err)
 	}
-	if got, err := service.Authenticate(context.Background(), rotated); err != nil || got.ID != device.ID {
+	if got, err := service.Authenticate(
+		context.Background(),
+		rotated,
+	); err != nil ||
+		got.ID != device.ID {
 		t.Fatalf("new credential authentication = %#v, %v", got, err)
 	}
 }
@@ -189,13 +269,19 @@ func TestEnrollRejectsMalformedPublicKeysAndOversizedName(t *testing.T) {
 		name   string
 		mutate func(*EnrollRequest)
 	}{
-		{name: "identity key", mutate: func(request *EnrollRequest) { request.IdentityPublicKey = "not-a-public-key" }},
+		{
+			name:   "identity key",
+			mutate: func(request *EnrollRequest) { request.IdentityPublicKey = "not-a-public-key" },
+		},
 		{
 			name:   "WireGuard key",
 			mutate: func(request *EnrollRequest) { request.WireGuardPublicKey = "not-a-wireguard-key" },
 		},
 		{name: "empty name", mutate: func(request *EnrollRequest) { request.Name = "" }},
-		{name: "oversized name", mutate: func(request *EnrollRequest) { request.Name = string(make([]byte, 257)) }},
+		{
+			name:   "oversized name",
+			mutate: func(request *EnrollRequest) { request.Name = string(make([]byte, 257)) },
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -211,7 +297,13 @@ func TestEnrollRejectsMalformedPublicKeysAndOversizedName(t *testing.T) {
 				WireGuardPublicKey: wireGuardPublicKey,
 			}
 			test.mutate(&request)
-			if _, err := service.Enroll(context.Background(), request); !errors.Is(err, ErrInvalidEnrollment) {
+			if _, err := service.Enroll(
+				context.Background(),
+				request,
+			); !errors.Is(
+				err,
+				ErrInvalidEnrollment,
+			) {
 				t.Fatalf("Enroll() error = %v, want ErrInvalidEnrollment", err)
 			}
 			// Validation happens before token consumption. The operator can retry

@@ -23,7 +23,11 @@ import (
 
 // Legacy WS fixtures also serve the authenticated history contract. Reconnect
 // tests must not accidentally answer a history GET with a 426 upgrade error.
-func serveCoordinationTestHistory(w http.ResponseWriter, r *http.Request, history []snapshot.Envelope) bool {
+func serveCoordinationTestHistory(
+	w http.ResponseWriter,
+	r *http.Request,
+	history []snapshot.Envelope,
+) bool {
 	if r.URL.Path != "/api/v1/coordination/snapshots" {
 		return false
 	}
@@ -31,22 +35,26 @@ func serveCoordinationTestHistory(w http.ResponseWriter, r *http.Request, histor
 		w.WriteHeader(http.StatusUnauthorized)
 		return true
 	}
+
 	after, err := strconv.ParseUint(r.URL.Query().Get("after_revision"), 10, 64)
 	if err != nil {
 		w.WriteHeader(400)
 		return true
 	}
+
 	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
 	if err != nil || limit < 1 || limit > 16 {
 		w.WriteHeader(400)
 		return true
 	}
+
 	if after > 0 {
 		hash, err := base64.RawURLEncoding.DecodeString(r.URL.Query().Get("after_hash"))
 		if err != nil || len(hash) != 32 {
 			w.WriteHeader(400)
 			return true
 		}
+
 		found := false
 		for _, envelope := range history {
 			value, _ := snapshot.Decode(envelope)
@@ -55,11 +63,13 @@ func serveCoordinationTestHistory(w http.ResponseWriter, r *http.Request, histor
 				break
 			}
 		}
+
 		if !found {
 			w.WriteHeader(409)
 			return true
 		}
 	}
+
 	page := []snapshot.Envelope{}
 	for _, envelope := range history {
 		value, _ := snapshot.Decode(envelope)
@@ -70,7 +80,9 @@ func serveCoordinationTestHistory(w http.ResponseWriter, r *http.Request, histor
 			}
 		}
 	}
+
 	_ = json.NewEncoder(w).Encode(page)
+
 	return true
 }
 
@@ -93,82 +105,84 @@ func TestSnapshotLiveAndReconnectHeadsFetchMissingHistory(t *testing.T) {
 			public, history := signedHistory(t, 4)
 			requests := make(chan uint64, 10)
 			var connections atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/coordination/snapshots" {
-					if r.Header.Get("Authorization") != "Bearer credential" {
-						w.WriteHeader(401)
+			server := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/api/v1/coordination/snapshots" {
+						if r.Header.Get("Authorization") != "Bearer credential" {
+							w.WriteHeader(401)
+							return
+						}
+						after, err := strconv.ParseUint(r.URL.Query().Get("after_revision"), 10, 64)
+						if err != nil {
+							t.Error(err)
+							w.WriteHeader(400)
+							return
+						}
+						requests <- after
+						page := []snapshot.Envelope{}
+						for _, envelope := range history {
+							value, _ := snapshot.Decode(envelope)
+							if value.Revision > after {
+								page = append(page, envelope)
+							}
+						}
+						_ = json.NewEncoder(w).Encode(page)
 						return
 					}
-					after, err := strconv.ParseUint(r.URL.Query().Get("after_revision"), 10, 64)
+					connection, err := websocket.Accept(w, r, nil)
 					if err != nil {
 						t.Error(err)
-						w.WriteHeader(400)
 						return
 					}
-					requests <- after
-					page := []snapshot.Envelope{}
-					for _, envelope := range history {
-						value, _ := snapshot.Decode(envelope)
-						if value.Revision > after {
-							page = append(page, envelope)
-						}
+					defer func() { _ = connection.CloseNow() }()
+					var hello controlprotocol.Hello
+					if err := wsjson.Read(r.Context(), connection, &hello); err != nil {
+						return
 					}
-					_ = json.NewEncoder(w).Encode(page)
-					return
-				}
-				connection, err := websocket.Accept(w, r, nil)
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				defer func() { _ = connection.CloseNow() }()
-				var hello controlprotocol.Hello
-				if err := wsjson.Read(r.Context(), connection, &hello); err != nil {
-					return
-				}
-				if err := wsjson.Write(
-					r.Context(),
-					connection,
-					map[string]any{
-						"type": "welcome",
-						"protocol": controlprotocol.Negotiated{
-							Version:      controlprotocol.CurrentVersion,
-							Capabilities: []string{controlprotocol.CapabilityRelay},
-						},
-					},
-				); err != nil {
-					return
-				}
-				count := connections.Add(1)
-				heads := []snapshot.Envelope{history[1], history[3]}
-				if reconnect {
-					if count == 1 {
-						heads = heads[:1]
-					} else {
-						heads = heads[1:]
-					}
-				}
-				for _, head := range heads {
-					payload, _ := json.Marshal(head)
 					if err := wsjson.Write(
 						r.Context(),
 						connection,
-						controlprotocol.Message{Type: "network.snapshot", Payload: payload},
+						map[string]any{
+							"type": "welcome",
+							"protocol": controlprotocol.Negotiated{
+								Version:      controlprotocol.CurrentVersion,
+								Capabilities: []string{controlprotocol.CapabilityRelay},
+							},
+						},
 					); err != nil {
 						return
 					}
-				}
-				if reconnect && count == 1 {
-					_ = connection.Close(websocket.StatusServiceRestart, "reconnect test")
-					return
-				}
-				for {
-					var message controlprotocol.Message
-					if err := wsjson.Read(r.Context(), connection, &message); err != nil {
+					count := connections.Add(1)
+					heads := []snapshot.Envelope{history[1], history[3]}
+					if reconnect {
+						if count == 1 {
+							heads = heads[:1]
+						} else {
+							heads = heads[1:]
+						}
+					}
+					for _, head := range heads {
+						payload, _ := json.Marshal(head)
+						if err := wsjson.Write(
+							r.Context(),
+							connection,
+							controlprotocol.Message{Type: "network.snapshot", Payload: payload},
+						); err != nil {
+							return
+						}
+					}
+					if reconnect && count == 1 {
+						_ = connection.Close(websocket.StatusServiceRestart, "reconnect test")
 						return
 					}
-				}
-			}))
+					for {
+						var message controlprotocol.Message
+						if err := wsjson.Read(r.Context(), connection, &message); err != nil {
+							return
+						}
+					}
+				}),
+			)
 			defer server.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
@@ -217,6 +231,7 @@ func TestSnapshotHistoryRejectsOversizedBodiesRedirectsAndUntrustedTLS(t *testin
 			for i := range page {
 				page[i] = history[0]
 			}
+
 			_ = json.NewEncoder(w).Encode(page)
 		}},
 		{"redirect", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/elsewhere", http.StatusFound) }},
@@ -224,6 +239,7 @@ func TestSnapshotHistoryRejectsOversizedBodiesRedirectsAndUntrustedTLS(t *testin
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewServer(test.handler)
 			defer server.Close()
+
 			a, cursor := &stateApplier{}, &coordinationCursor{}
 			cfg := CoordinationConfig{
 				URL:           "ws" + server.URL[len("http"):],
@@ -231,25 +247,38 @@ func TestSnapshotHistoryRejectsOversizedBodiesRedirectsAndUntrustedTLS(t *testin
 				NetworkID:     "home",
 				RootPublicKey: public,
 			}
-			if err := reconcileSnapshotHead(context.Background(), cfg, a, cursor, history[0]); err == nil {
+
+			if err := reconcileSnapshotHead(
+				context.Background(),
+				cfg,
+				a,
+				cursor,
+				history[0],
+			); err == nil {
 				t.Fatal("unbounded/redirected history accepted")
 			}
+
 			if len(a.revisions) != 0 || cursor.revision != 0 {
 				t.Fatal("rejected response applied")
 			}
 		})
 	}
+
 	t.Run("TLS", func(t *testing.T) {
 		server := httptest.NewTLSServer(
-			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(history) }),
+			http.HandlerFunc(
+				func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(history) },
+			),
 		)
 		defer server.Close()
+
 		cfg := CoordinationConfig{
 			URL:           "wss" + server.URL[len("https"):],
 			Credential:    "credential",
 			NetworkID:     "home",
 			RootPublicKey: public,
 		}
+
 		if _, err := fetchSnapshotHistory(context.Background(), cfg, 0, nil); err == nil {
 			t.Fatal("untrusted TLS server accepted")
 		}

@@ -39,7 +39,11 @@ type SnapshotSigner struct {
 }
 
 func NewSnapshotSigner(session *Session, networkID, keyID string) *SnapshotSigner {
-	return &SnapshotSigner{session: session, networkID: strings.TrimSpace(networkID), keyID: strings.TrimSpace(keyID)}
+	return &SnapshotSigner{
+		session:   session,
+		networkID: strings.TrimSpace(networkID),
+		keyID:     strings.TrimSpace(keyID),
+	}
 }
 
 // SignDeviceAddition verifies the current signed head, adds exactly one client
@@ -53,6 +57,7 @@ func (s *SnapshotSigner) SignDeviceAddition(
 	if err != nil {
 		return snapshot.Envelope{}, err
 	}
+
 	if err := validateDeviceAddition(value, addition); err != nil {
 		return snapshot.Envelope{}, err
 	}
@@ -64,7 +69,11 @@ func (s *SnapshotSigner) SignDeviceAddition(
 	for index := range next.Profiles {
 		if next.Profiles[index].ID == addition.ProfileID {
 			previousMembers := append([]string(nil), next.Profiles[index].DeviceIDs...)
-			next.Profiles[index].DeviceIDs = append(next.Profiles[index].DeviceIDs, addition.Device.ID)
+			next.Profiles[index].DeviceIDs = append(
+				next.Profiles[index].DeviceIDs,
+				addition.Device.ID,
+			)
+
 			if err := copyProfileACL(
 				next.ACL,
 				&next.ACL,
@@ -75,9 +84,11 @@ func (s *SnapshotSigner) SignDeviceAddition(
 			); err != nil {
 				return snapshot.Envelope{}, err
 			}
+
 			break
 		}
 	}
+
 	return snapshot.Sign(next, privateKey, s.keyID)
 }
 
@@ -132,24 +143,31 @@ func (s *SnapshotSigner) SignDeviceRemoval(
 	return snapshot.Sign(next, privateKey, s.keyID)
 }
 
-func (s *SnapshotSigner) currentHead(previous snapshot.Envelope) (snapshot.NetworkSnapshot, ed25519.PrivateKey, error) {
-	if s == nil || s.session == nil || s.networkID == "" || s.keyID == "" || previous.KeyID != s.keyID {
+func (s *SnapshotSigner) currentHead(
+	previous snapshot.Envelope,
+) (snapshot.NetworkSnapshot, ed25519.PrivateKey, error) {
+	if s == nil || s.session == nil || s.networkID == "" || s.keyID == "" ||
+		previous.KeyID != s.keyID {
 		return snapshot.NetworkSnapshot{}, nil, ErrInvalidSnapshotDiff
 	}
+
 	privateKey, err := s.session.PrivateKey()
 	if err != nil {
 		return snapshot.NetworkSnapshot{}, nil, err
 	}
+
 	value, err := snapshot.Decode(previous)
 	if err != nil {
 		return snapshot.NetworkSnapshot{}, nil, fmt.Errorf("decode current snapshot: %w", err)
 	}
+
 	currentRevision := uint64(0)
 	var currentHash []byte
 	if value.Revision > 1 {
 		currentRevision = value.Revision - 1
 		currentHash = value.PreviousHash
 	}
+
 	if err := snapshot.VerifyNext(
 		previous,
 		privateKey.Public().(ed25519.PublicKey),
@@ -159,6 +177,7 @@ func (s *SnapshotSigner) currentHead(previous snapshot.Envelope) (snapshot.Netwo
 	); err != nil {
 		return snapshot.NetworkSnapshot{}, nil, fmt.Errorf("verify current snapshot: %w", err)
 	}
+
 	return value, privateKey, nil
 }
 
@@ -240,20 +259,24 @@ func copyProfileACL(
 }
 
 func validateDeviceAddition(value snapshot.NetworkSnapshot, addition DeviceAddition) error {
-	if strings.TrimSpace(addition.ProfileID) == "" || addition.Device.ID == "" || addition.Device.Role != "client" ||
+	if strings.TrimSpace(addition.ProfileID) == "" || addition.Device.ID == "" ||
+		addition.Device.Role != "client" ||
 		addition.Device.IdentityPublicKey == "" ||
 		addition.Device.WireGuardPublicKey == "" {
 		return ErrInvalidSnapshotDiff
 	}
+
 	overlay, err := netip.ParsePrefix(addition.Device.OverlayAddress)
 	if err != nil || !overlay.IsValid() || overlay.Bits() == 0 {
 		return ErrInvalidSnapshotDiff
 	}
+
 	profileFound := false
 	for _, profile := range value.Profiles {
 		if profile.ID != addition.ProfileID {
 			continue
 		}
+
 		profileFound = true
 		for _, deviceID := range profile.DeviceIDs {
 			if deviceID == addition.Device.ID {
@@ -261,14 +284,17 @@ func validateDeviceAddition(value snapshot.NetworkSnapshot, addition DeviceAddit
 			}
 		}
 	}
+
 	if !profileFound {
 		return ErrInvalidSnapshotDiff
 	}
+
 	for _, device := range value.Devices {
 		if device.ID == addition.Device.ID {
 			return ErrInvalidSnapshotDiff
 		}
 	}
+
 	return nil
 }
 

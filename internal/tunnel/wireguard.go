@@ -47,13 +47,19 @@ func BuildWireGuardConfigWithListenPort(
 		allowed := make([]net.IPNet, 0, len(peer.AllowedPrefixes))
 		for _, prefix := range peer.AllowedPrefixes {
 			if !prefix.IsValid() || prefix.Bits() == 0 {
-				return wgtypes.Config{}, fmt.Errorf("peer %s cannot advertise a default route", peer.PublicKey)
+				return wgtypes.Config{}, fmt.Errorf(
+					"peer %s cannot advertise a default route",
+					peer.PublicKey,
+				)
 			}
 			bits := prefix.Bits()
 			address := prefix.Addr()
 			allowed = append(
 				allowed,
-				net.IPNet{IP: net.IP(address.AsSlice()), Mask: net.CIDRMask(bits, address.BitLen())},
+				net.IPNet{
+					IP:   net.IP(address.AsSlice()),
+					Mask: net.CIDRMask(bits, address.BitLen()),
+				},
 			)
 		}
 		endpoint := net.UDPAddrFromAddrPort(peer.Endpoint)

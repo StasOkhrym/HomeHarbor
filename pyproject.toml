@@ -1,0 +1,13 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.djlint]
+profile = "golang"
+indent = 2
+max_line_length = 100
+# Templates are fragments composed by Go; they don't each own a document head.
+ignore = "H030,H031"

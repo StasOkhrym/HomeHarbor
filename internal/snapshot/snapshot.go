@@ -144,26 +144,40 @@ func Sign(value NetworkSnapshot, privateKey ed25519.PrivateKey, keyID string) (E
 // storage use this function; they already have no predecessor to compare
 // against, but still need the trusted signature, hash, schema, and network
 // binding before using the snapshot for authorization.
-func Verify(envelope Envelope, publicKey ed25519.PublicKey, networkID string) (NetworkSnapshot, error) {
-	if envelope.Version != SchemaVersion || len(publicKey) != ed25519.PublicKeySize || envelope.KeyID == "" ||
+func Verify(
+	envelope Envelope,
+	publicKey ed25519.PublicKey,
+	networkID string,
+) (NetworkSnapshot, error) {
+	if envelope.Version != SchemaVersion || len(publicKey) != ed25519.PublicKeySize ||
+		envelope.KeyID == "" ||
 		len(envelope.Hash) != sha256.Size ||
 		len(envelope.Signature) != ed25519.SignatureSize {
 		return NetworkSnapshot{}, ErrInvalidSnapshot
 	}
+
 	hash := sha256.Sum256(envelope.Payload)
 	if !bytes.Equal(hash[:], envelope.Hash) {
 		return NetworkSnapshot{}, ErrInvalidHash
 	}
-	if !ed25519.Verify(publicKey, append([]byte(signatureDomain), envelope.Payload...), envelope.Signature) {
+	if !ed25519.Verify(
+		publicKey,
+		append([]byte(signatureDomain), envelope.Payload...),
+		envelope.Signature,
+	) {
 		return NetworkSnapshot{}, ErrInvalidSignature
 	}
+
 	var value NetworkSnapshot
+
 	if err := cbor.Unmarshal(envelope.Payload, &value); err != nil {
 		return NetworkSnapshot{}, fmt.Errorf("decode snapshot: %w", err)
 	}
+
 	if err := validateAndNormalize(&value); err != nil {
 		return NetworkSnapshot{}, err
 	}
+
 	canonical, err := canonicalMode.Marshal(value)
 	if err != nil || !bytes.Equal(canonical, envelope.Payload) {
 		return NetworkSnapshot{}, ErrInvalidSnapshot
@@ -171,6 +185,7 @@ func Verify(envelope Envelope, publicKey ed25519.PublicKey, networkID string) (N
 	if value.NetworkID != networkID {
 		return NetworkSnapshot{}, ErrInvalidSnapshot
 	}
+
 	return value, nil
 }
 
@@ -229,113 +244,208 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 	if value.NetworkID == "" || value.Revision == 0 {
 		return ErrInvalidSnapshot
 	}
+
 	if value.Version == 0 {
 		value.Version = SchemaVersion
 	}
+
 	if value.Version != SchemaVersion {
 		return ErrInvalidSnapshot
 	}
-	if err := sortUnique("device", value.Devices, func(item Device) string { return item.ID }); err != nil {
+
+	if err := sortUnique(
+		"device",
+		value.Devices,
+		func(item Device) string { return item.ID },
+	); err != nil {
 		return err
 	}
-	if err := sortUnique("gateway", value.Gateways, func(item Gateway) string { return item.DeviceID }); err != nil {
+
+	if err := sortUnique(
+		"gateway",
+		value.Gateways,
+		func(item Gateway) string { return item.DeviceID },
+	); err != nil {
 		return err
 	}
-	if err := sortUnique("route", value.Routes, func(item Route) string { return item.ID }); err != nil {
+
+	if err := sortUnique(
+		"route",
+		value.Routes,
+		func(item Route) string { return item.ID },
+	); err != nil {
 		return err
 	}
-	if err := sortUnique("service", value.Services, func(item Service) string { return item.ID }); err != nil {
+
+	if err := sortUnique(
+		"service",
+		value.Services,
+		func(item Service) string { return item.ID },
+	); err != nil {
 		return err
 	}
-	if err := sortUnique("profile", value.Profiles, func(item AccessProfile) string { return item.ID }); err != nil {
+
+	if err := sortUnique(
+		"profile",
+		value.Profiles,
+		func(item AccessProfile) string { return item.ID },
+	); err != nil {
 		return err
 	}
-	if err := sortUnique("acl rule", value.ACL, func(item ACLRule) string { return item.ID }); err != nil {
+
+	if err := sortUnique(
+		"acl rule",
+		value.ACL,
+		func(item ACLRule) string { return item.ID },
+	); err != nil {
 		return err
 	}
+
 	for _, service := range value.Services {
-		if service.ID == "" || service.Name == "" || (service.Kind != "web" && service.Kind != "native") {
+		if service.ID == "" || service.Name == "" ||
+			(service.Kind != "web" && service.Kind != "native") {
 			return fmt.Errorf("%w: service identity or kind", ErrInvalidSnapshot)
 		}
+
 		if err := validateServiceURL(service.URL, true); err != nil {
 			return fmt.Errorf("%w: service %s url: %v", ErrInvalidSnapshot, service.ID, err)
 		}
+
 		if service.NativeURL != "" {
 			if err := validateServiceURL(service.NativeURL, false); err != nil {
-				return fmt.Errorf("%w: service %s native_url: %v", ErrInvalidSnapshot, service.ID, err)
+				return fmt.Errorf(
+					"%w: service %s native_url: %v",
+					ErrInvalidSnapshot,
+					service.ID,
+					err,
+				)
 			}
 		}
+
 		if service.HealthURL != "" {
 			if err := validateServiceURL(service.HealthURL, true); err != nil {
-				return fmt.Errorf("%w: service %s health_url: %v", ErrInvalidSnapshot, service.ID, err)
+				return fmt.Errorf(
+					"%w: service %s health_url: %v",
+					ErrInvalidSnapshot,
+					service.ID,
+					err,
+				)
 			}
 		}
 	}
+
 	deviceIDs := make(map[string]Device, len(value.Devices))
 	for _, device := range value.Devices {
 		if device.ID == "" {
 			return fmt.Errorf("%w: device ID is required", ErrInvalidSnapshot)
 		}
 		if device.Role != "client" && device.Role != "gateway" {
-			return fmt.Errorf("%w: device %s has an unsupported role", ErrInvalidSnapshot, device.ID)
+			return fmt.Errorf(
+				"%w: device %s has an unsupported role",
+				ErrInvalidSnapshot,
+				device.ID,
+			)
 		}
+
 		deviceIDs[device.ID] = device
 		if device.OverlayAddress != "" {
 			prefix, err := netip.ParsePrefix(device.OverlayAddress)
 			if err != nil || !prefix.IsValid() || prefix.Bits() == 0 {
-				return fmt.Errorf("%w: device %s has invalid overlay address", ErrInvalidSnapshot, device.ID)
+				return fmt.Errorf(
+					"%w: device %s has invalid overlay address",
+					ErrInvalidSnapshot,
+					device.ID,
+				)
 			}
 		}
 	}
+
 	serviceIDs := make(map[string]struct{}, len(value.Services))
 	for _, service := range value.Services {
 		serviceIDs[service.ID] = struct{}{}
 	}
+
 	for _, gateway := range value.Gateways {
 		device, ok := deviceIDs[gateway.DeviceID]
 		if !ok {
-			return fmt.Errorf("%w: gateway %s references an unknown device", ErrInvalidSnapshot, gateway.DeviceID)
+			return fmt.Errorf(
+				"%w: gateway %s references an unknown device",
+				ErrInvalidSnapshot,
+				gateway.DeviceID,
+			)
 		}
 		if device.Role != "gateway" {
-			return fmt.Errorf("%w: gateway %s references a non-gateway device", ErrInvalidSnapshot, gateway.DeviceID)
+			return fmt.Errorf(
+				"%w: gateway %s references a non-gateway device",
+				ErrInvalidSnapshot,
+				gateway.DeviceID,
+			)
 		}
 	}
+
 	for index := range value.Routes {
 		route := &value.Routes[index]
 		gateway, ok := deviceIDs[route.GatewayID]
 		if !ok {
-			return fmt.Errorf("%w: route %s references an unknown gateway", ErrInvalidSnapshot, route.ID)
+			return fmt.Errorf(
+				"%w: route %s references an unknown gateway",
+				ErrInvalidSnapshot,
+				route.ID,
+			)
 		}
 		if gateway.Role != "gateway" {
-			return fmt.Errorf("%w: route %s references a non-gateway device", ErrInvalidSnapshot, route.ID)
+			return fmt.Errorf(
+				"%w: route %s references a non-gateway device",
+				ErrInvalidSnapshot,
+				route.ID,
+			)
 		}
+
 		prefix, err := netip.ParsePrefix(route.Prefix)
 		if err != nil || !prefix.IsValid() {
 			return fmt.Errorf("%w: route %s has invalid prefix", ErrInvalidSnapshot, route.ID)
 		}
 		if prefix.Bits() == 0 {
-			return fmt.Errorf("%w: route %s cannot advertise a default route", ErrInvalidSnapshot, route.ID)
+			return fmt.Errorf(
+				"%w: route %s cannot advertise a default route",
+				ErrInvalidSnapshot,
+				route.ID,
+			)
 		}
 		if (route.DomainSuffix == "") != (route.Resolver == "") {
-			return fmt.Errorf("%w: route %s must provide both DNS suffix and resolver", ErrInvalidSnapshot, route.ID)
+			return fmt.Errorf(
+				"%w: route %s must provide both DNS suffix and resolver",
+				ErrInvalidSnapshot,
+				route.ID,
+			)
 		}
+
 		if route.DomainSuffix != "" {
 			canonicalSuffix, valid := canonicalDomainSuffix(route.DomainSuffix)
 			if !valid {
-				return fmt.Errorf("%w: route %s has invalid DNS suffix", ErrInvalidSnapshot, route.ID)
+				return fmt.Errorf(
+					"%w: route %s has invalid DNS suffix",
+					ErrInvalidSnapshot,
+					route.ID,
+				)
 			}
+
 			route.DomainSuffix = canonicalSuffix
+
 			resolver, resolverErr := netip.ParseAddr(route.Resolver)
-			if resolverErr != nil || !resolver.IsValid() || resolver.IsUnspecified() || !prefix.Contains(resolver) {
+			if resolverErr != nil || !resolver.IsValid() || resolver.IsUnspecified() ||
+				!prefix.Contains(resolver) {
 				return fmt.Errorf("%w: route %s has invalid resolver", ErrInvalidSnapshot, route.ID)
 			}
 		}
 	}
+
 	for index := range value.Profiles {
 		profile := &value.Profiles[index]
 		if profile.ID == "" || profile.Name == "" {
 			return ErrInvalidSnapshot
 		}
+
 		slices.Sort(profile.DeviceIDs)
 		slices.Sort(profile.ServiceIDs)
 		slices.Sort(profile.ACLRuleIDs)
@@ -350,6 +460,7 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 				)
 			}
 		}
+
 		for _, serviceID := range profile.ServiceIDs {
 			if _, ok := serviceIDs[serviceID]; !ok {
 				return fmt.Errorf(
@@ -361,12 +472,19 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 			}
 		}
 	}
+
 	aclIDs := make(map[string]struct{}, len(value.ACL))
 	for _, acl := range value.ACL {
 		aclIDs[acl.ID] = struct{}{}
+
 		if _, ok := deviceIDs[acl.SourceDeviceID]; !ok {
-			return fmt.Errorf("%w: ACL %s references an unknown source device", ErrInvalidSnapshot, acl.ID)
+			return fmt.Errorf(
+				"%w: ACL %s references an unknown source device",
+				ErrInvalidSnapshot,
+				acl.ID,
+			)
 		}
+
 		destination, err := netip.ParsePrefix(acl.Destination)
 		if err != nil || !destination.IsValid() || destination.Bits() == 0 {
 			return fmt.Errorf("%w: ACL %s has invalid destination", ErrInvalidSnapshot, acl.ID)
@@ -378,6 +496,7 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 			return fmt.Errorf("%w: ACL %s has invalid port range", ErrInvalidSnapshot, acl.ID)
 		}
 	}
+
 	for _, profile := range value.Profiles {
 		for _, ruleID := range profile.ACLRuleIDs {
 			if _, ok := aclIDs[ruleID]; !ok {
@@ -390,39 +509,50 @@ func validateAndNormalize(value *NetworkSnapshot) error {
 			}
 		}
 	}
+
 	return nil
 }
 
 func canonicalDomainSuffix(raw string) (string, bool) {
 	value := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(raw)), ".")
-	if value == "" || len(value) > 253 || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") {
+	if value == "" || len(value) > 253 || strings.HasPrefix(value, ".") ||
+		strings.HasSuffix(value, ".") {
 		return "", false
 	}
+
 	for _, label := range strings.Split(value, ".") {
-		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") ||
+			strings.HasSuffix(label, "-") {
 			return "", false
 		}
+
 		for _, character := range label {
-			if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
+			if (character < 'a' || character > 'z') && (character < '0' || character > '9') &&
+				character != '-' {
 				return "", false
 			}
 		}
 	}
+
 	return value, true
 }
 
 func validateServiceURL(raw string, requireHTTPS bool) error {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil ||
+		parsed.Fragment != "" {
 		return errors.New("URL must have a host and must not contain credentials or fragments")
 	}
+
 	scheme := strings.ToLower(parsed.Scheme)
 	if requireHTTPS && scheme != "https" {
 		return errors.New("URL must use HTTPS")
 	}
-	if !requireHTTPS && (scheme == "javascript" || scheme == "data" || scheme == "file" || scheme == "vbscript") {
+	if !requireHTTPS &&
+		(scheme == "javascript" || scheme == "data" || scheme == "file" || scheme == "vbscript") {
 		return errors.New("URL uses a disallowed scheme")
 	}
+
 	return nil
 }
 

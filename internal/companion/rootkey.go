@@ -127,20 +127,27 @@ func (s *RootKeyStore) Unlock(passphrase string) (ed25519.PrivateKey, error) {
 	if passphrase == "" {
 		return nil, ErrRootKeyLocked
 	}
+
 	file, err := os.Open(s.path)
 	if err != nil {
 		return nil, err
 	}
-	decrypted, err := age.Decrypt(io.LimitReader(file, maxRootKeyFileSize), mustIdentity(passphrase))
+
+	decrypted, err := age.Decrypt(
+		io.LimitReader(file, maxRootKeyFileSize),
+		mustIdentity(passphrase),
+	)
 	if err != nil {
 		_ = file.Close()
 		return nil, ErrRootKeyLocked
 	}
+
 	privateKey, err := io.ReadAll(io.LimitReader(decrypted, ed25519.PrivateKeySize+1))
 	_ = file.Close()
 	if err != nil || len(privateKey) != ed25519.PrivateKeySize {
 		return nil, ErrRootKeyLocked
 	}
+
 	return ed25519.PrivateKey(append([]byte(nil), privateKey...)), nil
 }
 

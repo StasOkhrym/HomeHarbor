@@ -31,7 +31,8 @@ func (s *Repository) Append(
 	if err != nil {
 		return err
 	}
-	if value.NetworkID != networkID || expectedRevision >= math.MaxInt64 || value.Revision != expectedRevision+1 {
+	if value.NetworkID != networkID || expectedRevision >= math.MaxInt64 ||
+		value.Revision != expectedRevision+1 {
 		return snapshot.ErrRevisionGap
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})

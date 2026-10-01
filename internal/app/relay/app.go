@@ -23,14 +23,15 @@ import (
 // App owns relay HTTP resources and the in-memory session hub. The relay does
 // not persist tunnel payloads; restarting it intentionally drops sessions.
 type App struct {
-	server        *http.Server
-	hub           *relayruntime.Hub
-	logger        *slog.Logger
-	udpListenAddr string
-	tickets       relayruntime.TicketIssuer
-	ready         *atomic.Bool
-	udpV2         *relayruntime.UDPPairV2
-	initErr       error
+	server          *http.Server
+	hub             *relayruntime.Hub
+	logger          *slog.Logger
+	udpListenAddr   string
+	tickets         relayruntime.TicketIssuer
+	ready           *atomic.Bool
+	udpV2           *relayruntime.UDPPairV2
+	initErr         error
+	shutdownTimeout time.Duration
 }
 
 var _ lifecycle.Component = (*App)(nil)
@@ -49,6 +50,27 @@ type Options struct {
 }
 
 func NewWithOptions(cfg config.RelayServer, logger *slog.Logger, options Options) *App {
+	if cfg.Runtime == (config.Runtime{}) {
+		cfg.Runtime = config.DefaultRuntime(true)
+	}
+	if err := cfg.Runtime.Validate(); err != nil {
+		return &App{initErr: err}
+	}
+	if options.UDPV2.BindTimeout == 0 {
+		options.UDPV2.BindTimeout = cfg.Runtime.RelayBindTimeout
+	}
+	if options.UDPV2.IdleTimeout == 0 {
+		options.UDPV2.IdleTimeout = cfg.Runtime.RelayIdleTimeout
+	}
+	if options.UDPV2.MaxPeers == 0 {
+		options.UDPV2.MaxPeers = cfg.Runtime.RelayMaxPeers
+	}
+	if options.UDPV2.MaxPeersPerDevice == 0 {
+		options.UDPV2.MaxPeersPerDevice = cfg.Runtime.RelayMaxPeersPerDevice
+	}
+	if options.UDPV2.MaxAdmissions == 0 {
+		options.UDPV2.MaxAdmissions = cfg.Runtime.RelayMaxAdmissions
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -95,21 +117,22 @@ func NewWithOptions(cfg config.RelayServer, logger *slog.Logger, options Options
 	})
 	mux.Handle("GET /metrics", promhttp.Handler())
 	return &App{
-		hub:           hub,
-		logger:        logger,
-		udpListenAddr: udpListenAddr,
-		tickets:       relayruntime.TicketIssuer{Key: []byte(cfg.Security.TicketKey)},
-		ready:         ready,
-		udpV2:         udpV2,
-		initErr:       initErr,
+		hub:             hub,
+		logger:          logger,
+		udpListenAddr:   udpListenAddr,
+		tickets:         relayruntime.TicketIssuer{Key: []byte(cfg.Security.TicketKey)},
+		ready:           ready,
+		udpV2:           udpV2,
+		initErr:         initErr,
+		shutdownTimeout: cfg.Runtime.ShutdownTimeout,
 		server: &http.Server{
 			TLSConfig:         options.TLSConfig,
 			Addr:              cfg.Server.ListenAddress,
 			Handler:           mux,
-			ReadHeaderTimeout: 5 * time.Second,
-			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      30 * time.Second,
-			IdleTimeout:       60 * time.Second,
+			ReadHeaderTimeout: cfg.Runtime.HTTPHeaderTimeout,
+			ReadTimeout:       cfg.Runtime.HTTPReadTimeout,
+			WriteTimeout:      cfg.Runtime.HTTPWriteTimeout,
+			IdleTimeout:       cfg.Runtime.HTTPIdleTimeout,
 			MaxHeaderBytes:    64 << 10,
 		},
 	}
@@ -142,7 +165,11 @@ func (a *App) Run(ctx context.Context) error {
 // runWithListeners owns both already-bound sockets. Keeping binding outside
 // this lifecycle helper lets tests hold exact ephemeral endpoints while still
 // exercising the same readiness, shutdown, and UDP relay path as production.
-func (a *App) runWithListeners(ctx context.Context, tcpListener net.Listener, udpConnection *net.UDPConn) error {
+func (a *App) runWithListeners(
+	ctx context.Context,
+	tcpListener net.Listener,
+	udpConnection *net.UDPConn,
+) error {
 	if tcpListener == nil || udpConnection == nil {
 		if tcpListener != nil {
 			_ = tcpListener.Close()
@@ -180,7 +207,7 @@ func (a *App) runWithListeners(ctx context.Context, tcpListener net.Listener, ud
 	}
 	cancel()
 	_ = a.udpV2.Close()
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), a.shutdownTimeout)
 	defer shutdownCancel()
 	if shutdownErr := a.server.Shutdown(shutdownCtx); shutdownErr != nil {
 		_ = a.server.Close()

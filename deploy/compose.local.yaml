@@ -1,0 +1,11 @@
+# Local overlay only; production never receives a test frontend certificate.
+services:
+  relay:
+    # Mac backend/UI development does not expose a tunnel ingress. The full
+    # network sandbox publishes relay UDP inside its isolated Linux topology.
+    ports: !reset []
+  traefik:
+    secrets: [relay_tls_ca, frontend_tls_cert, frontend_tls_key]
+secrets:
+  frontend_tls_cert: { file: ../secrets/frontend_tls_cert }
+  frontend_tls_key: { file: ../secrets/frontend_tls_key }

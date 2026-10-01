@@ -54,9 +54,13 @@ func (s *Server) companionSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "companion access is not configured")
 		return
 	}
+
 	nonce := r.Header.Get("X-Go-Tunnels-Companion-Nonce")
 	keyID := r.Header.Get("X-Go-Tunnels-Companion-Key-ID")
-	signature, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-Go-Tunnels-Companion-Signature"))
+
+	signature, err := base64.RawURLEncoding.DecodeString(
+		r.Header.Get("X-Go-Tunnels-Companion-Signature"),
+	)
 	if err != nil ||
 		protocol.VerifyCompanionRequest(
 			http.MethodGet,
@@ -69,6 +73,7 @@ func (s *Server) companionSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid companion request")
 		return
 	}
+
 	consumed, consumeErr := s.companionChallenges.consume(r.Context(), nonce, time.Now().UTC())
 	if consumeErr != nil {
 		writeError(w, http.StatusServiceUnavailable, "security state unavailable")
@@ -78,11 +83,13 @@ func (s *Server) companionSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid companion request")
 		return
 	}
+
 	envelope, err := s.snapshots.Latest(r.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "signed snapshot unavailable")
 		return
 	}
+
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, envelope)
 }

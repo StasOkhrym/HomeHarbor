@@ -149,7 +149,11 @@ func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSn
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if _, err := nft.Compile(r.interfaceName, nil, policy.Snapshot{DefaultAction: policy.ActionDeny}); err != nil {
+	if _, err := nft.Compile(
+		r.interfaceName,
+		nil,
+		policy.Snapshot{DefaultAction: policy.ActionDeny},
+	); err != nil {
 		return err
 	}
 	found := false
@@ -165,7 +169,8 @@ func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSn
 		peers[d.ID] = p
 		if d.ID == r.deviceID {
 			found = true
-			if err != nil || !p.IsValid() || p.Bits() != p.Addr().BitLen() || p.Addr().IsUnspecified() ||
+			if err != nil || !p.IsValid() || p.Bits() != p.Addr().BitLen() ||
+				p.Addr().IsUnspecified() ||
 				d.Role != "client" {
 				return errors.New("invalid client overlay identity")
 			}
@@ -174,7 +179,11 @@ func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSn
 	if !found {
 		return fmt.Errorf("client device %s is missing from snapshot", r.deviceID)
 	}
-	if _, err := nft.Compile(r.interfaceName, peers, policy.Snapshot{DefaultAction: policy.ActionDeny}); err != nil {
+	if _, err := nft.Compile(
+		r.interfaceName,
+		peers,
+		policy.Snapshot{DefaultAction: policy.ActionDeny},
+	); err != nil {
 		return err
 	}
 	for _, route := range value.Routes {
@@ -190,7 +199,10 @@ func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSn
 // NewGatewayReconciler composes firewall and optional split-DNS ownership.
 // The firewall is applied before DNS so a failed policy transaction never
 // leaves a new resolver route active without its matching access controls.
-func NewGatewayReconciler(interfaceName, deviceID string, dnsReconcilers ...*DNSReconciler) *GatewayReconciler {
+func NewGatewayReconciler(
+	interfaceName, deviceID string,
+	dnsReconcilers ...*DNSReconciler,
+) *GatewayReconciler {
 	var dnsReconciler *DNSReconciler
 	if len(dnsReconcilers) > 0 {
 		dnsReconciler = dnsReconcilers[0]
@@ -276,7 +288,8 @@ func (r *GatewayReconciler) Prepare(ctx context.Context, value snapshot.NetworkS
 }
 
 func (r *GatewayReconciler) prepare(ctx context.Context, value snapshot.NetworkSnapshot) error {
-	if r == nil || r.policies == nil || r.interfaceName == "" || r.deviceID == "" || r.ensure == nil {
+	if r == nil || r.policies == nil || r.interfaceName == "" || r.deviceID == "" ||
+		r.ensure == nil {
 		return errors.New("gateway reconciler is not configured")
 	}
 	if err := ctx.Err(); err != nil {
@@ -464,44 +477,59 @@ func (r *GatewayReconciler) Bootstrap(ctx context.Context) error {
 	return nil
 }
 
-func (r *GatewayReconciler) ApplyPrepared(ctx context.Context, value snapshot.NetworkSnapshot) error {
+func (r *GatewayReconciler) ApplyPrepared(
+	ctx context.Context,
+	value snapshot.NetworkSnapshot,
+) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	return r.applyPrepared(ctx, value)
 }
 
-func (r *GatewayReconciler) applyPrepared(ctx context.Context, value snapshot.NetworkSnapshot) error {
+func (r *GatewayReconciler) applyPrepared(
+	ctx context.Context,
+	value snapshot.NetworkSnapshot,
+) error {
 	if err := r.matchesPrepared(value); err != nil {
 		return err
 	}
+
 	if !r.guarded {
 		return errors.New("gateway apply requires tunnel deny guard")
 	}
+
 	r.staged = false
 	plan := r.prepared
 	if err := r.routes.reconcile(ctx, r.interfaceName, plan.routes, func() error {
 		if !plan.approved {
 			return nil
 		}
+
 		return r.ensure(ctx, r.interfaceName, plan.overlay, plan.routes)
 	}); err != nil {
 		return err
 	}
+
 	if r.forwarding && plan.approved {
 		if err := tunnel.EnableLinuxForwarding(ctx); err != nil {
 			return err
 		}
 	}
+
 	if r.dns != nil {
 		dnsValue := cloneNetworkSnapshot(plan.value)
 		if !plan.approved {
 			dnsValue.Routes = nil
 		}
+
 		if err := r.dns.Apply(ctx, dnsValue); err != nil {
 			return fmt.Errorf("apply split DNS snapshot revision %d: %w", value.Revision, err)
 		}
 	}
+
 	r.staged = true
+
 	return nil
 }
 

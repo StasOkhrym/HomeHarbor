@@ -1,14 +1,27 @@
 #!/bin/sh
 set -eu
-
+cd "$(dirname "$0")/.."
 command -v limactl >/dev/null 2>&1 || {
-    echo "limactl is required; install Lima before starting the Linux test VM" >&2
-    exit 1
+    echo 'limactl is required; install Lima before starting the Linux test VM' >&2
+    exit 2
 }
-if limactl list --format '{{.Name}} {{.Status}}' | grep -q '^go-tunnels-vm '; then
-    # Reusing the named instance preserves its installed kernel tools and
-    # avoids treating a stopped developer VM as a provisioning failure.
-    limactl start --tty=false go-tunnels-vm
+instance=${LIMA_INSTANCE:-go-tunnels-acceptance}
+case "$instance" in '' | *[!a-zA-Z0-9_-]*)
+    echo 'Invalid LIMA_INSTANCE' >&2
+    exit 2
+    ;;
+esac
+if limactl list --format '{{.Name}}' | grep -Fxq "$instance"; then
+    # Never reuse a VM exposing unrelated host files. A fresh instance is safer
+    # than silently stopping/editing a VM another local workflow may own.
+    limactl list --json "$instance" | python3 -c '
+import json, sys
+config = json.load(sys.stdin)["config"]
+mounts = config.get("mounts", [])
+if len(mounts) != 1 or mounts[0]["location"] != sys.argv[1] or mounts[0].get("writable", False):
+    sys.exit("Unsafe VM mounts; select a fresh LIMA_INSTANCE for isolated acceptance")
+' "$(pwd)"
+    limactl start --tty=false "$instance"
 else
-    limactl start --name go-tunnels-vm --tty=false deploy/lima/ubuntu.yaml
+    limactl start --name "$instance" --tty=false --mount-only "$(pwd)" deploy/lima/ubuntu.yaml
 fi

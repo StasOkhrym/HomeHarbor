@@ -2,63 +2,84 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: backend-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      gates: ${{ steps.classify.outputs.gates }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: {go-version: "1.27.1"}
-      - uses: golangci/golangci-lint-action@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - id: classify
+        env:
+          CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_FULL: ${{ github.event_name == 'workflow_dispatch' }}
+        run: echo "gates=$(python3 scripts/ci_changes.py)" >> "$GITHUB_OUTPUT"
+  backend:
+    needs: changes
+    if: fromJSON(needs.changes.outputs.gates).fast
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-tooling.txt
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: golangci/golangci-lint-action@db9de0fc1a667e1a49d2291a1a042dff081d78f6 # v9
         with:
           version: v2.14.0
-          args: --timeout=5m --fix=false ./...
-      - name: Check formatting without edits
-        run: make fmt-check
-      - name: Test tooling behavior
-        run: make scripts-test
-      - run: go test -race ./...
-      - name: Fuzz protocol parsers
-        run: make fuzz
-      - run: go vet ./...
-      - run: go build ./cmd/...
-      - name: Enforce module architecture
-        run: make architecture
-      - name: Validate Compose secret boundaries
-        run: make compose-check
-      - name: Validate Ansible deployment bundle
-        run: make deploy-check
-      - name: Real PostgreSQL and authenticated Redis integration (no skips)
-        run: make integration-local
+          install-only: true
+      - name: Install tooling dependencies
+        run: |
+          python -m pip install -r requirements-tooling.txt
+          npm ci --ignore-scripts
+          curl --fail --location --silent --show-error \
+            https://github.com/hadolint/hadolint/releases/download/v2.15.1/hadolint-linux-x86_64 \
+            --output /tmp/hadolint
+          echo 'c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507  /tmp/hadolint' | sha256sum --check
+          sudo install -m 0755 /tmp/hadolint /usr/local/bin/hadolint
+      - name: Portable gate
+        run: make verify
+      - name: SQL and Redis integration
+        if: fromJSON(needs.changes.outputs.gates).integration
+        run: make integration
+      - name: Parser fuzzing
+        if: fromJSON(needs.changes.outputs.gates).fuzz
+        run: make security SECURITY=fuzz
       - name: Vulnerability scan
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-
-  android:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-      - uses: android-actions/setup-android@v3
-      - name: Install Android SDK platform
-        run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "9.6"
-      - name: Build Android preview
-        run: gradle -p apps/android assembleDebug --stacktrace
-
-  ios-source:
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-      - name: Compile iOS source package
-        run: >-
-          xcodebuild -packagePath apps/ios -scheme GoTunnelsIOS-Package
-          -sdk iphonesimulator
-          -destination 'generic/platform=iOS Simulator'
-          CODE_SIGNING_ALLOWED=NO build
+        if: fromJSON(needs.changes.outputs.gates).vulnerability
+        run: make security SECURITY=vulnerability
+      - name: Optional deployment validation
+        if: fromJSON(needs.changes.outputs.gates).deployment
+        run: |
+          python -m pip install -r requirements-deployment.txt
+          python scripts/compose_check.py
+          python scripts/deploy_check.py
+          ansible-lint deploy/ansible/site.yml
+      - name: Disposable runner networking prerequisites
+        if: fromJSON(needs.changes.outputs.gates).network
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables iproute2 wireguard-tools systemd-resolved
+          sudo modprobe tun
+          sudo systemctl enable --now systemd-resolved
+      - name: Linux component acceptance (not complete VPN E2E)
+        if: fromJSON(needs.changes.outputs.gates).network
+        run: sudo env "PATH=$PATH" make acceptance

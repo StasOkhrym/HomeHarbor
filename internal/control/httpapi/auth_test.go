@@ -24,7 +24,10 @@ type fakeSessions struct {
 	failure  error
 }
 
-func (f *fakeSessions) CreateSession(context.Context, time.Duration) (identity.IssuedSession, error) {
+func (f *fakeSessions) CreateSession(
+	context.Context,
+	time.Duration,
+) (identity.IssuedSession, error) {
 	return f.session, f.failure
 }
 
@@ -97,7 +100,11 @@ func newBrowserAuthTest(t *testing.T) (*BrowserAuth, *fakeSessions) {
 
 func TestRecoveryLoginSetsHardenedCookies(t *testing.T) {
 	auth, _ := newBrowserAuthTest(t)
-	req := httptest.NewRequest(http.MethodPost, "/recovery", strings.NewReader(`{"code":"recover-me"}`))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/recovery",
+		strings.NewReader(`{"code":"recover-me"}`),
+	)
 	req.Header.Set("Origin", "https://tunnel.example.com")
 	rec := httptest.NewRecorder()
 	auth.Handler().ServeHTTP(rec, req)
@@ -111,7 +118,8 @@ func TestRecoveryLoginSetsHardenedCookies(t *testing.T) {
 	if cookies[0].Name != "__Host-go_tunnels_admin" || cookies[1].Name != "__Host-go_tunnels_csrf" {
 		t.Fatalf("cookie names = %q, %q", cookies[0].Name, cookies[1].Name)
 	}
-	if !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
+	if !cookies[0].Secure || !cookies[0].HttpOnly ||
+		cookies[0].SameSite != http.SameSiteStrictMode {
 		t.Fatalf("session cookie is not hardened: %#v", cookies[0])
 	}
 	if cookies[1].HttpOnly || !cookies[1].Secure || cookies[1].SameSite != http.SameSiteStrictMode {
@@ -144,7 +152,8 @@ func TestBrowserSessionOutageReturns503WithoutIssuingCookies(t *testing.T) {
 			request.AddCookie(auth.sessionCookie(sessions.session))
 			response := httptest.NewRecorder()
 			server.Handler().ServeHTTP(response, request)
-			if response.Code != http.StatusServiceUnavailable || len(response.Result().Cookies()) != 0 {
+			if response.Code != http.StatusServiceUnavailable ||
+				len(response.Result().Cookies()) != 0 {
 				t.Fatalf(
 					"outage status=%d cookies=%v body=%s",
 					response.Code,
@@ -230,10 +239,16 @@ func TestCSRFAcceptsSameOriginHTMLFormToken(t *testing.T) {
 
 func TestAuthRejectsDisallowedOrigin(t *testing.T) {
 	auth, _ := newBrowserAuthTest(t)
-	req := httptest.NewRequest(http.MethodPost, "/recovery", strings.NewReader(`{"code":"recover-me"}`))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/recovery",
+		strings.NewReader(`{"code":"recover-me"}`),
+	)
 	req.Header.Set("Origin", "https://evil.example")
 	rec := httptest.NewRecorder()
+
 	auth.Handler().ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -241,11 +256,18 @@ func TestAuthRejectsDisallowedOrigin(t *testing.T) {
 
 func TestBootstrapReturnsRecoveryCodesOnlyOnce(t *testing.T) {
 	auth, _ := newBrowserAuthTest(t)
+
 	body, _ := json.Marshal(map[string]any{"ceremony_id": "id", "response": json.RawMessage(`{}`)})
-	req := httptest.NewRequest(http.MethodPost, "/bootstrap/finish", strings.NewReader(string(body)))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/bootstrap/finish",
+		strings.NewReader(string(body)),
+	)
 	req.Header.Set("Origin", "https://tunnel.example.com")
 	rec := httptest.NewRecorder()
+
 	auth.Handler().ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "save-once") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -282,14 +304,22 @@ func TestEstablishSessionRevokesSessionWhenCSRFSetupFails(t *testing.T) {
 func TestLoginPageUsesLocalScriptAsset(t *testing.T) {
 	auth, _ := newBrowserAuthTest(t)
 	recorder := httptest.NewRecorder()
-	auth.LoginHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/login", nil))
+
+	auth.LoginHandler().
+		ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/login", nil))
+
 	if strings.Contains(recorder.Body.String(), "<script>") ||
 		!strings.Contains(recorder.Body.String(), "/assets/login.js") {
 		t.Fatalf("login page contains inline or missing script: %s", recorder.Body.String())
 	}
+
 	asset := httptest.NewRecorder()
-	auth.LoginAssetHandler().ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/assets/login.js", nil))
-	if asset.Code != http.StatusOK || !strings.Contains(asset.Body.String(), "navigator.credentials") {
+
+	auth.LoginAssetHandler().
+		ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/assets/login.js", nil))
+
+	if asset.Code != http.StatusOK ||
+		!strings.Contains(asset.Body.String(), "navigator.credentials") {
 		t.Fatalf("login asset status=%d body=%s", asset.Code, asset.Body.String())
 	}
 }

@@ -1,26 +1,27 @@
 [server]
 listen_address = ":8080"
-public_url = "https://{{ control_domain }}"
+public_url = {{ ('https://' ~ control_domain) | to_json }}
 [database]
-url = "postgres://go_tunnels@postgres:5432/go_tunnels?sslmode=disable"
+driver = "postgres"
+url = "postgres://go_tunnels@db:5432/go_tunnels?sslmode=disable"
 password_file = "/run/secrets/postgres_password"
 [redis]
 url = "redis://redis:6379/0"
 password_file = "/run/secrets/redis_password"
 [auth]
-rp_id = "{{ control_domain }}"
-rp_origin = "https://{{ control_domain }}"
+rp_id = {{ control_domain | to_json }}
+rp_origin = {{ ('https://' ~ control_domain) | to_json }}
 session_signing_key_file = "/run/secrets/session_signing_key"
 ceremony_encryption_key_file = "/run/secrets/ceremony_encryption_key"
 session_ttl = "12h"
 ceremony_ttl = "5m"
 [relay]
-public_url = "wss://{{ relay_domain }}/relay/udp/v2"
+public_url = {{ ('wss://' ~ relay_domain ~ '/relay/udp/v2') | to_json }}
 ticket_key_file = "/run/secrets/relay_ticket_key"
 ticket_ttl = "5m"
 
 [networking]
-network_id = "{{ network_id | default('home') }}"
+network_id = {{ network_id | default('home') | to_json }}
 
 [dns]
 enabled = true

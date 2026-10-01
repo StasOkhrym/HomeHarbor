@@ -9,3 +9,15 @@ udp_advertise_host = "relay.example.com"
 ticket_key_file = "/run/secrets/relay_ticket_key"
 tls_cert_file = "/run/secrets/relay_tls_cert"
 tls_key_file = "/run/secrets/relay_tls_key"
+
+[runtime]
+http_header_timeout = "5s"
+http_read_timeout = "30s"
+http_write_timeout = "30s"
+http_idle_timeout = "60s"
+shutdown_timeout = "10s"
+relay_bind_timeout = "10s"
+relay_idle_timeout = "2m"
+relay_max_peers = 4096
+relay_max_peers_per_device = 8
+relay_max_admissions = 16384

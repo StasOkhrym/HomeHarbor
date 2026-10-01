@@ -38,11 +38,17 @@ type peerCoordinationAuthStub struct {
 // Authentication alone must not implicitly supply candidate lookup privileges.
 type authenticationOnly struct{ delegate Authenticator }
 
-func (a authenticationOnly) Authenticate(ctx context.Context, credential string) (devices.Device, error) {
+func (a authenticationOnly) Authenticate(
+	ctx context.Context,
+	credential string,
+) (devices.Device, error) {
 	return a.delegate.Authenticate(ctx, credential)
 }
 
-func (s peerCoordinationAuthStub) Authenticate(_ context.Context, credential string) (devices.Device, error) {
+func (s peerCoordinationAuthStub) Authenticate(
+	_ context.Context,
+	credential string,
+) (devices.Device, error) {
 	for id, device := range s.devices {
 		if credential == "credential-"+id {
 			return device, nil
@@ -65,7 +71,11 @@ func TestBroadcastSnapshotReachesConnectedPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, privateKey, "root-1")
+	first, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
+		privateKey,
+		"root-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +87,13 @@ func TestBroadcastSnapshotReachesConnectedPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewHandler(coordinationAuthStub{}, nil, coordinationSnapshotStub{envelope: first}, nil, nil)
+	handler := NewHandler(
+		coordinationAuthStub{},
+		nil,
+		coordinationSnapshotStub{envelope: first},
+		nil,
+		nil,
+	)
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
@@ -130,7 +146,11 @@ func TestCandidateForwardingUsesAuthenticatedSourceIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, privateKey, "root-1")
+	first, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
+		privateKey,
+		"root-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,9 +186,12 @@ func TestCandidateForwardingUsesAuthenticatedSourceIdentity(t *testing.T) {
 			context.Background(),
 			connection,
 			controlprotocol.Hello{
-				Versions:     []uint16{controlprotocol.CurrentVersion},
-				Capabilities: []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityDirectUDP},
-				DeviceID:     id,
+				Versions: []uint16{controlprotocol.CurrentVersion},
+				Capabilities: []string{
+					controlprotocol.CapabilityRelay,
+					controlprotocol.CapabilityDirectUDP,
+				},
+				DeviceID: id,
 			},
 		); writeErr != nil {
 			t.Fatal(writeErr)
@@ -225,7 +248,11 @@ func TestCandidateForwardingRequiresAuthorizedPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, privateKey, "root-1")
+	first, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
+		privateKey,
+		"root-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,9 +288,12 @@ func TestCandidateForwardingRequiresAuthorizedPeer(t *testing.T) {
 			context.Background(),
 			connection,
 			controlprotocol.Hello{
-				Versions:     []uint16{controlprotocol.CurrentVersion},
-				Capabilities: []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityDirectUDP},
-				DeviceID:     id,
+				Versions: []uint16{controlprotocol.CurrentVersion},
+				Capabilities: []string{
+					controlprotocol.CapabilityRelay,
+					controlprotocol.CapabilityDirectUDP,
+				},
+				DeviceID: id,
 			},
 		); writeErr != nil {
 			t.Fatal(writeErr)
@@ -312,7 +342,11 @@ func TestCandidateForwardingRequiresDirectCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, privateKey, "root-1")
+	first, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
+		privateKey,
+		"root-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +401,10 @@ func TestCandidateForwardingRequiresDirectCapability(t *testing.T) {
 	}
 	source := dial("source", []string{controlprotocol.CapabilityRelay})
 	defer func() { _ = source.CloseNow() }()
-	destination := dial("destination", []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityDirectUDP})
+	destination := dial(
+		"destination",
+		[]string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityDirectUDP},
+	)
 	defer func() { _ = destination.CloseNow() }()
 
 	payload, err := json.Marshal(controlprotocol.CandidateUpdate{

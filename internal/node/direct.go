@@ -130,42 +130,60 @@ func NewWireGuardHandshakeProber(interfaceName string) (*WireGuardHandshakeProbe
 	if strings.TrimSpace(interfaceName) == "" {
 		return nil, errors.New("WireGuard interface is required for handshake probing")
 	}
-	return &WireGuardHandshakeProber{InterfaceName: interfaceName, PollInterval: 250 * time.Millisecond}, nil
+
+	return &WireGuardHandshakeProber{
+		InterfaceName: interfaceName,
+		PollInterval:  250 * time.Millisecond,
+	}, nil
 }
 
-func (p *WireGuardHandshakeProber) HandshakeTime(ctx context.Context, publicKey string) (time.Time, error) {
+func (p *WireGuardHandshakeProber) HandshakeTime(
+	ctx context.Context,
+	publicKey string,
+) (time.Time, error) {
 	if p == nil || strings.TrimSpace(p.InterfaceName) == "" {
 		return time.Time{}, errors.New("WireGuard handshake prober is not configured")
 	}
+
 	if err := ctx.Err(); err != nil {
 		return time.Time{}, err
 	}
+
 	key, err := wgtypes.ParseKey(publicKey)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parse WireGuard peer key: %w", err)
 	}
+
 	client, err := wgctrl.New()
 	if err != nil {
 		return time.Time{}, fmt.Errorf("open WireGuard control: %w", err)
 	}
 	defer func() { _ = client.Close() }()
+
 	device, err := client.Device(p.InterfaceName)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("read WireGuard interface %s: %w", p.InterfaceName, err)
 	}
+
 	for _, peer := range device.Peers {
 		if peer.PublicKey == key {
 			return peer.LastHandshakeTime, nil
 		}
 	}
+
 	return time.Time{}, fmt.Errorf("WireGuard peer %s is not configured", publicKey)
 }
 
-func (p *WireGuardHandshakeProber) WaitForHandshake(ctx context.Context, publicKey string, previous time.Time) error {
+func (p *WireGuardHandshakeProber) WaitForHandshake(
+	ctx context.Context,
+	publicKey string,
+	previous time.Time,
+) error {
 	interval := 250 * time.Millisecond
 	if p != nil && p.PollInterval > 0 {
 		interval = p.PollInterval
 	}
+
 	for {
 		handshake, err := p.HandshakeTime(ctx, publicKey)
 		if err != nil {
@@ -174,12 +192,14 @@ func (p *WireGuardHandshakeProber) WaitForHandshake(ctx context.Context, publicK
 		if !handshake.IsZero() && handshake.After(previous) {
 			return nil
 		}
+
 		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
 				<-timer.C
 			}
+
 			return ctx.Err()
 		case <-timer.C:
 		}
@@ -193,13 +213,16 @@ func ParseDirectCandidates(value string) ([]controlprotocol.Candidate, error) {
 	if strings.TrimSpace(value) == "" {
 		return nil, nil
 	}
+
 	parts := strings.Split(value, ",")
 	candidates := make([]controlprotocol.Candidate, 0, len(parts))
 	for index, part := range parts {
 		address, err := netip.ParseAddrPort(strings.TrimSpace(part))
-		if err != nil || !address.IsValid() || address.Port() == 0 || address.Addr().IsUnspecified() {
+		if err != nil || !address.IsValid() || address.Port() == 0 ||
+			address.Addr().IsUnspecified() {
 			return nil, fmt.Errorf("candidate %q is invalid", part)
 		}
+
 		candidates = append(
 			candidates,
 			controlprotocol.Candidate{
@@ -209,6 +232,7 @@ func ParseDirectCandidates(value string) ([]controlprotocol.Candidate, error) {
 			},
 		)
 	}
+
 	return candidates, nil
 }
 
@@ -234,10 +258,13 @@ func NewCandidatePathManager(
 	selector *controlprotocol.PathSelector,
 	prober HandshakeProber,
 ) (*CandidatePathManager, error) {
-	if strings.TrimSpace(localDeviceID) == "" || strings.TrimSpace(peerDeviceID) == "" || updater == nil ||
+	if strings.TrimSpace(localDeviceID) == "" || strings.TrimSpace(peerDeviceID) == "" ||
+		updater == nil ||
 		selector == nil ||
 		prober == nil {
-		return nil, errors.New("local device, peer, endpoint updater, selector, and handshake prober are required")
+		return nil, errors.New(
+			"local device, peer, endpoint updater, selector, and handshake prober are required",
+		)
 	}
 	if _, err := wgtypes.ParseKey(peerPublicKey); err != nil {
 		return nil, fmt.Errorf("invalid peer WireGuard public key: %w", err)
@@ -272,17 +299,24 @@ func (m *CandidatePathManager) HandleCandidateUpdate(
 		)
 	}
 	if update.SourceDeviceID != m.peerDeviceID {
-		return fmt.Errorf("candidate update source %s is not peer %s", update.SourceDeviceID, m.peerDeviceID)
+		return fmt.Errorf(
+			"candidate update source %s is not peer %s",
+			update.SourceDeviceID,
+			m.peerDeviceID,
+		)
 	}
+
 	if err := update.Validate(); err != nil {
 		return err
 	}
+
 	candidates := make([]controlprotocol.Candidate, 0, len(update.Candidates))
 	for _, candidate := range update.Candidates {
 		if candidate.Type != controlprotocol.CandidateRelay {
 			candidates = append(candidates, candidate)
 		}
 	}
+
 	slices.SortStableFunc(candidates, func(left, right controlprotocol.Candidate) int {
 		if left.Priority > right.Priority {
 			return -1
@@ -290,6 +324,7 @@ func (m *CandidatePathManager) HandleCandidateUpdate(
 		if left.Priority < right.Priority {
 			return 1
 		}
+
 		return strings.Compare(left.Address, right.Address)
 	})
 	for _, candidate := range candidates {
@@ -297,13 +332,16 @@ func (m *CandidatePathManager) HandleCandidateUpdate(
 		if err != nil {
 			continue
 		}
+
 		baseline, err := m.prober.HandshakeTime(ctx, m.peerPublicKey)
 		if err != nil {
 			continue
 		}
+
 		if err := m.updater.SetPeerEndpoint(ctx, m.peerPublicKey, endpoint); err != nil {
 			continue
 		}
+
 		probeContext, cancel := context.WithTimeout(ctx, m.handshakeLimit)
 		err = m.prober.WaitForHandshake(probeContext, m.peerPublicKey, baseline)
 		cancel()
@@ -311,11 +349,13 @@ func (m *CandidatePathManager) HandleCandidateUpdate(
 			m.selector.DirectHandshakeSucceeded()
 			return nil
 		}
+
 		// Remove a failed direct endpoint before asking the relay watcher to
 		// install its loopback endpoint. This avoids a stale candidate winning
 		// the race between two independent transport goroutines.
 		_ = m.updater.ClearPeerEndpoint(ctx, m.peerPublicKey)
 	}
+
 	m.selector.DirectFailed()
 	return nil
 }

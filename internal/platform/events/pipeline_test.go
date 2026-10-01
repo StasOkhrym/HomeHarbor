@@ -48,7 +48,9 @@ func TestAuditPipelineAcknowledgesOnlyDurableWrites(t *testing.T) {
 	}
 	msg := message.NewMessage(
 		"outbox:42",
-		[]byte(`{"type":"device.enrolled","aggregate_id":"device-1","occurred_at":"2026-09-30T12:00:00Z"}`),
+		[]byte(
+			`{"type":"device.enrolled","aggregate_id":"device-1","occurred_at":"2026-09-30T12:00:00Z"}`,
+		),
 	)
 	published := make(chan error, 1)
 	go func() { published <- pipeline.Publish(ctx, "device.enrolled", msg) }()

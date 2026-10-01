@@ -20,7 +20,12 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 {
-			writeErrorCode(w, http.StatusBadRequest, "invalid_limit", "audit limit must be a positive integer")
+			writeErrorCode(
+				w,
+				http.StatusBadRequest,
+				"invalid_limit",
+				"audit limit must be a positive integer",
+			)
 			return
 		}
 		limit = parsed

@@ -19,7 +19,10 @@ func TestPostgresMigrationRefusesDuplicatesWithoutDeletingCredentialHistory(t *t
 	if _, err := f.activation.ApproveSigned(ctx, f.approval); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.pool.Exec(ctx, `DROP INDEX device_credentials_one_active_per_device`); err != nil {
+	if _, err := f.pool.Exec(
+		ctx,
+		`DROP INDEX device_credentials_one_active_per_device`,
+	); err != nil {
 		t.Fatal(err)
 	}
 	for i := byte(1); i <= 2; i++ {
@@ -57,6 +60,7 @@ func TestPostgresConcurrentApprovalProducesOneDeviceAndOneEventPair(t *testing.T
 		group.Add(1)
 		go func() { defer group.Done(); _, err := f.activation.ApproveSigned(ctx, f.approval); failures <- err }()
 	}
+
 	group.Wait()
 	close(failures)
 	for err := range failures {
@@ -64,9 +68,13 @@ func TestPostgresConcurrentApprovalProducesOneDeviceAndOneEventPair(t *testing.T
 			t.Error(err)
 		}
 	}
+
 	for table, want := range map[string]int{"devices": 1, "access_profile_devices": 1, "event_outbox": 2, "device_credentials": 0} {
 		var count int
-		if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != want {
+
+		if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM `+table).
+			Scan(&count); err != nil ||
+			count != want {
 			t.Fatalf("%s rows=%d want=%d err=%v", table, count, want, err)
 		}
 	}

@@ -28,7 +28,11 @@ func (s *MemoryStore) SaveEnrollmentToken(_ context.Context, token EnrollmentTok
 	return nil
 }
 
-func (s *MemoryStore) ConsumeEnrollmentToken(_ context.Context, hash [32]byte, now time.Time) (Role, error) {
+func (s *MemoryStore) ConsumeEnrollmentToken(
+	_ context.Context,
+	hash [32]byte,
+	now time.Time,
+) (Role, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	token, ok := s.tokens[hash]
@@ -48,11 +52,16 @@ func (s *MemoryStore) SaveDevice(_ context.Context, device Device) error {
 	}
 	device.Credential = ""
 	s.devices[device.ID] = device
-	s.credentialExpires[device.ID] = device.CreatedAt.Add(CredentialTTL)
+	s.credentialExpires[device.ID] = device.CredentialExpiration()
 	return nil
 }
 
-func (s *MemoryStore) Enroll(_ context.Context, hash [32]byte, now time.Time, device Device) (Role, error) {
+func (s *MemoryStore) Enroll(
+	_ context.Context,
+	hash [32]byte,
+	now time.Time,
+	device Device,
+) (Role, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	token, ok := s.tokens[hash]
@@ -67,7 +76,7 @@ func (s *MemoryStore) Enroll(_ context.Context, hash [32]byte, now time.Time, de
 	device.Role = token.Role
 	device.Credential = ""
 	s.devices[device.ID] = device
-	s.credentialExpires[device.ID] = device.CreatedAt.Add(CredentialTTL)
+	s.credentialExpires[device.ID] = device.CredentialExpiration()
 	return token.Role, nil
 }
 
@@ -118,7 +127,11 @@ func (s *MemoryStore) RevokeDevice(_ context.Context, id string, at time.Time) e
 	return nil
 }
 
-func (s *MemoryStore) AuthenticateCredential(_ context.Context, hash [32]byte, now time.Time) (Device, error) {
+func (s *MemoryStore) AuthenticateCredential(
+	_ context.Context,
+	hash [32]byte,
+	now time.Time,
+) (Device, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, device := range s.devices {

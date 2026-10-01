@@ -161,12 +161,15 @@ var _ invites.Repository = (*Repository)(nil)
 
 func (s *Repository) Lock(ctx context.Context, id string) (invites.Record, error) {
 	var locked string
-	err := s.db.QueryRow(ctx, `SELECT invite_id FROM invite_records WHERE invite_id=$1 FOR UPDATE`, id).Scan(&locked)
+
+	err := s.db.QueryRow(ctx, `SELECT invite_id FROM invite_records WHERE invite_id=$1 FOR UPDATE`, id).
+		Scan(&locked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return invites.Record{}, invites.ErrInviteNotFound
 	}
 	if err != nil {
 		return invites.Record{}, err
 	}
+
 	return s.Get(ctx, id)
 }

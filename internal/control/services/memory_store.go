@@ -15,7 +15,10 @@ type MemoryStore struct {
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{services: make(map[string]Service), profiles: make(map[string]AccessProfile)}
+	return &MemoryStore{
+		services: make(map[string]Service),
+		profiles: make(map[string]AccessProfile),
+	}
 }
 
 func (s *MemoryStore) CreateService(_ context.Context, item Service) error {

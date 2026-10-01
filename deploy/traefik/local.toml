@@ -1,0 +1,15 @@
+[entryPoints.websecure]
+address = ":8443"
+
+[providers.file]
+directory = "/etc/traefik/dynamic"
+watch = true
+
+[ping]
+entryPoint = "websecure"
+
+[log]
+format = "json"
+level = "INFO"
+
+# Local TLS uses mounted test certificates, never a production ACME resolver.

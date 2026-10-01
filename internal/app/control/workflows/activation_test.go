@@ -61,14 +61,33 @@ func TestClaimProofBindsInviteDeviceNetworkAndOneTimeChallenge(t *testing.T) {
 					WireGuardPublicKey: base64.StdEncoding.EncodeToString(r.WireGuardPublicKey),
 				},
 			},
-			Profiles: []snapshot.AccessProfile{{ID: "family", Name: "Family", DeviceIDs: []string{"linux"}}},
+			Profiles: []snapshot.AccessProfile{
+				{ID: "family", Name: "Family", DeviceIDs: []string{"linux"}},
+			},
 		},
 		private,
 		"root-1",
 	)
 	security := &challenges{values: map[string][]byte{}}
 	// Proof validation happens before a credential transaction is opened.
-	s := workflows.NewActivation(nil, store, snap, security, root, "home", func() time.Time { return now }, rand.Reader)
+	s := workflows.NewActivation(
+		nil,
+		store,
+		snap,
+		security,
+		root,
+		"home",
+		func() time.Time { return now },
+		rand.Reader,
+		workflows.WithLifetimes(30*time.Second, 2*time.Minute),
+	)
+	issuedChallenge, err := s.Challenge(ctx, "invite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issuedChallenge.ExpiresAt != now.Add(30*time.Second).Unix() {
+		t.Fatal("configured activation challenge TTL ignored")
+	}
 	for _, kind := range []string{"wrong-key", "wrong-invite", "wrong-network", "noncanonical", "expired"} {
 		t.Run(kind, func(t *testing.T) {
 			challenge, err := s.Challenge(ctx, "invite")
@@ -143,7 +162,9 @@ func TestChallengeRequiresExactRootSignedSnapshot(t *testing.T) {
 						WireGuardPublicKey: base64.StdEncoding.EncodeToString(r.WireGuardPublicKey),
 					},
 				},
-				Profiles: []snapshot.AccessProfile{{ID: "p", Name: "Profile", DeviceIDs: []string{"d"}}},
+				Profiles: []snapshot.AccessProfile{
+					{ID: "p", Name: "Profile", DeviceIDs: []string{"d"}},
+				},
 			}
 			key := private
 			switch kind {
@@ -152,9 +173,13 @@ func TestChallengeRequiresExactRootSignedSnapshot(t *testing.T) {
 			case "wrong-network":
 				value.NetworkID = "elsewhere"
 			case "wrong-wg":
-				value.Devices[0].WireGuardPublicKey = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
+				value.Devices[0].WireGuardPublicKey = base64.StdEncoding.EncodeToString(
+					bytes.Repeat([]byte{5}, 32),
+				)
 			case "wrong-identity":
-				value.Devices[0].IdentityPublicKey = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
+				value.Devices[0].IdentityPublicKey = base64.RawURLEncoding.EncodeToString(
+					bytes.Repeat([]byte{5}, 32),
+				)
 			case "wrong-profile":
 				value.Profiles[0].ID = "other"
 			case "missing-device":

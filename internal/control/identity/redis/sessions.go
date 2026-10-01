@@ -21,7 +21,11 @@ type Sessions struct {
 	now    func() time.Time
 }
 
-func NewSessions(client redisclient.UniversalClient, prefix string, now func() time.Time) *Sessions {
+func NewSessions(
+	client redisclient.UniversalClient,
+	prefix string,
+	now func() time.Time,
+) *Sessions {
 	if now == nil {
 		now = time.Now
 	}
@@ -34,7 +38,8 @@ func (s *Sessions) key(hash [32]byte) string {
 
 func (s *Sessions) SaveSession(ctx context.Context, session identity.Session) error {
 	ttl := session.ExpiresAt.Sub(s.now())
-	if ttl < time.Millisecond || !session.ExpiresAt.After(session.CreatedAt) || session.RevokedAt != nil {
+	if ttl < time.Millisecond || !session.ExpiresAt.After(session.CreatedAt) ||
+		session.RevokedAt != nil {
 		return identity.ErrInvalidCredential
 	}
 	payload, err := json.Marshal(session)

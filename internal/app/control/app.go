@@ -54,14 +54,15 @@ import (
 // App owns the control-plane process and its shutdown order. Dependencies are
 // closed in reverse ownership order so consumers stop before their stores.
 type App struct {
-	server        *http.Server
-	metricsServer *http.Server
-	pool          *pgxpool.Pool
-	bus           *gochannel.GoChannel
-	logger        *slog.Logger
-	redis         *redis.Client
-	auditPipeline *events.AuditPipeline
-	coordination  *coordination.Handler
+	server          *http.Server
+	metricsServer   *http.Server
+	pool            *pgxpool.Pool
+	bus             *gochannel.GoChannel
+	logger          *slog.Logger
+	redis           *redis.Client
+	auditPipeline   *events.AuditPipeline
+	coordination    *coordination.Handler
+	shutdownTimeout time.Duration
 }
 
 var _ lifecycle.Component = (*App)(nil)
@@ -70,8 +71,23 @@ var _ lifecycle.Component = (*App)(nil)
 // intentionally stays in the dedicated migrate process rather than here or in
 // HTTP readiness: only one process should mutate the database schema.
 func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, error) {
+	if cfg.Runtime == (config.Runtime{}) {
+		cfg.Runtime = config.DefaultRuntime(false)
+	}
+	if err := cfg.Runtime.Validate(); err != nil {
+		return nil, err
+	}
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if cfg.Runtime.AuthPerMinute > 5 || cfg.Runtime.OnboardingPerMinute > 10 {
+		logger.Warn(
+			"authentication quotas exceed safe defaults",
+			"auth_per_minute",
+			cfg.Runtime.AuthPerMinute,
+			"onboarding_per_minute",
+			cfg.Runtime.OnboardingPerMinute,
+		)
 	}
 	if cfg.Database.Driver != "" && cfg.Database.Driver != "postgres" {
 		return nil, errors.New("unsupported database driver")
@@ -84,9 +100,9 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		return nil, errors.New("invalid Redis endpoint")
 	}
 	redisOptions.Password = cfg.Redis.Password
-	redisOptions.DialTimeout = time.Second
-	redisOptions.ReadTimeout = time.Second
-	redisOptions.WriteTimeout = time.Second
+	redisOptions.DialTimeout = cfg.Runtime.RedisTimeout
+	redisOptions.ReadTimeout = cfg.Runtime.RedisTimeout
+	redisOptions.WriteTimeout = cfg.Runtime.RedisTimeout
 	redisClient := redis.NewClient(redisOptions)
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		_ = redisClient.Close()
@@ -117,7 +133,10 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	if err := pool.Ping(ctx); err != nil {
 		return closePool(errors.Join(errors.New("ping database"), err))
 	}
-	bus := gochannel.NewGoChannel(gochannel.Config{PreserveContext: true}, watermill.NewSlogLogger(logger))
+	bus := gochannel.NewGoChannel(
+		gochannel.Config{PreserveContext: true},
+		watermill.NewSlogLogger(logger),
+	)
 	closeBusAndPool := func(err error) (*App, error) {
 		_ = bus.Close()
 		pool.Close()
@@ -126,7 +145,12 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	auditSink := auditstorage.New(pool)
 	auditPipeline := events.NewAuditPipeline(bus, auditSink)
 
-	deviceService := devices.NewService(devicesstorage.New(pool, workflowstorage.AppendEvent), time.Now, nil)
+	deviceService := devices.NewService(
+		devicesstorage.New(pool, workflowstorage.AppendEvent),
+		time.Now,
+		nil,
+		devices.WithCredentialTTL(cfg.Runtime.CredentialTTL),
+	)
 	routeService := controlroutes.NewService(routesstorage.New(pool), time.Now)
 	policyService := policy.NewService(policystorage.New(pool), policy.Compiler{})
 	serviceCatalog := controlservices.NewService(
@@ -141,7 +165,8 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		}),
 	)
 	peerAuthorization := func(_ context.Context, source, destination devices.Device) bool {
-		return source.Status == devices.StatusActive && destination.Status == devices.StatusActive &&
+		return source.Status == devices.StatusActive &&
+			destination.Status == devices.StatusActive &&
 			source.Role != destination.Role
 	}
 	var signedSnapshots *controlsnapshots.Service
@@ -173,6 +198,13 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 	}
 
 	serverOptions := []httpapi.ServerOption{
+		httpapi.WithRateLimits(
+			cfg.Runtime.AuthPerMinute,
+			cfg.Runtime.OnboardingPerMinute,
+			cfg.Runtime.APIPerMinute,
+			cfg.Runtime.RedisTimeout,
+		),
+		httpapi.WithCompanionTTL(cfg.Runtime.CompanionTTL),
 		httpapi.WithBrowserActionConfirmation(auth),
 		httpapi.WithBrowserHandlers(
 			auth.Handler(),
@@ -226,9 +258,15 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 			return closeBusAndPool(errors.Join(errors.New("load trusted companion root key"), err))
 		}
 		if strings.TrimSpace(cfg.Networking.NetworkID) == "" {
-			return closeBusAndPool(errors.New("networking.network_id is required when invite verification is enabled"))
+			return closeBusAndPool(
+				errors.New("networking.network_id is required when invite verification is enabled"),
+			)
 		}
-		signedSnapshots = controlsnapshots.NewService(snapshotsstorage.New(pool), rootPublic, cfg.Networking.NetworkID)
+		signedSnapshots = controlsnapshots.NewService(
+			snapshotsstorage.New(pool),
+			rootPublic,
+			cfg.Networking.NetworkID,
+		)
 		inviteStore := invitesstorage.New(pool)
 		activation := workflows.NewActivation(
 			workflowstorage.NewActivationUnitOfWork(pool),
@@ -239,6 +277,7 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 			cfg.Networking.NetworkID,
 			time.Now,
 			nil,
+			workflows.WithLifetimes(cfg.Runtime.ClaimTTL, cfg.Runtime.CredentialTTL),
 		)
 		activationHandler := httpapi.NewActivationHandler(activation, activation)
 		serverOptions = append(
@@ -261,7 +300,14 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 		// issuance. A role-only check would disclose endpoint candidates for a
 		// client/gateway pair that has no approved route or ACL relationship.
 		peerAuthorization = func(ctx context.Context, source, destination devices.Device) bool {
-			return authorizeRelayPeer(ctx, signedSnapshots, rootPublic, cfg.Networking.NetworkID, source, destination)
+			return authorizeRelayPeer(
+				ctx,
+				signedSnapshots,
+				rootPublic,
+				cfg.Networking.NetworkID,
+				source,
+				destination,
+			)
 		}
 		serverOptions = append(serverOptions, httpapi.WithRelayPeerAuthorizer(peerAuthorization))
 	}
@@ -306,20 +352,21 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 
 	keepRedis = true
 	return &App{
-		coordination:  coordinationHandler,
-		redis:         redisClient,
-		auditPipeline: auditPipeline,
-		pool:          pool,
-		bus:           bus,
-		logger:        logger,
-		metricsServer: metricsServer,
+		coordination:    coordinationHandler,
+		shutdownTimeout: cfg.Runtime.ShutdownTimeout,
+		redis:           redisClient,
+		auditPipeline:   auditPipeline,
+		pool:            pool,
+		bus:             bus,
+		logger:          logger,
+		metricsServer:   metricsServer,
 		server: &http.Server{
 			Addr:              cfg.Server.ListenAddress,
 			Handler:           handler,
-			ReadHeaderTimeout: 5 * time.Second,
-			ReadTimeout:       15 * time.Second,
-			WriteTimeout:      30 * time.Second,
-			IdleTimeout:       60 * time.Second,
+			ReadHeaderTimeout: cfg.Runtime.HTTPHeaderTimeout,
+			ReadTimeout:       cfg.Runtime.HTTPReadTimeout,
+			WriteTimeout:      cfg.Runtime.HTTPWriteTimeout,
+			IdleTimeout:       cfg.Runtime.HTTPIdleTimeout,
 			MaxHeaderBytes:    64 << 10,
 		},
 	}, nil
@@ -366,7 +413,8 @@ func authorizeRelayPeer(
 			destinationDevice = device
 		}
 	}
-	if sourceDevice == nil || destinationDevice == nil || sourceDevice.Role != string(source.Role) ||
+	if sourceDevice == nil || destinationDevice == nil ||
+		sourceDevice.Role != string(source.Role) ||
 		destinationDevice.Role != string(destination.Role) ||
 		sourceDevice.Role == destinationDevice.Role {
 		return false
@@ -416,7 +464,9 @@ func loadRootPublicKey(path string) (ed25519.PublicKey, error) {
 		value = decoded
 	}
 	if len(value) != ed25519.PublicKeySize {
-		return nil, errors.New("trusted companion root public key must be 32 raw or base64url bytes")
+		return nil, errors.New(
+			"trusted companion root public key must be 32 raw or base64url bytes",
+		)
 	}
 	return ed25519.PublicKey(append([]byte(nil), value...)), nil
 }
@@ -453,11 +503,13 @@ func (a *App) Run(ctx context.Context) error {
 			}
 			return events.RunOutboxDispatcher(ctx, a.pool, a.auditPipeline, a.logger)
 		}),
-		lifecycle.Func(func(ctx context.Context) error { return serveHTTP(ctx, a.server, listener) }),
+		lifecycle.Func(
+			func(ctx context.Context) error { return serveHTTP(ctx, a.server, listener, a.shutdownTimeout) },
+		),
 	}
 	if a.metricsServer != nil {
 		components = append(components, lifecycle.Func(func(ctx context.Context) error {
-			return serveHTTP(ctx, a.metricsServer, metricsListener)
+			return serveHTTP(ctx, a.metricsServer, metricsListener, a.shutdownTimeout)
 		}))
 	}
 	return lifecycle.Run(ctx, components...)

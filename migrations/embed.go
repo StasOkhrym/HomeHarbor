@@ -23,7 +23,10 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 	// Advisory locks are session-scoped, so all migration statements must use
 	// the same acquired connection. This prevents two control processes from
 	// both observing an unapplied migration and racing its DDL.
-	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(hashtextextended('go_tunnels:migrations', 0))`); err != nil {
+	if _, err := conn.Exec(
+		ctx,
+		`SELECT pg_advisory_lock(hashtextextended('go_tunnels:migrations', 0))`,
+	); err != nil {
 		return fmt.Errorf("lock migrations: %w", err)
 	}
 	defer func() {

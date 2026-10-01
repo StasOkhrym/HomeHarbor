@@ -14,7 +14,12 @@ import (
 	"github.com/sokhrym/go-tunnels/internal/protocol"
 )
 
-func Enroll(ctx context.Context, httpClient *http.Client, controlURL, token, name string, state *State) error {
+func Enroll(
+	ctx context.Context,
+	httpClient *http.Client,
+	controlURL, token, name string,
+	state *State,
+) error {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -62,7 +67,12 @@ func Enroll(ctx context.Context, httpClient *http.Client, controlURL, token, nam
 // RefreshCredential rotates the bearer credential before its short lifetime
 // expires. Only the current credential is sent; the replacement is persisted
 // by the caller through the same atomic state-file path as enrollment.
-func RefreshCredential(ctx context.Context, httpClient *http.Client, controlURL string, state *State) error {
+func RefreshCredential(
+	ctx context.Context,
+	httpClient *http.Client,
+	controlURL string,
+	state *State,
+) error {
 	if state == nil || state.DeviceID == "" || state.DeviceCredential == "" {
 		return errors.New("node identity and credential are required")
 	}
@@ -123,7 +133,9 @@ func IssueRelaySession(
 ) (RelaySession, error) {
 	if strings.TrimSpace(credential) == "" || strings.TrimSpace(sessionID) == "" ||
 		strings.TrimSpace(destinationDeviceID) == "" {
-		return RelaySession{}, errors.New("credential, session, and destination device are required")
+		return RelaySession{}, errors.New(
+			"credential, session, and destination device are required",
+		)
 	}
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -153,7 +165,10 @@ func IssueRelaySession(
 	}
 	defer func(body io.ReadCloser) { _ = body.Close() }(response.Body)
 	if response.StatusCode != http.StatusCreated {
-		return RelaySession{}, fmt.Errorf("issue relay session: control plane returned %s", response.Status)
+		return RelaySession{}, fmt.Errorf(
+			"issue relay session: control plane returned %s",
+			response.Status,
+		)
 	}
 	var session RelaySession
 	if err := json.NewDecoder(response.Body).Decode(&session); err != nil {

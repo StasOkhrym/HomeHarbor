@@ -9,7 +9,10 @@ import (
 
 func TestServiceRequiresHTTPSAndSupportsProfiles(t *testing.T) {
 	store := NewMemoryStore()
-	service := NewService(store, func() time.Time { return time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC) })
+	service := NewService(
+		store,
+		func() time.Time { return time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC) },
+	)
 	if _, err := service.Create(
 		context.Background(),
 		Service{ID: "cloud", Name: "Nextcloud", Kind: KindWeb, URL: "http://cloud.home"},
@@ -18,7 +21,12 @@ func TestServiceRequiresHTTPSAndSupportsProfiles(t *testing.T) {
 	}
 	created, err := service.Create(
 		context.Background(),
-		Service{ID: "cloud", Name: "Nextcloud", Kind: KindWeb, URL: "https://cloud.home.example.com"},
+		Service{
+			ID:   "cloud",
+			Name: "Nextcloud",
+			Kind: KindWeb,
+			URL:  "https://cloud.home.example.com",
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +70,13 @@ func TestProfileRejectsUnknownService(t *testing.T) {
 func TestServiceRejectsUnsafeOptionalURLs(t *testing.T) {
 	cases := []Service{
 		{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://user:password@cloud.example"},
-		{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://cloud.example", NativeURL: "javascript:alert(1)"},
+		{
+			ID:        "cloud",
+			Name:      "Cloud",
+			Kind:      KindWeb,
+			URL:       "https://cloud.example",
+			NativeURL: "javascript:alert(1)",
+		},
 		{
 			ID:        "cloud",
 			Name:      "Cloud",
@@ -73,7 +87,10 @@ func TestServiceRejectsUnsafeOptionalURLs(t *testing.T) {
 		{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://cloud.example#fragment"},
 	}
 	for index, item := range cases {
-		if _, err := NewService(NewMemoryStore(), time.Now).Create(context.Background(), item); err == nil {
+		if _, err := NewService(
+			NewMemoryStore(),
+			time.Now,
+		).Create(context.Background(), item); err == nil {
 			t.Errorf("case %d: unsafe service URL accepted", index)
 		}
 	}
@@ -125,7 +142,12 @@ func TestProfileRequiresActiveDevicesWhenDeviceValidationIsConfigured(t *testing
 	}
 	profile, err := service.CreateProfile(
 		context.Background(),
-		AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}, DeviceIDs: []string{"active-phone"}},
+		AccessProfile{
+			ID:         "family",
+			Name:       "Family",
+			ServiceIDs: []string{"cloud"},
+			DeviceIDs:  []string{"active-phone"},
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -137,9 +159,13 @@ func TestProfileRequiresActiveDevicesWhenDeviceValidationIsConfigured(t *testing
 
 func TestListForDeviceIsDefaultDenyAndUnionsExplicitProfiles(t *testing.T) {
 	store := NewMemoryStore()
-	service := NewService(store, time.Now, WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
-		return true, nil
-	}))
+	service := NewService(
+		store,
+		time.Now,
+		WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
+			return true, nil
+		}),
+	)
 	for _, item := range []Service{
 		{ID: "cloud", Name: "Cloud", Kind: KindWeb, URL: "https://cloud.example"},
 		{ID: "ssh", Name: "SSH", Kind: KindNative, URL: "https://ssh.example"},
@@ -150,13 +176,23 @@ func TestListForDeviceIsDefaultDenyAndUnionsExplicitProfiles(t *testing.T) {
 	}
 	if _, err := service.CreateProfile(
 		context.Background(),
-		AccessProfile{ID: "family", Name: "Family", DeviceIDs: []string{"phone"}, ServiceIDs: []string{"cloud"}},
+		AccessProfile{
+			ID:         "family",
+			Name:       "Family",
+			DeviceIDs:  []string{"phone"},
+			ServiceIDs: []string{"cloud"},
+		},
 	); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.CreateProfile(
 		context.Background(),
-		AccessProfile{ID: "admins", Name: "Admins", DeviceIDs: []string{"laptop"}, ServiceIDs: []string{"ssh"}},
+		AccessProfile{
+			ID:         "admins",
+			Name:       "Admins",
+			DeviceIDs:  []string{"laptop"},
+			ServiceIDs: []string{"ssh"},
+		},
 	); err != nil {
 		t.Fatal(err)
 	}

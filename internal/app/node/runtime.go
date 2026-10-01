@@ -19,6 +19,12 @@ import (
 // deny bootstrap and supervised workers; invalid trust configuration is rejected
 // before identity creation, enrollment or any privileged network operation.
 func NewRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error) {
+	if cfg.Runtime == (config.Runtime{}) {
+		cfg.Runtime = config.DefaultRuntime(false)
+	}
+	if err := cfg.Runtime.Validate(); err != nil {
+		return nil, err
+	}
 	if role != Client && role != Gateway {
 		return nil, errors.New("invalid node role")
 	}
@@ -87,10 +93,17 @@ func prepareIdentity(ctx context.Context, cfg config.Node) (node.State, error) {
 	if err != nil {
 		return node.State{}, err
 	}
-	operation, cancel := context.WithTimeout(ctx, 30*time.Second)
+	operation, cancel := context.WithTimeout(ctx, cfg.Runtime.OperationTimeout)
 	defer cancel()
 	if cfg.Identity.ControlURL != "" && cfg.Identity.Token != "" && state.DeviceCredential == "" {
-		err = node.Enroll(operation, nil, cfg.Identity.ControlURL, cfg.Identity.Token, cfg.Identity.Name, &state)
+		err = node.Enroll(
+			operation,
+			nil,
+			cfg.Identity.ControlURL,
+			cfg.Identity.Token,
+			cfg.Identity.Name,
+			&state,
+		)
 	} else if cfg.Identity.ControlURL != "" && cfg.Identity.Refresh {
 		err = node.RefreshCredential(operation, nil, cfg.Identity.ControlURL, &state)
 	}
@@ -194,7 +207,7 @@ func prepareRelay(
 		}
 	}
 	if bridge.Ticket == "" {
-		operation, cancel := context.WithTimeout(ctx, 30*time.Second)
+		operation, cancel := context.WithTimeout(ctx, cfg.Runtime.OperationTimeout)
 		defer cancel()
 		session, err := node.IssueRelaySession(
 			operation,
@@ -229,7 +242,9 @@ func prepareRelay(
 		OverlayAddress: cfg.WireGuard.OverlayAddress, PeerPublicKey: cfg.WireGuard.PeerPublicKey,
 		AllowedPrefixes: allowed, Routes: routes, EndpointUpdater: peers, PathSelector: paths,
 	}
-	return lifecycle.Func(func(ctx context.Context) error { return node.RunKernelRelayLoop(ctx, tunnel, renew) }), nil
+	return lifecycle.Func(
+		func(ctx context.Context) error { return node.RunKernelRelayLoop(ctx, tunnel, renew) },
+	), nil
 }
 
 func prepareCoordination(
@@ -282,7 +297,7 @@ func prepareCoordination(
 			return err
 		}
 		// DNS belongs to the process lifetime, not the cancelled worker context.
-		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cleanup, cancel := context.WithTimeout(context.Background(), cfg.Runtime.CleanupTimeout)
 		defer cancel()
 		return errors.Join(err, managedDNS.Close(cleanup))
 	})

@@ -6,12 +6,23 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/sokhrym/go-tunnels/internal/platform/config"
 )
 
 // serveHTTP joins shutdown before its lifecycle component returns. Serve alone
 // returns as soon as the listener closes, while active handlers may still own DB
 // connections; closing the app's stores at that point races those handlers.
-func serveHTTP(ctx context.Context, server *http.Server, listener net.Listener) error {
+func serveHTTP(
+	ctx context.Context,
+	server *http.Server,
+	listener net.Listener,
+	timeout ...time.Duration,
+) error {
+	shutdownTimeout := config.DefaultRuntime(false).ShutdownTimeout
+	if len(timeout) != 0 {
+		shutdownTimeout = timeout[0]
+	}
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
 	select {
@@ -19,7 +30,7 @@ func serveHTTP(ctx context.Context, server *http.Server, listener net.Listener) 
 		return err
 	case <-ctx.Done():
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	err := server.Shutdown(shutdownCtx)
 	if err != nil {

@@ -91,7 +91,8 @@ func NewUDPPairV2(tickets TicketIssuer, cfg UDPPairV2Config) (*UDPPairV2, error)
 	if len(tickets.Key) < 32 {
 		return nil, errors.New("UDP v2 ticket key must be at least 32 bytes")
 	}
-	if cfg.PortMin < 0 || cfg.PortMax > 65535 || cfg.PortMax < cfg.PortMin || (cfg.PortMin == 0) != (cfg.PortMax == 0) {
+	if cfg.PortMin < 0 || cfg.PortMax > 65535 || cfg.PortMax < cfg.PortMin ||
+		(cfg.PortMin == 0) != (cfg.PortMax == 0) {
 		return nil, errors.New("invalid UDP v2 port range")
 	}
 	if cfg.BindTimeout == 0 {
@@ -112,7 +113,8 @@ func NewUDPPairV2(tickets TicketIssuer, cfg UDPPairV2Config) (*UDPPairV2, error)
 	if cfg.MaxAdmissions == 0 {
 		cfg.MaxAdmissions = cfg.MaxPeers * 4
 	}
-	if cfg.BindTimeout < 0 || cfg.IdleTimeout < 0 || cfg.MaxPeers < 1 || cfg.MaxPeersPerDevice < 1 ||
+	if cfg.BindTimeout < 0 || cfg.IdleTimeout < 0 || cfg.MaxPeers < 1 ||
+		cfg.MaxPeersPerDevice < 1 ||
 		cfg.MaxAdmissions < 1 ||
 		cfg.MaxDatagramBytes < 1 ||
 		cfg.MaxDatagramBytes > 65507 {
@@ -226,7 +228,10 @@ func (r *UDPPairV2) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	c, err := websocket.Accept(
 		w,
 		req,
-		&websocket.AcceptOptions{OriginPatterns: r.cfg.AllowedOrigins, CompressionMode: websocket.CompressionDisabled},
+		&websocket.AcceptOptions{
+			OriginPatterns:  r.cfg.AllowedOrigins,
+			CompressionMode: websocket.CompressionDisabled,
+		},
 	)
 	if err != nil {
 		return
@@ -337,7 +342,8 @@ func (r *UDPPairV2) reserve(c TicketClaims, token string) (*v2Peer, int, error) 
 			return nil, http.StatusConflict, errors.New("conflicting peer admission")
 		}
 	}
-	if _, existing := deviceSessions[key]; !existing && len(deviceSessions) >= r.cfg.MaxPeersPerDevice {
+	if _, existing := deviceSessions[key]; !existing &&
+		len(deviceSessions) >= r.cfg.MaxPeersPerDevice {
 		return nil, http.StatusTooManyRequests, errors.New("device session limit")
 	}
 	nonce, err := v2Random()
@@ -452,7 +458,8 @@ func (r *UDPPairV2) probeLocked(p *v2Peer, data []byte, source *net.UDPAddr) boo
 	if string(data) != "GTU2P"+p.nonce {
 		return false
 	}
-	if time.Now().Before(p.deadline) && p.probes < 4 && (p.candidate == nil || sameUDPAddr(p.candidate, source)) {
+	if time.Now().Before(p.deadline) && p.probes < 4 &&
+		(p.candidate == nil || sameUDPAddr(p.candidate, source)) {
 		p.candidate = cloneUDPAddr(source)
 		p.probes++
 		_ = p.udp.SetWriteDeadline(time.Now().Add(time.Second))
@@ -480,7 +487,8 @@ func (r *UDPPairV2) removeLocked(p *v2Peer) {
 
 func (r *UDPPairV2) pruneLocked(now time.Time) {
 	for p := range r.all {
-		if (!p.bound && !now.Before(p.deadline)) || (p.bound && now.Sub(p.lastSeen) >= r.cfg.IdleTimeout) {
+		if (!p.bound && !now.Before(p.deadline)) ||
+			(p.bound && now.Sub(p.lastSeen) >= r.cfg.IdleTimeout) {
 			r.removeLocked(p)
 		}
 	}

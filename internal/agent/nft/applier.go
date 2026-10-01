@@ -38,7 +38,10 @@ type Applier struct {
 
 // Prepare validates the entire desired policy without touching kernel state
 // or the peer map. The coordinator must prepare ALL owners before Guard.
-func (a *Applier) Prepare(peers map[string]netip.Prefix, value policy.Snapshot) (*PreparedPolicy, error) {
+func (a *Applier) Prepare(
+	peers map[string]netip.Prefix,
+	value policy.Snapshot,
+) (*PreparedPolicy, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if value.Revision == 0 || value.Revision < a.revision {

@@ -64,7 +64,11 @@ func TestRunCoordinationVerifiesAndAppliesSignedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	envelope, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, privateKey, "root-1")
+	envelope, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
+		privateKey,
+		"root-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +125,11 @@ func TestRunCoordinationLoopRetainsCursorAcrossReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := snapshot.Sign(snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, privateKey, "root-1")
+	first, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
+		privateKey,
+		"root-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,8 +242,11 @@ func TestRunCoordinationPublishesCandidateUpdatesAfterWelcome(t *testing.T) {
 			map[string]any{
 				"type": "welcome",
 				"protocol": controlprotocol.Negotiated{
-					Version:      controlprotocol.CurrentVersion,
-					Capabilities: []string{controlprotocol.CapabilityRelay, controlprotocol.CapabilityDirectUDP},
+					Version: controlprotocol.CurrentVersion,
+					Capabilities: []string{
+						controlprotocol.CapabilityRelay,
+						controlprotocol.CapabilityDirectUDP,
+					},
 				},
 			},
 		); writeErr != nil {
@@ -269,7 +280,11 @@ func TestRunCoordinationPublishesCandidateUpdatesAfterWelcome(t *testing.T) {
 				{
 					DestinationDeviceID: "gateway",
 					Candidates: []controlprotocol.Candidate{
-						{Type: controlprotocol.CandidateHost, Address: "192.168.1.20:51820", Priority: 100},
+						{
+							Type:     controlprotocol.CandidateHost,
+							Address:  "192.168.1.20:51820",
+							Priority: 100,
+						},
 					},
 				},
 			}, nil
@@ -340,7 +355,11 @@ func newCoordinationTestServer(t *testing.T, envelope snapshot.Envelope) *httpte
 			t.Errorf("marshal envelope: %v", err)
 			return
 		}
-		_ = wsjson.Write(r.Context(), connection, controlprotocol.Message{Type: "network.snapshot", Payload: payload})
+		_ = wsjson.Write(
+			r.Context(),
+			connection,
+			controlprotocol.Message{Type: "network.snapshot", Payload: payload},
+		)
 		consumeCoordinationTestPeer(r.Context(), connection)
 	}))
 }

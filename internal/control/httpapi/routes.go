@@ -19,16 +19,19 @@ func (s *Server) advertiseRoute(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+
 	prefix, err := netip.ParsePrefix(input.Prefix)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid prefix")
 		return
 	}
+
 	resolver, err := netip.ParseAddr(input.Resolver)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid resolver")
 		return
 	}
+
 	item, err := s.routes.Advertise(
 		r.Context(),
 		controlroutes.AdvertisementRequest{
@@ -41,12 +44,24 @@ func (s *Server) advertiseRoute(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		if errors.Is(err, controlroutes.ErrInvalidAdvertisement) {
-			writeErrorCode(w, http.StatusBadRequest, "invalid_route", "route advertisement is invalid")
+			writeErrorCode(
+				w,
+				http.StatusBadRequest,
+				"invalid_route",
+				"route advertisement is invalid",
+			)
 		} else {
-			writeErrorCode(w, http.StatusInternalServerError, "internal_error", "could not advertise route")
+			writeErrorCode(
+				w,
+				http.StatusInternalServerError,
+				"internal_error",
+				"could not advertise route",
+			)
 		}
+
 		return
 	}
+
 	writeJSON(w, http.StatusCreated, item)
 }
 
@@ -63,23 +78,47 @@ func (s *Server) listRoutes(w http.ResponseWriter, r *http.Request) {
 func (s *Server) approveRoute(w http.ResponseWriter, r *http.Request) {
 	if err := s.routes.Approve(r.Context(), r.PathValue("id")); err != nil {
 		if errors.Is(err, controlroutes.ErrAdvertisementNotFound) {
-			writeErrorCode(w, http.StatusNotFound, "route_not_found", "route advertisement not found")
+			writeErrorCode(
+				w,
+				http.StatusNotFound,
+				"route_not_found",
+				"route advertisement not found",
+			)
 		} else {
-			writeErrorCode(w, http.StatusInternalServerError, "internal_error", "could not approve route")
+			writeErrorCode(
+				w,
+				http.StatusInternalServerError,
+				"internal_error",
+				"could not approve route",
+			)
 		}
+
 		return
 	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) rejectRoute(w http.ResponseWriter, r *http.Request) {
 	if err := s.routes.Reject(r.Context(), r.PathValue("id")); err != nil {
 		if errors.Is(err, controlroutes.ErrAdvertisementNotFound) {
-			writeErrorCode(w, http.StatusNotFound, "route_not_found", "route advertisement not found")
+			writeErrorCode(
+				w,
+				http.StatusNotFound,
+				"route_not_found",
+				"route advertisement not found",
+			)
 		} else {
-			writeErrorCode(w, http.StatusInternalServerError, "internal_error", "could not reject route")
+			writeErrorCode(
+				w,
+				http.StatusInternalServerError,
+				"internal_error",
+				"could not reject route",
+			)
 		}
+
 		return
 	}
+
 	w.WriteHeader(http.StatusNoContent)
 }

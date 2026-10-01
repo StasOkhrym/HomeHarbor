@@ -17,7 +17,7 @@ CREATE TABLE devices (
 );
 
 CREATE TABLE device_credentials (
-    device_id text NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    device_id text NOT NULL REFERENCES devices (id) ON DELETE CASCADE,
     credential_hash bytea PRIMARY KEY CHECK (octet_length(credential_hash) = 32),
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz
@@ -36,7 +36,7 @@ CREATE TABLE audit_events (
 
 CREATE TABLE advertised_routes (
     id text PRIMARY KEY,
-    gateway_device_id text NOT NULL REFERENCES devices(id),
+    gateway_device_id text NOT NULL REFERENCES devices (id),
     prefix cidr NOT NULL,
     status text NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -45,7 +45,7 @@ CREATE TABLE advertised_routes (
 
 CREATE TABLE dns_routes (
     id text PRIMARY KEY,
-    gateway_device_id text NOT NULL REFERENCES devices(id),
+    gateway_device_id text NOT NULL REFERENCES devices (id),
     domain_suffix text NOT NULL,
     resolver inet NOT NULL,
     status text NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),
@@ -54,7 +54,7 @@ CREATE TABLE dns_routes (
 
 CREATE TABLE policy_rules (
     id text PRIMARY KEY,
-    source_device_id text NOT NULL REFERENCES devices(id),
+    source_device_id text NOT NULL REFERENCES devices (id),
     destination cidr NOT NULL,
     protocol text NOT NULL CHECK (protocol IN ('tcp', 'udp')),
     port_from integer NOT NULL CHECK (port_from BETWEEN 1 AND 65535),

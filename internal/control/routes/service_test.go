@@ -9,7 +9,10 @@ import (
 
 func TestAdvertisementRequiresApproval(t *testing.T) {
 	store := NewMemoryStore()
-	service := NewService(store, func() time.Time { return time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC) })
+	service := NewService(
+		store,
+		func() time.Time { return time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC) },
+	)
 	route, err := service.Advertise(
 		context.Background(),
 		AdvertisementRequest{

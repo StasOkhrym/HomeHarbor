@@ -121,7 +121,13 @@ func reconcileSnapshotHead(
 			return snapshot.ErrRevisionGap
 		}
 		for _, next := range page {
-			if err := snapshot.VerifyNext(next, cfg.RootPublicKey, cfg.NetworkID, revision, hash); err != nil {
+			if err := snapshot.VerifyNext(
+				next,
+				cfg.RootPublicKey,
+				cfg.NetworkID,
+				revision,
+				hash,
+			); err != nil {
 				return fmt.Errorf("verify history after %d: %w", revision, err)
 			}
 			revision++

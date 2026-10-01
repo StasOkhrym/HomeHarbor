@@ -20,7 +20,11 @@ func TestMemoryStoreAllowsOnlyOneBootstrapCredential(t *testing.T) {
 		group.Add(1)
 		go func(id byte) {
 			defer group.Done()
-			if store.SaveCredential(context.Background(), adminUserHandle, webauthn.Credential{ID: []byte{id}}) == nil {
+			if store.SaveCredential(
+				context.Background(),
+				adminUserHandle,
+				webauthn.Credential{ID: []byte{id}},
+			) == nil {
 				successes.Add(1)
 			}
 		}(byte(index))
@@ -50,7 +54,11 @@ func TestBeginBootstrapStoresEncryptedOneTimeCeremony(t *testing.T) {
 
 	// An invalid response still consumes the ceremony. Retrying the same
 	// challenge would turn parsing errors into a replay window.
-	if _, err = service.FinishBootstrap(context.Background(), begin.CeremonyID, []byte(`{}`)); err == nil {
+	if _, err = service.FinishBootstrap(
+		context.Background(),
+		begin.CeremonyID,
+		[]byte(`{}`),
+	); err == nil {
 		t.Fatal("invalid WebAuthn response succeeded")
 	}
 	if _, err = service.FinishBootstrap(
@@ -62,6 +70,67 @@ func TestBeginBootstrapStoresEncryptedOneTimeCeremony(t *testing.T) {
 		ErrInvalidCeremony,
 	) {
 		t.Fatalf("replay error = %v", err)
+	}
+}
+
+func TestPasskeyCeremoniesUseSecureDefaults(t *testing.T) {
+	for _, kind := range []string{"bootstrap", "login"} {
+		t.Run(kind, func(t *testing.T) {
+			store := NewMemoryStore()
+			service, err := NewPasskeyService(PasskeyConfig{
+				RPID:          "tunnel.example.com",
+				RPOrigin:      "https://tunnel.example.com",
+				EncryptionKey: bytes.Repeat([]byte{7}, 32),
+				CeremonyTTL:   time.Minute,
+			}, store, store, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			begin := service.BeginBootstrap
+			if kind == "login" {
+				begin = service.BeginLogin
+			}
+			first, err := begin(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := begin(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if first.CeremonyID == "" || first.CeremonyID == second.CeremonyID {
+				t.Fatal("ceremonies must have distinct nonempty identifiers")
+			}
+			_, session, err := service.consumeCeremony(context.Background(), first.CeremonyID, kind)
+			if err != nil || session.Challenge == "" {
+				t.Fatalf("stored ceremony could not be decrypted: %v", err)
+			}
+			if registered, err := store.HasCredentials(
+				context.Background(),
+			); err != nil ||
+				registered {
+				t.Fatal("starting a ceremony must not create credentials")
+			}
+		})
+	}
+}
+
+func TestPasskeyEntropyFailureDoesNotPersistCeremony(t *testing.T) {
+	store := NewMemoryStore()
+	service, err := NewPasskeyService(PasskeyConfig{
+		RPID:          "tunnel.example.com",
+		RPOrigin:      "https://tunnel.example.com",
+		EncryptionKey: bytes.Repeat([]byte{7}, 32),
+		CeremonyTTL:   time.Minute,
+	}, store, store, time.Now, bytes.NewReader(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.BeginBootstrap(context.Background()); err == nil {
+		t.Fatal("entropy failure must reject the ceremony")
+	}
+	if len(store.ceremonies) != 0 {
+		t.Fatal("entropy failure persisted a ceremony")
 	}
 }
 

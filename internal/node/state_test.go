@@ -12,7 +12,8 @@ func TestNewStateAndAtomicSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.IdentityPrivateKey == "" || state.IdentityPublicKey == "" || state.WireGuard.PrivateKey == "" {
+	if state.IdentityPrivateKey == "" || state.IdentityPublicKey == "" ||
+		state.WireGuard.PrivateKey == "" {
 		t.Fatalf("state=%#v", state)
 	}
 	path := filepath.Join(t.TempDir(), "state.json")
@@ -45,7 +46,8 @@ func TestLoadOrCreatePreservesExistingIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.IdentityPublicKey != first.IdentityPublicKey || second.WireGuard.PublicKey != first.WireGuard.PublicKey {
+	if second.IdentityPublicKey != first.IdentityPublicKey ||
+		second.WireGuard.PublicKey != first.WireGuard.PublicKey {
 		t.Fatalf("LoadOrCreate replaced identity: first=%#v second=%#v", first, second)
 	}
 }

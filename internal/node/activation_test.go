@@ -45,7 +45,13 @@ func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Error(err)
 			}
-			if err := invite.VerifyProofWithCode(input.Permit, input.Proof, "family", local.Code, now); err != nil {
+			if err := invite.VerifyProofWithCode(
+				input.Permit,
+				input.Proof,
+				"family",
+				local.Code,
+				now,
+			); err != nil {
 				t.Error(err)
 			}
 			if string(input.Proof.DevicePublicKey) != string(mustPublic(state.IdentityPublicKey)) {

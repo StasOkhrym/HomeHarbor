@@ -15,7 +15,8 @@ func TestApprovalResultHasNoCredentialSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "\"device\":") || strings.Contains(string(encoded), "credential") {
+	if strings.Contains(string(encoded), "\"device\":") ||
+		strings.Contains(string(encoded), "credential") {
 		t.Fatalf("approval exposes device bootstrap: %s", encoded)
 	}
 }

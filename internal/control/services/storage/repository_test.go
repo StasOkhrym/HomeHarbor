@@ -53,7 +53,8 @@ func TestPostgresCatalogProfileMembershipAndRollback(t *testing.T) {
 		t.Fatal("missing member accepted")
 	}
 	profiles, err := repo.ListProfiles(ctx)
-	if err != nil || len(profiles) != 1 || profiles[0].ID != "family" || len(profiles[0].DeviceIDs) != 1 {
+	if err != nil || len(profiles) != 1 || profiles[0].ID != "family" ||
+		len(profiles[0].DeviceIDs) != 1 {
 		t.Fatalf("partial profile survived: %#v %v", profiles, err)
 	}
 }

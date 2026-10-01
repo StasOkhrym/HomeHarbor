@@ -49,16 +49,24 @@ func identityTestPool(t *testing.T) *pgxpool.Pool {
 	if databaseURL == "" {
 		t.Skip("TEST_DATABASE_URL is not set")
 	}
+
 	pool, err := pgxpool.New(context.Background(), databaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(pool.Close)
+
 	if err = migrations.Up(context.Background(), pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(context.Background(), `TRUNCATE recovery_codes RESTART IDENTITY CASCADE`); err != nil {
+
+	if _, err = pool.Exec(
+		context.Background(),
+		`TRUNCATE recovery_codes RESTART IDENTITY CASCADE`,
+	); err != nil {
 		t.Fatal(err)
 	}
+
 	return pool
 }

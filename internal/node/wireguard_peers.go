@@ -24,7 +24,10 @@ var (
 // relay code may update endpoints independently, while this compiler owns only
 // public keys and allowed prefixes. A snapshot update therefore cannot erase a
 // live relay endpoint by accident.
-func BuildWireGuardPeerConfigs(value snapshot.NetworkSnapshot, localDeviceID string) ([]tunnel.PeerConfig, error) {
+func BuildWireGuardPeerConfigs(
+	value snapshot.NetworkSnapshot,
+	localDeviceID string,
+) ([]tunnel.PeerConfig, error) {
 	if localDeviceID == "" {
 		return nil, ErrLocalDeviceMissing
 	}
@@ -119,6 +122,9 @@ func uniquePrefixes(values []netip.Prefix) []netip.Prefix {
 		seen[value] = struct{}{}
 		out = append(out, value)
 	}
-	slices.SortFunc(out, func(left, right netip.Prefix) int { return strings.Compare(left.String(), right.String()) })
+	slices.SortFunc(
+		out,
+		func(left, right netip.Prefix) int { return strings.Compare(left.String(), right.String()) },
+	)
 	return out
 }

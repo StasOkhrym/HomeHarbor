@@ -29,7 +29,10 @@ type (
 	}
 )
 
-func NewActivationHandler(challenges ActivationChallenger, claims ActivationClaimer) *ActivationHandler {
+func NewActivationHandler(
+	challenges ActivationChallenger,
+	claims ActivationClaimer,
+) *ActivationHandler {
 	return &ActivationHandler{challenges: challenges, claims: claims}
 }
 
@@ -112,7 +115,12 @@ func activationError(w http.ResponseWriter, err error) {
 	case errors.Is(err, workflows.ErrNotReady):
 		writeError(w, http.StatusConflict, "activation not ready")
 	case errors.Is(err, workflows.ErrInvalidClaim):
-		writeErrorCode(w, http.StatusBadRequest, "invalid_activation_claim", "invalid activation claim")
+		writeErrorCode(
+			w,
+			http.StatusBadRequest,
+			"invalid_activation_claim",
+			"invalid activation claim",
+		)
 	case errors.Is(err, invites.ErrInviteNotFound):
 		writeError(w, http.StatusNotFound, "invite not found")
 	case errors.Is(err, devices.ErrDeviceNotFound),

@@ -55,8 +55,19 @@ type Device struct {
 	RevokedAt          *time.Time `json:"revoked_at,omitempty"`
 	// Credential is returned only by Enroll. Stores must persist CredentialHash
 	// and clear this plaintext value before the device can be read again.
-	Credential     string   `json:"credential,omitempty"`
-	CredentialHash [32]byte `json:"-"`
+	Credential          string    `json:"credential,omitempty"`
+	CredentialHash      [32]byte  `json:"-"`
+	CredentialExpiresAt time.Time `json:"-"`
+}
+
+// CredentialExpiration carries the issuance lifetime across the repository
+// boundary. Direct legacy fixtures without issuance settings use the default.
+func (d Device) CredentialExpiration() time.Time {
+	if d.CredentialExpiresAt.IsZero() {
+		return d.CreatedAt.Add(CredentialTTL)
+	}
+
+	return d.CredentialExpiresAt
 }
 
 type EnrollmentToken struct {
@@ -98,10 +109,11 @@ type EnrollmentPort interface {
 }
 
 type Service struct {
-	store       Repository
-	now         func() time.Time
-	random      io.Reader
-	publication PublicationStrategy
+	store         Repository
+	now           func() time.Time
+	random        io.Reader
+	publication   PublicationStrategy
+	credentialTTL time.Duration
 }
 
 type Event struct {
@@ -114,40 +126,66 @@ type Publisher interface {
 }
 type Option func(*Service)
 
+// WithCredentialTTL supplies a startup-validated issuance lifetime.
+func WithCredentialTTL(ttl time.Duration) Option {
+	return func(s *Service) { s.credentialTTL = ttl }
+}
+
 func WithPublisher(publisher Publisher) Option {
 	return WithPublicationStrategy(InProcessPublication{Publisher: publisher})
 }
 
-func NewService(store Repository, now func() time.Time, random io.Reader, options ...Option) *Service {
+func NewService(
+	store Repository,
+	now func() time.Time,
+	random io.Reader,
+	options ...Option,
+) *Service {
 	if now == nil {
 		now = time.Now
 	}
+
 	if random == nil {
 		random = rand.Reader
 	}
-	service := &Service{store: store, now: now, random: random, publication: TransactionalOutbox{}}
+
+	service := &Service{
+		store:         store,
+		now:           now,
+		random:        random,
+		publication:   TransactionalOutbox{},
+		credentialTTL: CredentialTTL,
+	}
 	for _, option := range options {
 		option(service)
 	}
+
 	return service
 }
 
-func (s *Service) IssueEnrollmentToken(ctx context.Context, role Role, ttl time.Duration) (IssuedToken, error) {
+func (s *Service) IssueEnrollmentToken(
+	ctx context.Context,
+	role Role,
+	ttl time.Duration,
+) (IssuedToken, error) {
 	if role != RoleClient && role != RoleGateway {
 		return IssuedToken{}, fmt.Errorf("%w: unsupported role", ErrInvalidTokenRequest)
 	}
 	if ttl <= 0 {
 		return IssuedToken{}, fmt.Errorf("%w: token TTL must be positive", ErrInvalidTokenRequest)
 	}
+
 	raw, err := s.randomString(32)
 	if err != nil {
 		return IssuedToken{}, err
 	}
+
 	now := s.now().UTC()
 	token := EnrollmentToken{Hash: sha256.Sum256([]byte(raw)), Role: role, ExpiresAt: now.Add(ttl)}
 	if err := s.store.SaveEnrollmentToken(ctx, token); err != nil {
 		return IssuedToken{}, err
 	}
+
 	return IssuedToken{Token: raw, Role: role, ExpiresAt: token.ExpiresAt}, nil
 }
 
@@ -155,36 +193,44 @@ func (s *Service) Enroll(ctx context.Context, request EnrollRequest) (Device, er
 	if err := validateEnrollmentRequest(request); err != nil {
 		return Device{}, err
 	}
+
 	now := s.now().UTC()
+
 	id, err := s.randomString(16)
 	if err != nil {
 		return Device{}, err
 	}
+
 	credential, err := s.randomString(32)
 	if err != nil {
 		return Device{}, err
 	}
+
 	device := Device{
-		ID:                 id,
-		Name:               request.Name,
-		Status:             StatusActive,
-		IdentityPublicKey:  request.IdentityPublicKey,
-		WireGuardPublicKey: request.WireGuardPublicKey,
-		CreatedAt:          now,
-		Credential:         credential,
-		CredentialHash:     sha256.Sum256([]byte(credential)),
+		ID:                  id,
+		Name:                request.Name,
+		Status:              StatusActive,
+		IdentityPublicKey:   request.IdentityPublicKey,
+		WireGuardPublicKey:  request.WireGuardPublicKey,
+		CreatedAt:           now,
+		Credential:          credential,
+		CredentialHash:      sha256.Sum256([]byte(credential)),
+		CredentialExpiresAt: now.Add(s.credentialTTL),
 	}
 	role, err := s.store.Enroll(ctx, sha256.Sum256([]byte(request.Token)), now, device)
 	if err != nil {
 		return Device{}, err
 	}
+
 	device.Role = role
+
 	if err = s.publication.AfterCommit(
 		ctx,
 		Event{Type: "device.enrolled", AggregateID: device.ID, OccurredAt: now},
 	); err != nil {
 		return Device{}, err
 	}
+
 	return device, nil
 }
 
@@ -194,30 +240,39 @@ func (s *Service) Enroll(ctx context.Context, request EnrollRequest) (Device, er
 // reconciliation or make two textual encodings refer to the same key.
 func validateEnrollmentRequest(request EnrollRequest) error {
 	name := strings.TrimSpace(request.Name)
-	if name == "" || name != request.Name || len(name) > maxDeviceNameBytes || !utf8.ValidString(name) {
+	if name == "" || name != request.Name || len(name) > maxDeviceNameBytes ||
+		!utf8.ValidString(name) {
 		return fmt.Errorf(
 			"%w: device name must be 1-%d printable UTF-8 bytes without surrounding whitespace",
 			ErrInvalidEnrollment,
 			maxDeviceNameBytes,
 		)
 	}
+
 	for _, character := range name {
 		if character < 0x20 || character == 0x7f {
 			return fmt.Errorf("%w: device name contains a control character", ErrInvalidEnrollment)
 		}
 	}
+
 	identity, err := base64.RawURLEncoding.DecodeString(request.IdentityPublicKey)
 	if err != nil || len(identity) != 32 ||
 		base64.RawURLEncoding.EncodeToString(identity) != request.IdentityPublicKey {
-		return fmt.Errorf("%w: identity public key must be canonical base64url Ed25519 bytes", ErrInvalidEnrollment)
+		return fmt.Errorf(
+			"%w: identity public key must be canonical base64url Ed25519 bytes",
+			ErrInvalidEnrollment,
+		)
 	}
+
 	wireGuard, err := wgtypes.ParseKey(request.WireGuardPublicKey)
-	if err != nil || wireGuard == (wgtypes.Key{}) || wireGuard.String() != request.WireGuardPublicKey {
+	if err != nil || wireGuard == (wgtypes.Key{}) ||
+		wireGuard.String() != request.WireGuardPublicKey {
 		return fmt.Errorf("%w: WireGuard public key is invalid", ErrInvalidEnrollment)
 	}
 	if strings.TrimSpace(request.Token) == "" {
 		return fmt.Errorf("%w: enrollment token is required", ErrInvalidEnrollment)
 	}
+
 	return nil
 }
 
@@ -226,7 +281,11 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 	if err := s.store.RevokeDevice(ctx, id, now); err != nil {
 		return err
 	}
-	return s.publication.AfterCommit(ctx, Event{Type: "device.revoked", AggregateID: id, OccurredAt: now})
+
+	return s.publication.AfterCommit(
+		ctx,
+		Event{Type: "device.revoked", AggregateID: id, OccurredAt: now},
+	)
 }
 
 // Device returns the current public metadata for an active or revoked device.
@@ -252,7 +311,10 @@ func (s *Service) Authenticate(ctx context.Context, credential string) (Device, 
 // RotateCredential atomically replaces a still-valid credential. The old hash
 // is part of the update predicate, preventing two concurrent refreshes from
 // both succeeding with the same bearer credential.
-func (s *Service) RotateCredential(ctx context.Context, deviceID, credential string) (string, error) {
+func (s *Service) RotateCredential(
+	ctx context.Context,
+	deviceID, credential string,
+) (string, error) {
 	if strings.TrimSpace(deviceID) == "" || credential == "" {
 		return "", ErrDeviceNotFound
 	}
@@ -267,7 +329,7 @@ func (s *Service) RotateCredential(ctx context.Context, deviceID, credential str
 		sha256.Sum256([]byte(credential)),
 		sha256.Sum256([]byte(newCredential)),
 		now,
-		now.Add(CredentialTTL),
+		now.Add(s.credentialTTL),
 	); err != nil {
 		return "", err
 	}

@@ -3,7 +3,7 @@ listen_address = ":8081"
 udp_listen_address = ":51820"
 udp_port_min = 51820
 udp_port_max = 51851
-udp_advertise_host = "{{ relay_domain }}"
+udp_advertise_host = {{ relay_domain | to_json }}
 [security]
 ticket_key_file = "/run/secrets/relay_ticket_key"
 tls_cert_file = "/run/secrets/relay_tls_cert"

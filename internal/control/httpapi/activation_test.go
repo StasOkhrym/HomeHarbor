@@ -17,7 +17,11 @@ func (activationUnavailable) Challenge(context.Context, string) (workflows.Claim
 	return workflows.ClaimChallenge{}, workflows.ErrNotReady
 }
 
-func (activationUnavailable) Claim(context.Context, string, workflows.ClaimProof) (workflows.ClaimResult, error) {
+func (activationUnavailable) Claim(
+	context.Context,
+	string,
+	workflows.ClaimProof,
+) (workflows.ClaimResult, error) {
 	return workflows.ClaimResult{}, workflows.ErrInvalidClaim
 }
 
@@ -25,9 +29,15 @@ func TestActivationHTTPRejectsUnknownAndTrailingClaimFields(t *testing.T) {
 	h := NewActivationHandler(activationUnavailable{}, activationUnavailable{})
 	for _, body := range []string{`{"private_key":"never-send-this"}`, `{} {}`, `{"challenge":{},"signature":"bad","credential":"injected"}`} {
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodPost, "/api/v1/invites/i/claim", strings.NewReader(body))
+		r := httptest.NewRequest(
+			http.MethodPost,
+			"/api/v1/invites/i/claim",
+			strings.NewReader(body),
+		)
+
 		r.SetPathValue("id", "i")
 		h.Claim(w, r)
+
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("status=%d body=%s", w.Code, w.Body)
 		}

@@ -31,3 +31,7 @@ network_id = "home"
 
 [direct]
 # candidates = "203.0.113.10:51820"
+
+[runtime]
+operation_timeout = "30s"
+cleanup_timeout = "5s"

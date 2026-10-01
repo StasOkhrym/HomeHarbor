@@ -1,0 +1,4 @@
+-r requirements-tooling.txt
+ansible-core==2.19.13
+ansible-lint==26.9.0
+Jinja2==3.1.6

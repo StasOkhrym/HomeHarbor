@@ -38,7 +38,11 @@ import (
 
 type snapshotReader struct{ envelope snapshot.Envelope }
 
-func (s *snapshotReader) Latest(context.Context) (snapshot.Envelope, error) { return s.envelope, nil }
+func (s *snapshotReader) Latest(
+	context.Context,
+) (snapshot.Envelope, error) {
+	return s.envelope, nil
+}
 
 type fixture struct {
 	pool       *pgxpool.Pool
@@ -182,7 +186,10 @@ func newFixture(t *testing.T) *fixture {
 		if err := client.Ping(ctx).Err(); err != nil {
 			t.Fatal(err)
 		}
-		security = redissecurity.New(client, fmt.Sprintf("activation-envtest-%d", time.Now().UnixNano()))
+		security = redissecurity.New(
+			client,
+			fmt.Sprintf("activation-envtest-%d", time.Now().UnixNano()),
+		)
 	}
 	f.activation = workflows.NewActivation(
 		workflowpg.NewActivationUnitOfWork(pool),
@@ -206,13 +213,17 @@ func (f *fixture) publish(t *testing.T) {
 			Revision:  1,
 			Devices: []snapshot.Device{
 				{
-					ID:                 "linux",
-					Role:               "client",
-					IdentityPublicKey:  base64.RawURLEncoding.EncodeToString(f.record.DevicePublic),
-					WireGuardPublicKey: base64.StdEncoding.EncodeToString(f.record.WireGuardPublicKey),
+					ID:                "linux",
+					Role:              "client",
+					IdentityPublicKey: base64.RawURLEncoding.EncodeToString(f.record.DevicePublic),
+					WireGuardPublicKey: base64.StdEncoding.EncodeToString(
+						f.record.WireGuardPublicKey,
+					),
 				},
 			},
-			Profiles: []snapshot.AccessProfile{{ID: "family", Name: "Family", DeviceIDs: []string{"linux"}}},
+			Profiles: []snapshot.AccessProfile{
+				{ID: "family", Name: "Family", DeviceIDs: []string{"linux"}},
+			},
 		},
 		f.root,
 		"root-1",
@@ -248,25 +259,37 @@ func TestPostgresApprovalRetriesExactDiffWithoutCredentialAndWritesOneOutboxPair
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		data, _ := json.Marshal(result)
+
 		if strings.Contains(string(data), "credential") || result.Status != invites.StatusApproved {
 			t.Fatalf("unsafe result %s", data)
 		}
 	}
+
 	var count int
-	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM event_outbox`).Scan(&count); err != nil || count != 2 {
+
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM event_outbox`).
+		Scan(&count); err != nil ||
+		count != 2 {
 		t.Fatalf("events=%d err=%v", count, err)
 	}
-	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM device_credentials`).Scan(&count); err != nil || count != 0 {
+
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM device_credentials`).
+		Scan(&count); err != nil ||
+		count != 0 {
 		t.Fatalf("approval issued credentials=%d err=%v", count, err)
 	}
+
 	d, err := f.devices.Device(ctx, "linux")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if d.WireGuardPublicKey != base64.StdEncoding.EncodeToString(f.record.WireGuardPublicKey) {
 		t.Fatalf("WG encoding=%s", d.WireGuardPublicKey)
 	}
+
 	bad, err := invite.SignApproval(
 		invite.Approval{
 			Version:            1,
@@ -281,6 +304,7 @@ func TestPostgresApprovalRetriesExactDiffWithoutCredentialAndWritesOneOutboxPair
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err = f.activation.ApproveSigned(ctx, bad); err == nil {
 		t.Fatal("mismatched approved retry accepted")
 	}
@@ -291,22 +315,30 @@ func TestPostgresApprovalRollsBackAllTablesAtEveryFailureBoundary(t *testing.T) 
 		t.Run(table, func(t *testing.T) {
 			f := newFixture(t)
 			ctx := context.Background()
+
 			if _, err := f.pool.Exec(
 				ctx,
 				`CREATE FUNCTION reject_activation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected activation failure'; END $$; CREATE TRIGGER reject_activation BEFORE INSERT OR UPDATE ON `+table+` FOR EACH ROW EXECUTE FUNCTION reject_activation()`,
 			); err != nil {
 				t.Fatal(err)
 			}
+
 			if _, err := f.activation.ApproveSigned(ctx, f.approval); err == nil {
 				t.Fatal("failure accepted")
 			}
+
 			for _, empty := range []string{"devices", "device_credentials", "access_profile_devices", "event_outbox"} {
 				var n int
-				if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM `+empty).Scan(&n); err != nil || n != 0 {
+
+				if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM `+empty).
+					Scan(&n); err != nil ||
+					n != 0 {
 					t.Fatalf("%s rows=%d err=%v", empty, n, err)
 				}
 			}
+
 			var status string
+
 			if err := f.pool.QueryRow(ctx, `SELECT status FROM invite_records WHERE invite_id=$1`, f.record.InviteID).
 				Scan(&status); err != nil ||
 				status != "pending" {
@@ -449,11 +481,15 @@ type lostClaimResponse struct {
 
 func (l *lostClaimResponse) RoundTrip(r *http.Request) (*http.Response, error) {
 	response, err := l.transport.RoundTrip(r)
-	if err == nil && !l.lost && strings.HasSuffix(r.URL.Path, "/claim") && response.StatusCode == http.StatusOK {
+	if err == nil && !l.lost && strings.HasSuffix(r.URL.Path, "/claim") &&
+		response.StatusCode == http.StatusOK {
 		l.lost = true
+
 		_ = response.Body.Close()
+
 		return nil, io.ErrUnexpectedEOF
 	}
+
 	return response, err
 }
 
@@ -503,7 +539,10 @@ func TestPostgresHTTPResponseLossRequestsFreshChallengeAndPersistsReplacement(t 
 	state := node.State{
 		IdentityPrivateKey: base64.RawURLEncoding.EncodeToString(f.deviceKey),
 		IdentityPublicKey:  base64.RawURLEncoding.EncodeToString(f.record.DevicePublic),
-		WireGuard:          tunnel.Identity{PrivateKey: f.wgKey.String(), PublicKey: f.wgKey.PublicKey().String()},
+		WireGuard: tunnel.Identity{
+			PrivateKey: f.wgKey.String(),
+			PublicKey:  f.wgKey.PublicKey().String(),
+		},
 	}
 	path := filepath.Join(t.TempDir(), "linux.json")
 	err := node.EnrollByInvite(

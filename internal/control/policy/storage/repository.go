@@ -45,11 +45,15 @@ func (s *Repository) replace(
 	defer func() { _ = tx.Rollback(ctx) }()
 	// Serializing writers keeps revision allocation and the corresponding
 	// immutable snapshot in the same transaction across control-plane replicas.
-	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('go_tunnels_policy'))`); err != nil {
+	if _, err = tx.Exec(
+		ctx,
+		`SELECT pg_advisory_xact_lock(hashtext('go_tunnels_policy'))`,
+	); err != nil {
 		return policy.Snapshot{}, err
 	}
 	var revision uint64
-	if err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(revision),0)+1 FROM policy_revisions`).Scan(&revision); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(revision),0)+1 FROM policy_revisions`).
+		Scan(&revision); err != nil {
 		return policy.Snapshot{}, err
 	}
 	// The advisory lock also serializes API writers. Checking here, not in
@@ -100,7 +104,8 @@ func (s *Repository) replace(
 
 func (s *Repository) Latest(ctx context.Context) (policy.Snapshot, error) {
 	var payload []byte
-	err := s.pool.QueryRow(ctx, `SELECT snapshot FROM policy_revisions ORDER BY revision DESC LIMIT 1`).Scan(&payload)
+	err := s.pool.QueryRow(ctx, `SELECT snapshot FROM policy_revisions ORDER BY revision DESC LIMIT 1`).
+		Scan(&payload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return policy.Snapshot{DefaultAction: policy.ActionDeny, Rules: []policy.Rule{}}, nil
 	}

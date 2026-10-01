@@ -19,7 +19,10 @@ func (s sharedChallenges) PutChallenge(
 	return s.store.PutChallenge(ctx, purpose, key, value, ttl)
 }
 
-func (s sharedChallenges) ConsumeChallenge(ctx context.Context, purpose, key string) ([]byte, error) {
+func (s sharedChallenges) ConsumeChallenge(
+	ctx context.Context,
+	purpose, key string,
+) ([]byte, error) {
 	value, err := s.store.ConsumeChallenge(ctx, purpose, key)
 	if errors.Is(err, redissecurity.ErrChallengeMissing) {
 		return nil, nil

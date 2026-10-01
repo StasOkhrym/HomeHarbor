@@ -18,7 +18,11 @@ type DNSReconciler struct {
 	manager *dns.Manager
 }
 
-func NewDNSReconciler(manager *dns.Manager) *DNSReconciler { return &DNSReconciler{manager: manager} }
+func NewDNSReconciler(
+	manager *dns.Manager,
+) *DNSReconciler {
+	return &DNSReconciler{manager: manager}
+}
 
 func (r *DNSReconciler) Apply(ctx context.Context, value snapshot.NetworkSnapshot) error {
 	if r == nil || r.manager == nil {
@@ -57,28 +61,44 @@ func prepareDNS(value snapshot.NetworkSnapshot) (netip.Addr, []string, error) {
 	var suffixes []string
 	for _, route := range value.Routes {
 		if (route.DomainSuffix == "") != (route.Resolver == "") {
-			return netip.Addr{}, nil, fmt.Errorf("route %s requires DNS suffix and resolver together", route.ID)
+			return netip.Addr{}, nil, fmt.Errorf(
+				"route %s requires DNS suffix and resolver together",
+				route.ID,
+			)
 		}
 		if route.DomainSuffix == "" {
 			continue
 		}
+
 		current, err := netip.ParseAddr(route.Resolver)
 		if err != nil {
-			return netip.Addr{}, nil, fmt.Errorf("route %s has invalid DNS resolver: %w", route.ID, err)
+			return netip.Addr{}, nil, fmt.Errorf(
+				"route %s has invalid DNS resolver: %w",
+				route.ID,
+				err,
+			)
 		}
+
 		prefix, err := netip.ParsePrefix(route.Prefix)
 		if err != nil || prefix.Bits() == 0 || !prefix.Contains(current) {
-			return netip.Addr{}, nil, fmt.Errorf("route %s DNS resolver is outside its non-default prefix", route.ID)
+			return netip.Addr{}, nil, fmt.Errorf(
+				"route %s DNS resolver is outside its non-default prefix",
+				route.ID,
+			)
 		}
 		if resolver.IsValid() && resolver != current {
 			return netip.Addr{}, nil, errors.New("snapshot contains multiple split-DNS resolvers")
 		}
+
 		resolver = current
 		suffixes = append(suffixes, route.DomainSuffix)
 	}
+
 	if !resolver.IsValid() {
 		return netip.Addr{}, nil, nil
 	}
+
 	canonical, err := dns.ValidateSettings(resolver, suffixes)
+
 	return resolver, canonical, err
 }

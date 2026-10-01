@@ -1,6 +1,6 @@
 CREATE TABLE invite_records (
     invite_id text PRIMARY KEY,
-    profile_id text NOT NULL REFERENCES access_profiles(id),
+    profile_id text NOT NULL REFERENCES access_profiles (id),
     device_id text NOT NULL,
     device_public_key bytea NOT NULL CHECK (octet_length(device_public_key) = 32),
     permit_version integer NOT NULL,
@@ -17,4 +17,4 @@ CREATE TABLE invite_records (
     approved_at timestamptz
 );
 
-CREATE INDEX invite_records_status_created_at_idx ON invite_records(status, created_at);
+CREATE INDEX invite_records_status_created_at_idx ON invite_records (status, created_at);

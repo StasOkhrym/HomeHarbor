@@ -47,18 +47,32 @@ func (c *Ceremonies) SaveCeremony(ctx context.Context, value identity.Ceremony) 
 	return nil
 }
 
-func (c *Ceremonies) ConsumeCeremony(ctx context.Context, hash [32]byte, now time.Time) (identity.Ceremony, error) {
+func (c *Ceremonies) ConsumeCeremony(
+	ctx context.Context,
+	hash [32]byte,
+	now time.Time,
+) (identity.Ceremony, error) {
 	payload, err := c.store.ConsumeChallenge(ctx, "webauthn", hex.EncodeToString(hash[:]))
 	if errors.Is(err, redissecurity.ErrChallengeMissing) {
 		return identity.Ceremony{}, identity.ErrInvalidCeremony
 	}
 	if err != nil {
-		return identity.Ceremony{}, fmt.Errorf("%w: consume ceremony", identity.ErrSecurityStateUnavailable)
+		return identity.Ceremony{}, fmt.Errorf(
+			"%w: consume ceremony",
+			identity.ErrSecurityStateUnavailable,
+		)
 	}
+
 	var value identity.Ceremony
-	if err := json.Unmarshal(payload, &value); err != nil || value.IDHash != hash || !now.Before(value.ExpiresAt) {
+
+	if err := json.Unmarshal(
+		payload,
+		&value,
+	); err != nil || value.IDHash != hash ||
+		!now.Before(value.ExpiresAt) {
 		return identity.Ceremony{}, identity.ErrInvalidCeremony
 	}
+
 	return value, nil
 }
 

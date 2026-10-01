@@ -65,7 +65,8 @@ func NewUDPPairV2Bridge(cfg UDPPairV2BridgeConfig) (*UDPPairV2Bridge, error) {
 	if err != nil || u.Scheme != "wss" || u.Host == "" || u.User != nil {
 		return nil, errors.New("UDP v2 requires a wss control URL")
 	}
-	if cfg.Ticket == "" || cfg.SessionID == "" || cfg.DeviceID == "" || cfg.DestinationDeviceID == "" ||
+	if cfg.Ticket == "" || cfg.SessionID == "" || cfg.DeviceID == "" ||
+		cfg.DestinationDeviceID == "" ||
 		cfg.DeviceID == cfg.DestinationDeviceID ||
 		cfg.ListenAddress == nil ||
 		cfg.WireGuardAddress == nil {
@@ -217,7 +218,8 @@ func (b *UDPPairV2Bridge) Bind(parent context.Context, ticket string) error {
 	if err := wsjson.Read(ctx, c, &offer); err != nil {
 		return err
 	}
-	if offer.Protocol != UDPPairV2Protocol || offer.Kind != "offer" || offer.SessionID != b.cfg.SessionID ||
+	if offer.Protocol != UDPPairV2Protocol || offer.Kind != "offer" ||
+		offer.SessionID != b.cfg.SessionID ||
 		offer.DeviceID != b.cfg.DeviceID ||
 		offer.DestinationDeviceID != b.cfg.DestinationDeviceID ||
 		len(offer.Nonce) != 43 {

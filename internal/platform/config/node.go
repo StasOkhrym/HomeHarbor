@@ -13,6 +13,7 @@ import (
 // role-specific behavior remains in their composition code rather than in a
 // second, subtly different configuration parser.
 type Node struct {
+	Runtime      Runtime          `toml:"runtime"`
 	Identity     NodeIdentity     `toml:"node"`
 	Relay        NodeRelay        `toml:"relay"`
 	WireGuard    NodeWireGuard    `toml:"wireguard"`
@@ -72,36 +73,41 @@ type NodeDNS struct {
 
 // LoadClient reads a client TOML file and applies safe client defaults.
 func LoadClient(path string) (Node, error) {
-	return loadNode(path, "linux-client", "state/client.json", "127.0.0.1:51822", "127.0.0.1:51820")
+	return loadNode(path, DefaultClient())
 }
 
 // LoadAgent reads a gateway TOML file and applies safe gateway defaults.
 func LoadAgent(path string) (Node, error) {
-	return loadNode(path, "linux-gateway", "state/agent.json", "127.0.0.1:51821", "127.0.0.1:51820")
+	return loadNode(path, DefaultAgent())
 }
 
-func loadNode(path, defaultName, defaultState, defaultBridge, defaultWireGuard string) (Node, error) {
-	var cfg Node
+// DefaultClient is shared by flags and TOML loading to keep precedence stable.
+func DefaultClient() Node {
+	return Node{
+		Runtime:  DefaultRuntime(false),
+		Identity: NodeIdentity{Name: "linux-client", StatePath: "state/client.json"},
+		Relay: NodeRelay{
+			ListenAddress:    "127.0.0.1:51822",
+			WireGuardAddress: "127.0.0.1:51820",
+		},
+		WireGuard:    NodeWireGuard{ListenPort: 51820},
+		Coordination: NodeCoordination{NetworkID: "home"},
+	}
+}
+
+// DefaultAgent changes only role-specific defaults, not transport semantics.
+func DefaultAgent() Node {
+	cfg := DefaultClient()
+	cfg.Identity.Name = "linux-gateway"
+	cfg.Identity.StatePath = "state/agent.json"
+	cfg.Relay.ListenAddress = "127.0.0.1:51821"
+
+	return cfg
+}
+
+func loadNode(path string, cfg Node) (Node, error) {
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return Node{}, fmt.Errorf("decode node config: %w", err)
-	}
-	if cfg.Identity.Name == "" {
-		cfg.Identity.Name = defaultName
-	}
-	if cfg.Identity.StatePath == "" {
-		cfg.Identity.StatePath = defaultState
-	}
-	if cfg.Relay.ListenAddress == "" {
-		cfg.Relay.ListenAddress = defaultBridge
-	}
-	if cfg.Relay.WireGuardAddress == "" {
-		cfg.Relay.WireGuardAddress = defaultWireGuard
-	}
-	if cfg.WireGuard.ListenPort == 0 {
-		cfg.WireGuard.ListenPort = 51820
-	}
-	if cfg.Coordination.NetworkID == "" {
-		cfg.Coordination.NetworkID = "home"
 	}
 	if cfg.Identity.EnrollmentTokenFile != "" {
 		value, err := readNodeSecret(cfg.Identity.EnrollmentTokenFile, "enrollment token")
@@ -116,6 +122,9 @@ func loadNode(path, defaultName, defaultState, defaultBridge, defaultWireGuard s
 			return Node{}, err
 		}
 		cfg.Relay.Ticket = value
+	}
+	if err := cfg.Runtime.Validate(); err != nil {
+		return Node{}, err
 	}
 	return cfg, nil
 }

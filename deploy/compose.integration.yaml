@@ -32,7 +32,11 @@ services:
     ports:
       - "127.0.0.1:${INTEGRATION_REDIS_PORT:-56379}:6379"
     healthcheck:
-      test: ["CMD-SHELL", "REDISCLI_AUTH=$$(cat /run/secrets/redis_password) redis-cli ping | grep -qx PONG"]
+      test:
+        [
+          "CMD-SHELL",
+          "REDISCLI_AUTH=$$(cat /run/secrets/redis_password) redis-cli ping | grep -qx PONG",
+        ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -42,7 +46,7 @@ services:
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
 secrets:
-  postgres_password: {file: "${INTEGRATION_SECRETS_DIR:-../secrets}/postgres_password"}
-  redis_password: {file: "${INTEGRATION_SECRETS_DIR:-../secrets}/redis_password"}
+  postgres_password: { file: "${INTEGRATION_SECRETS_DIR:-../secrets}/postgres_password" }
+  redis_password: { file: "${INTEGRATION_SECRETS_DIR:-../secrets}/redis_password" }
 volumes:
   postgres-data:

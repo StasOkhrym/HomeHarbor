@@ -67,7 +67,10 @@ func (s *Repository) ListServices(ctx context.Context) ([]services.Service, erro
 	return items, rows.Err()
 }
 
-func (s *Repository) ListServicesForDevice(ctx context.Context, deviceID string) ([]services.Service, error) {
+func (s *Repository) ListServicesForDevice(
+	ctx context.Context,
+	deviceID string,
+) ([]services.Service, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT DISTINCT s.id,s.name,s.kind,s.url,COALESCE(s.native_url,''),
 		       COALESCE(s.health_url,''),s.description,s.created_at
@@ -80,9 +83,11 @@ func (s *Repository) ListServicesForDevice(ctx context.Context, deviceID string)
 		return nil, err
 	}
 	defer rows.Close()
+
 	items := []services.Service{}
 	for rows.Next() {
 		var item services.Service
+
 		if err = rows.Scan(
 			&item.ID,
 			&item.Name,
@@ -95,8 +100,10 @@ func (s *Repository) ListServicesForDevice(ctx context.Context, deviceID string)
 		); err != nil {
 			return nil, err
 		}
+
 		items = append(items, item)
 	}
+
 	return items, rows.Err()
 }
 
@@ -154,7 +161,13 @@ func (s *Repository) ListProfiles(ctx context.Context) ([]services.AccessProfile
 	items := []services.AccessProfile{}
 	for rows.Next() {
 		var item services.AccessProfile
-		if err = rows.Scan(&item.ID, &item.Name, &item.CreatedAt, &item.ServiceIDs, &item.DeviceIDs); err != nil {
+		if err = rows.Scan(
+			&item.ID,
+			&item.Name,
+			&item.CreatedAt,
+			&item.ServiceIDs,
+			&item.DeviceIDs,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

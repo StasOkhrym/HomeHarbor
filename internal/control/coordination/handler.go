@@ -185,19 +185,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				// this check at the authenticated protocol boundary prevents an
 				// older client from probing the direct-path feature by sending an
 				// otherwise well-formed message.
-				_ = connection.Close(websocket.StatusPolicyViolation, "direct UDP capability was not negotiated")
+				_ = connection.Close(
+					websocket.StatusPolicyViolation,
+					"direct UDP capability was not negotiated",
+				)
 				return
 			}
 			var update controlprotocol.CandidateUpdate
-			if err := json.Unmarshal(message.Payload, &update); err != nil || update.Validate() != nil {
-				_ = connection.Close(websocket.StatusInvalidFramePayloadData, "targeted candidate update required")
+			if err := json.Unmarshal(
+				message.Payload,
+				&update,
+			); err != nil ||
+				update.Validate() != nil {
+				_ = connection.Close(
+					websocket.StatusInvalidFramePayloadData,
+					"targeted candidate update required",
+				)
 				return
 			}
 			if h.devices == nil {
 				continue
 			}
 			destination, destinationErr := h.devices.Device(r.Context(), update.DestinationDeviceID)
-			if destinationErr != nil || h.AuthorizePeer == nil || !h.AuthorizePeer(r.Context(), device, destination) {
+			if destinationErr != nil || h.AuthorizePeer == nil ||
+				!h.AuthorizePeer(r.Context(), device, destination) {
 				continue
 			}
 			// The sender identity comes from the authenticated WebSocket, never
@@ -214,17 +225,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				controlprotocol.Message{Type: "candidate.update", Payload: payload},
 			)
 		case "heartbeat":
-			_ = writePayload(r.Context(), connection, "heartbeat.ack", map[string]any{"at": time.Now().UTC()})
+			_ = writePayload(
+				r.Context(),
+				connection,
+				"heartbeat.ack",
+				map[string]any{"at": time.Now().UTC()},
+			)
 		}
 	}
 }
 
-func writePayload(ctx context.Context, connection *websocket.Conn, messageType string, value any) error {
+func writePayload(
+	ctx context.Context,
+	connection *websocket.Conn,
+	messageType string,
+	value any,
+) error {
 	payload, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	return writeJSONWithTimeout(ctx, connection, controlprotocol.Message{Type: messageType, Payload: payload})
+
+	return writeJSONWithTimeout(
+		ctx,
+		connection,
+		controlprotocol.Message{Type: messageType, Payload: payload},
+	)
 }
 
 func writeJSONWithTimeout(ctx context.Context, connection *websocket.Conn, value any) error {
@@ -266,7 +292,12 @@ func (h *hub) add(peer *peer) error {
 	return nil
 }
 func (h *hub) remove(id string) { h.mu.Lock(); delete(h.peers, id); h.mu.Unlock() }
-func (h *hub) sendCandidate(ctx context.Context, destination string, message controlprotocol.Message) {
+
+func (h *hub) sendCandidate(
+	ctx context.Context,
+	destination string,
+	message controlprotocol.Message,
+) {
 	h.mu.RLock()
 	peer := h.peers[destination]
 	h.mu.RUnlock()
@@ -275,7 +306,11 @@ func (h *hub) sendCandidate(ctx context.Context, destination string, message con
 	}
 }
 
-func (h *hub) broadcastMessage(ctx context.Context, source string, message controlprotocol.Message) {
+func (h *hub) broadcastMessage(
+	ctx context.Context,
+	source string,
+	message controlprotocol.Message,
+) {
 	h.mu.RLock()
 	peers := make([]*peer, 0, len(h.peers))
 	for id, peer := range h.peers {
@@ -283,6 +318,7 @@ func (h *hub) broadcastMessage(ctx context.Context, source string, message contr
 			peers = append(peers, peer)
 		}
 	}
+
 	h.mu.RUnlock()
 	h.broadcastPeers(ctx, peers, message)
 }

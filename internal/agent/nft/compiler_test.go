@@ -35,11 +35,15 @@ func TestCompileScopesDefaultDenyAndExplicitAllows(t *testing.T) {
 			t.Fatalf("script missing %q:\n%s", want, script)
 		}
 	}
-	if strings.Contains(script, "policy drop") || strings.Contains(script, "ct state established,related accept") {
+	if strings.Contains(script, "policy drop") ||
+		strings.Contains(script, "ct state established,related accept") {
 		t.Fatalf("global deny or established-flow ACL bypass:\n%s", script)
 	}
 	if strings.Contains(script, "flush table inet go_tunnels") {
-		t.Fatalf("Compile() emitted a state-dependent flush before table existence is known:\n%s", script)
+		t.Fatalf(
+			"Compile() emitted a state-dependent flush before table existence is known:\n%s",
+			script,
+		)
 	}
 }
 
@@ -70,7 +74,11 @@ func TestCompileRejectsMalformedACLAndAmbiguousIdentity(t *testing.T) {
 			if script, err := Compile(
 				"wg0",
 				peers,
-				policy.Snapshot{Revision: 1, DefaultAction: policy.ActionDeny, Rules: []policy.Rule{rule}},
+				policy.Snapshot{
+					Revision:      1,
+					DefaultAction: policy.ActionDeny,
+					Rules:         []policy.Rule{rule},
+				},
 			); err == nil ||
 				script != "" {
 				t.Fatalf("malformed policy accepted: err=%v script=%s", err, script)
@@ -80,7 +88,11 @@ func TestCompileRejectsMalformedACLAndAmbiguousIdentity(t *testing.T) {
 }
 
 func TestCompileRejectsNonDenySnapshot(t *testing.T) {
-	if _, err := Compile("gt0", nil, policy.Snapshot{DefaultAction: policy.ActionAllow}); err == nil {
+	if _, err := Compile(
+		"gt0",
+		nil,
+		policy.Snapshot{DefaultAction: policy.ActionAllow},
+	); err == nil {
 		t.Fatal("Compile() error=nil")
 	}
 }

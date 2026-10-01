@@ -15,11 +15,17 @@ func (s *Server) submitInviteProof(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+
 	if err := s.invites.SubmitProof(r.Context(), input.Permit, input.Proof); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid invite proof")
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": string(controlinvites.StatusPending)})
+
+	writeJSON(
+		w,
+		http.StatusAccepted,
+		map[string]string{"status": string(controlinvites.StatusPending)},
+	)
 }
 
 func (s *Server) getInvite(w http.ResponseWriter, r *http.Request) {

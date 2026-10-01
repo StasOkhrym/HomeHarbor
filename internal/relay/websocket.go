@@ -66,14 +66,20 @@ func (h WebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = connection.Close(websocket.StatusPolicyViolation, "relay destination mismatch")
 			return
 		}
-		if forwardErr := h.Hub.Forward(r.Context(), claims.SessionID, claims.DeviceID, packet); forwardErr != nil {
+		if forwardErr := h.Hub.Forward(
+			r.Context(),
+			claims.SessionID,
+			claims.DeviceID,
+			packet,
+		); forwardErr != nil {
 			continue
 		}
 	}
 }
 
 func destinationAllowedByTicket(claims TicketClaims, packet Packet) bool {
-	return claims.DestinationDeviceID == "" || packet.DestinationDeviceID == claims.DestinationDeviceID
+	return claims.DestinationDeviceID == "" ||
+		packet.DestinationDeviceID == claims.DestinationDeviceID
 }
 
 func relayTicketFromRequest(r *http.Request) string {

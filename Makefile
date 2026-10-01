@@ -1,115 +1,70 @@
-.PHONY: doctor doctor-backend doctor-compose doctor-e2e doctor-ios fmt fmt-check gofumpt gci goimports scripts-test architecture e2e test race fuzz vet lint lint-fix vulncheck build android-build ios-source-check check verify compose-check deploy-check dev-init dev-up dev-down dev-trust-ca vm-up vm-down integration integration-local relay-acceptance acceptance
+.DEFAULT_GOAL := help
+ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+MAKEFLAGS += --no-print-directory
+export PYTHONDONTWRITEBYTECODE := 1
+export PATH := $(ROOT).local/ui-tooling/bin:$(PATH)
+PYTHON ?= python3
+FULL ?= 0
+export GO_PACKAGES := ./cmd/... ./internal/... ./migrations/...
+export SHFMT_PACKAGE := mvdan.cc/sh/v3/cmd/shfmt@v3.14.1
+export ACTIONLINT_PACKAGE := github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+FUZZ_TIME ?= 5s
+SECURITY ?= all
 
-COMPOSE := docker compose -f deploy/compose.yaml
+.PHONY: help doctor fmt lint test verify security integration acceptance dev-up dev-down dev-logs dev-trust-ca
+
+help:
+	@printf '%s\n' \
+	  'doctor: report missing local dependencies (PROFILE=backend|compose|e2e)' \
+	  'fmt / lint / test / verify: format, read-only checks, tests, portable gate' \
+	  'verify FULL=1: additionally integration, security, deployment and Linux acceptance' \
+	  'security / integration / acceptance: explicit heavier gates' \
+	  'dev-up / dev-down / dev-logs / dev-trust-ca: local UI stack and test CA'
 
 doctor:
-	./scripts/doctor.sh backend
-
-doctor-backend: doctor
-
-doctor-e2e:
-	./scripts/doctor.sh e2e
-
-doctor-ios:
-	./scripts/doctor.sh ios
-
-doctor-compose:
-	./scripts/doctor.sh compose
-
-test:
-	go test ./...
-
-race:
-	go test -race ./...
-
-fuzz:
-	go test ./internal/protocol -run=^$$ -fuzz=Fuzz -fuzztime=5s
-	go test ./internal/relay -run=^$$ -fuzz=FuzzDecodePacket -fuzztime=5s
-	go test ./internal/relay -run=^$$ -fuzz=FuzzDecodeUDPPairDatagram -fuzztime=5s
-	go test ./internal/snapshot -run=^$$ -fuzz=Fuzz -fuzztime=5s
-
-vet:
-	go vet ./...
-
-lint:
-	golangci-lint run --fix=false ./...
-
-lint-fix:
-	golangci-lint run --fix ./...
+	cd "$(ROOT)" && sh scripts/doctor.sh $(or $(PROFILE),backend)
 
 fmt:
-	golangci-lint fmt ./...
+	cd "$(ROOT)" && golangci-lint fmt $(GO_PACKAGES)
+	cd "$(ROOT)" && ruff check --fix scripts && ruff format scripts
+	cd "$(ROOT)" && npm run format && djlint internal/control/httpapi/templates --reformat
+	cd "$(ROOT)" && $(PYTHON) scripts/lint_files.py --format
 
-# Also inspect output: formatter versions can exit zero for dirty files.
-fmt-check:
-	@output=$$(mktemp); trap 'rm -f "$$output"' EXIT HUP INT TERM; \
-	status=0; golangci-lint fmt --diff ./... >"$$output" || status=$$?; \
-	if test -s "$$output"; then cat "$$output"; echo 'Run make fmt to format Go sources' >&2; exit 1; fi; exit $$status
+lint:
+	cd "$(ROOT)" && sh scripts/format-check.sh
+	cd "$(ROOT)" && golangci-lint run --fix=false $(GO_PACKAGES)
+	cd "$(ROOT)" && ruff check --no-cache scripts
+	cd "$(ROOT)" && npm run lint && djlint internal/control/httpapi/templates --lint
+	cd "$(ROOT)" && $(PYTHON) scripts/lint_files.py
 
-# Named entrypoints use the full configured pipeline so spacing and module
-# import grouping stay consistent, with no additional formatter installation.
-gofumpt gci goimports: fmt
-
-scripts-test:
-	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -v
-
-architecture:
-	go test ./internal/architecture -count=1
-
-vulncheck:
-	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-
-build:
-	go build ./cmd/...
-
-android-build:
-	gradle -p apps/android assembleDebug
-
-ios-source-check:
-	xcodebuild -packagePath apps/ios -scheme GoTunnelsIOS-Package -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
-
-check: fmt-check test vet lint build architecture scripts-test
+test:
+	cd "$(ROOT)" && go test $(GO_PACKAGES) -count=1
+	cd "$(ROOT)" && $(PYTHON) -m unittest discover -s scripts/tests
+	cd "$(ROOT)" && node --test internal/control/httpapi/tests/browser.test.cjs
 
 verify:
-	./scripts/verify.sh
+	cd "$(ROOT)" && FULL=$(FULL) sh scripts/verify.sh
 
-dev-init:
-	./scripts/dev-init.sh
-
-dev-up: doctor-compose dev-init compose-check
-	CONTROL_DOMAIN=$${CONTROL_DOMAIN:-control.localhost} RELAY_DOMAIN=$${RELAY_DOMAIN:-relay.localhost} CADDYFILE=Caddyfile.local CONTROL_CONFIG=../.local/control.toml RELAY_CONFIG=../.local/relay.toml $(COMPOSE) up --build -d --wait --wait-timeout 120
-
-dev-down:
-	$(COMPOSE) down
-
-dev-trust-ca:
-	./scripts/dev-trust-ca.sh
-
-vm-up:
-	./scripts/vm-up.sh
-
-vm-down:
-	./scripts/vm-down.sh
+security:
+	@case '$(SECURITY)' in all|fuzz|vulnerability) ;; *) echo 'Invalid SECURITY gate' >&2; exit 2;; esac
+ifneq ($(SECURITY),vulnerability)
+	cd "$(ROOT)" && go test ./internal/protocol -run '^$$' -fuzz '^FuzzCandidateUpdateJSON$$' -fuzztime=$(FUZZ_TIME)
+	cd "$(ROOT)" && go test ./internal/relay -run '^$$' -fuzz '^FuzzDecodePacket$$' -fuzztime=$(FUZZ_TIME)
+	cd "$(ROOT)" && go test ./internal/relay -run '^$$' -fuzz '^FuzzDecodeUDPPairDatagram$$' -fuzztime=$(FUZZ_TIME)
+	cd "$(ROOT)" && go test ./internal/snapshot -run '^$$' -fuzz '^FuzzDecodeSnapshot$$' -fuzztime=$(FUZZ_TIME)
+endif
+ifneq ($(SECURITY),fuzz)
+	cd "$(ROOT)" && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 $(GO_PACKAGES)
+endif
 
 integration:
-	./scripts/integration.sh
-
-integration-local:
-	./scripts/integration-local.sh
-
-compose-check:
-	./scripts/compose-check.sh
-
-deploy-check:
-	./scripts/deploy-check.sh
-
-relay-acceptance:
-	go test ./internal/app/relay -run '^TestRelayAppBridgesTwoNodesThroughProductionListeners$$' -count=1 -v
-	go test ./internal/node -run '^TestRelayOnlyNodeBridgesForwardOpaqueUDPInBothDirections$$' -count=1 -v
+	cd "$(ROOT)" && $(PYTHON) scripts/integration.py
 
 acceptance:
-	./scripts/acceptance.sh
+	cd "$(ROOT)" && sh scripts/acceptance.sh
 
-# The parent owns the real VM/network acceptance implementation.
-e2e:
-	./scripts/e2e.sh
+dev-up dev-down dev-logs:
+	cd "$(ROOT)" && sh scripts/dev.sh $(patsubst dev-%,%,$@)
+
+dev-trust-ca:
+	cd "$(ROOT)" && sh scripts/dev-trust-ca.sh

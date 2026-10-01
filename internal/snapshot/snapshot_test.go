@@ -12,11 +12,19 @@ func TestSignVerifyAndAcceptNextSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	signed, err := Sign(
 		NetworkSnapshot{
 			NetworkID: "home",
 			Revision:  1,
-			Services:  []Service{{ID: "cloud", Name: "Nextcloud", Kind: "web", URL: "https://cloud.home.example.com"}},
+			Services: []Service{
+				{
+					ID:   "cloud",
+					Name: "Nextcloud",
+					Kind: "web",
+					URL:  "https://cloud.home.example.com",
+				},
+			},
 		},
 		privateKey,
 		"root-1",
@@ -24,10 +32,13 @@ func TestSignVerifyAndAcceptNextSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err = VerifyNext(signed, publicKey, "home", 0, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(signed.Payload) == 0 || len(signed.Hash) != 32 || len(signed.Signature) != ed25519.SignatureSize {
+
+	if len(signed.Payload) == 0 || len(signed.Hash) != 32 ||
+		len(signed.Signature) != ed25519.SignatureSize {
 		t.Fatalf("signed envelope = %#v", signed)
 	}
 
@@ -37,7 +48,12 @@ func TestSignVerifyAndAcceptNextSnapshot(t *testing.T) {
 			Revision:     2,
 			PreviousHash: signed.Hash,
 			Services: []Service{
-				{ID: "cloud", Name: "Nextcloud", Kind: "web", URL: "https://cloud.home.example.com"},
+				{
+					ID:   "cloud",
+					Name: "Nextcloud",
+					Kind: "web",
+					URL:  "https://cloud.home.example.com",
+				},
 			},
 		},
 		privateKey,
@@ -46,13 +62,16 @@ func TestSignVerifyAndAcceptNextSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err = VerifyNext(next, publicKey, "home", 1, signed.Hash); err != nil {
 		t.Fatal(err)
 	}
+
 	verified, err := Verify(next, publicKey, "home")
 	if err != nil {
 		t.Fatalf("verify current head: %v", err)
 	}
+
 	if verified.Revision != 2 {
 		t.Fatalf("verified revision = %d, want 2", verified.Revision)
 	}
@@ -63,23 +82,42 @@ func TestVerifyRejectsTamperingRollbackAndGap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	signed, err := Sign(NetworkSnapshot{NetworkID: "home", Revision: 1}, privateKey, "root-1")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	tampered := signed
 	tampered.Payload = append([]byte(nil), signed.Payload...)
 	tampered.Payload[len(tampered.Payload)-1] ^= 1
+
 	if err = VerifyNext(tampered, publicKey, "home", 0, nil); !errors.Is(err, ErrInvalidHash) {
 		t.Fatalf("tampered error = %v", err)
 	}
-	if err = VerifyNext(signed, publicKey, "home", 1, signed.Hash); !errors.Is(err, ErrRevisionRollback) {
+
+	if err = VerifyNext(
+		signed,
+		publicKey,
+		"home",
+		1,
+		signed.Hash,
+	); !errors.Is(
+		err,
+		ErrRevisionRollback,
+	) {
 		t.Fatalf("rollback error = %v", err)
 	}
-	gap, err := Sign(NetworkSnapshot{NetworkID: "home", Revision: 3, PreviousHash: signed.Hash}, privateKey, "root-1")
+
+	gap, err := Sign(
+		NetworkSnapshot{NetworkID: "home", Revision: 3, PreviousHash: signed.Hash},
+		privateKey,
+		"root-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err = VerifyNext(gap, publicKey, "home", 1, signed.Hash); !errors.Is(err, ErrRevisionGap) {
 		t.Fatalf("gap error = %v", err)
 	}
@@ -90,8 +128,13 @@ func TestSignRejectsInvalidService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err = Sign(
-		NetworkSnapshot{NetworkID: "home", Revision: 1, Services: []Service{{ID: "cloud", URL: "http://cloud.home"}}},
+		NetworkSnapshot{
+			NetworkID: "home",
+			Revision:  1,
+			Services:  []Service{{ID: "cloud", URL: "http://cloud.home"}},
+		},
 		privateKey,
 		"root-1",
 	); err == nil {
@@ -104,12 +147,14 @@ func TestSignRejectsReferencesThatCouldBroadenGatewayAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	value := NetworkSnapshot{
 		NetworkID: "home",
 		Revision:  1,
 		Devices:   []Device{{ID: "client", OverlayAddress: "100.64.0.2/32"}},
 		Gateways:  []Gateway{{DeviceID: "unknown"}},
 	}
+
 	if _, err = Sign(value, privateKey, "root-1"); err == nil {
 		t.Fatal("gateway referencing unknown device was accepted")
 	}
@@ -120,6 +165,7 @@ func TestSignRejectsReferencesThatCouldBroadenGatewayAccess(t *testing.T) {
 		Devices:   []Device{{ID: "client", Role: "client", OverlayAddress: "100.64.0.2/32"}},
 		Gateways:  []Gateway{{DeviceID: "client"}},
 	}
+
 	if _, err = Sign(value, privateKey, "root-1"); err == nil {
 		t.Fatal("client device was accepted as a gateway")
 	}
@@ -129,9 +175,17 @@ func TestSignRejectsReferencesThatCouldBroadenGatewayAccess(t *testing.T) {
 		Revision:  1,
 		Devices:   []Device{{ID: "client", OverlayAddress: "100.64.0.2/32"}},
 		ACL: []ACLRule{
-			{ID: "bad", SourceDeviceID: "client", Destination: "10.0.0.0/24", Protocol: "icmp", PortFrom: 1, PortTo: 1},
+			{
+				ID:             "bad",
+				SourceDeviceID: "client",
+				Destination:    "10.0.0.0/24",
+				Protocol:       "icmp",
+				PortFrom:       1,
+				PortTo:         1,
+			},
 		},
 	}
+
 	if _, err = Sign(value, privateKey, "root-1"); err == nil {
 		t.Fatal("unsupported ACL protocol was accepted")
 	}
@@ -277,16 +331,24 @@ func TestSignRejectsUnboundProfileReferencesAndDefaultACL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	value := NetworkSnapshot{
 		NetworkID: "home",
 		Revision:  1,
 		Profiles: []AccessProfile{
-			{ID: "family", Name: "Family", DeviceIDs: []string{"missing"}, ServiceIDs: []string{"missing"}},
+			{
+				ID:         "family",
+				Name:       "Family",
+				DeviceIDs:  []string{"missing"},
+				ServiceIDs: []string{"missing"},
+			},
 		},
 	}
+
 	if _, err := Sign(value, privateKey, "root-1"); err == nil {
 		t.Fatal("unbound profile references were accepted")
 	}
+
 	value = NetworkSnapshot{
 		NetworkID: "home",
 		Revision:  1,
@@ -302,6 +364,7 @@ func TestSignRejectsUnboundProfileReferencesAndDefaultACL(t *testing.T) {
 			},
 		},
 	}
+
 	if _, err := Sign(value, privateKey, "root-1"); err == nil {
 		t.Fatal("default ACL destination was accepted")
 	}
