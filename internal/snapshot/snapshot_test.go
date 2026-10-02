@@ -7,6 +7,24 @@ import (
 	"testing"
 )
 
+func TestSnapshotSignatureUsesHomeHarborDomain(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	envelope, err := Sign(NetworkSnapshot{NetworkID: "home", Revision: 1}, private, "root-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	message := append([]byte("homeharbor/network-snapshot/v1\x00"), envelope.Payload...)
+
+	if !ed25519.Verify(public, message, envelope.Signature) {
+		t.Fatal("snapshot still signs a different product domain")
+	}
+}
+
 func TestSignVerifyAndAcceptNextSnapshot(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

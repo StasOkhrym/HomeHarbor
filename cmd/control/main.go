@@ -8,8 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	controlapp "github.com/sokhrym/go-tunnels/internal/app/control"
-	"github.com/sokhrym/go-tunnels/internal/platform/config"
+	controlapp "github.com/StasOkhrym/homeharbor/internal/app/control"
+	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 )
 
 func main() {

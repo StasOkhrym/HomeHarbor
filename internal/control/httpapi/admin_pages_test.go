@@ -9,24 +9,26 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/audit"
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
-	controlroutes "github.com/sokhrym/go-tunnels/internal/control/routes"
-	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
+	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
+	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 )
 
 func TestAdminSectionsHaveAuthenticatedNavigation(t *testing.T) {
 	deviceService := devices.NewService(devices.NewMemoryStore(), time.Now, nil)
 	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
-	options := []ServerOption{
-		WithServiceCatalog(catalog),
-		WithRouteService(controlroutes.NewService(controlroutes.NewMemoryStore(), time.Now)),
-		WithPolicyService(policy.NewService(policy.NewMemoryStore(), policy.Compiler{})),
+	deps := Dependencies{
+		Resources: ResourceDependencies{
+			Services: catalog,
+			Routes:   controlroutes.NewService(controlroutes.NewMemoryStore(), time.Now),
+			Policy:   policy.NewService(policy.NewMemoryStore(), policy.Compiler{}),
+		},
 	}
 	for _, path := range []string{"setup", "devices", "services", "access", "network", "invites", "security"} {
 		t.Run(path, func(t *testing.T) {
-			handler := newTestServer(deviceService, headerAuthorizer{}, options...).Handler()
+			handler := newTestServer(deviceService, headerAuthorizer{}, deps).Handler()
 			response := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodGet, "/admin/"+path, nil)
 			handler.ServeHTTP(response, request)
@@ -57,9 +59,13 @@ func TestAdminOverviewPreservesPartialFailure(t *testing.T) {
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
 		allowAuthorizer{},
-		WithServiceCatalog(
-			failingCatalog{controlservices.NewService(controlservices.NewMemoryStore(), time.Now)},
-		),
+		Dependencies{
+			Resources: ResourceDependencies{
+				Services: failingCatalog{
+					controlservices.NewService(controlservices.NewMemoryStore(), time.Now),
+				},
+			},
+		},
 	).Handler()
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/", nil))
@@ -79,7 +85,7 @@ func TestAdminOverviewPreservesPartialFailure(t *testing.T) {
 func TestAdminMissingModuleDisablesMutation(t *testing.T) {
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		allowAuthorizer{},
+		allowAuthorizer{}, Dependencies{},
 	).Handler()
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/network", nil))
@@ -90,7 +96,7 @@ func TestAdminMissingModuleDisablesMutation(t *testing.T) {
 }
 
 func TestBrowserExpiredSessionRedirectsWithoutChangingAPI(t *testing.T) {
-	handler := NewServer(nil, headerAuthorizer{}).Handler()
+	handler := mustTestServer(nil, headerAuthorizer{}, Dependencies{}).Handler()
 	for _, item := range []struct {
 		path   string
 		status int
@@ -99,7 +105,9 @@ func TestBrowserExpiredSessionRedirectsWithoutChangingAPI(t *testing.T) {
 		{"/api/v1/admin/devices", http.StatusUnauthorized},
 	} {
 		response := httptest.NewRecorder()
+
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, item.path, nil))
+
 		if response.Code != item.status {
 			t.Fatalf("%s status=%d want=%d", item.path, response.Code, item.status)
 		}
@@ -108,8 +116,10 @@ func TestBrowserExpiredSessionRedirectsWithoutChangingAPI(t *testing.T) {
 
 func TestAdminHTMXIsSelfHosted(t *testing.T) {
 	response := httptest.NewRecorder()
-	NewServer(nil, nil).Handler().ServeHTTP(response,
+
+	mustTestServer(nil, nil, Dependencies{}).Handler().ServeHTTP(response,
 		httptest.NewRequest(http.MethodGet, "/assets/htmx-2.0.11.min.js", nil))
+
 	if response.Code != http.StatusOK ||
 		!strings.Contains(response.Header().Get("Content-Type"), "javascript") {
 		t.Fatalf("HTMX asset status=%d", response.Code)
@@ -125,8 +135,7 @@ func TestAdminActivityUsesReadableActions(t *testing.T) {
 	}
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		allowAuthorizer{},
-		WithAuditReader(reader),
+		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Audit: reader}},
 	).Handler()
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(

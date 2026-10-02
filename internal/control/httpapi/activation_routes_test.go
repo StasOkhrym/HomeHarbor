@@ -14,12 +14,22 @@ func TestActivationRoutesUseExplicitHandlers(t *testing.T) {
 			called := false
 			handler := func(w http.ResponseWriter, r *http.Request) {
 				called = chi.URLParam(r, "id") == "invite-1"
+
 				w.WriteHeader(http.StatusNoContent)
 			}
-			server := NewServer(nil, nil, WithActivationHandlers(handler, handler))
+
+			server := mustTestServer(
+				nil,
+				nil,
+				Dependencies{
+					Activation: ActivationDependencies{Challenge: handler, Claim: handler},
+				},
+			)
 			response := httptest.NewRecorder()
+
 			server.Handler().
 				ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/invites/invite-1/"+action, nil))
+
 			if response.Code != http.StatusNoContent || !called {
 				t.Fatalf("explicit route missing: status=%d called=%v", response.Code, called)
 			}

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/app/control/workflows"
+	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
 )
 
 type activationUnavailable struct{}

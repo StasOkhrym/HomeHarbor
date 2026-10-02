@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/services"
-	servicespg "github.com/sokhrym/go-tunnels/internal/control/services/storage"
-	"github.com/sokhrym/go-tunnels/internal/testutil"
+	"github.com/StasOkhrym/homeharbor/internal/control/services"
+	servicespg "github.com/StasOkhrym/homeharbor/internal/control/services/storage"
+	"github.com/StasOkhrym/homeharbor/internal/testutil"
 )
 
 func TestPostgresCatalogProfileMembershipAndRollback(t *testing.T) {

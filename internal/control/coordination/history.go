@@ -11,10 +11,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	"github.com/sokhrym/go-tunnels/internal/control/snapshots"
-	controlprotocol "github.com/sokhrym/go-tunnels/internal/protocol"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/snapshots"
+	controlprotocol "github.com/StasOkhrym/homeharbor/internal/protocol"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 const maxSnapshotEnvelopeBytes = 64 << 10

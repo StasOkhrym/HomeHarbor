@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	controlprotocol "github.com/sokhrym/go-tunnels/internal/protocol"
-	"github.com/sokhrym/go-tunnels/internal/relay"
+	controlprotocol "github.com/StasOkhrym/homeharbor/internal/protocol"
+	"github.com/StasOkhrym/homeharbor/internal/relay"
 )
 
 func TestNodeRejectsLegacyUDPRelayAddress(t *testing.T) {

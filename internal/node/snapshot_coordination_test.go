@@ -17,8 +17,8 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
-	controlprotocol "github.com/sokhrym/go-tunnels/internal/protocol"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	controlprotocol "github.com/StasOkhrym/homeharbor/internal/protocol"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 // Legacy WS fixtures also serve the authenticated history contract. Reconnect

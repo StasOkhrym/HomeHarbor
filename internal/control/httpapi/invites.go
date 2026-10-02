@@ -3,8 +3,8 @@ package httpapi
 import (
 	"net/http"
 
-	controlinvites "github.com/sokhrym/go-tunnels/internal/control/invites"
-	"github.com/sokhrym/go-tunnels/internal/invite"
+	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/invite"
 )
 
 func (s *Server) submitInviteProof(w http.ResponseWriter, r *http.Request) {

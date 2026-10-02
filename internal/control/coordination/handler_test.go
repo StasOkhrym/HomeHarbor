@@ -14,9 +14,9 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	controlprotocol "github.com/sokhrym/go-tunnels/internal/protocol"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	controlprotocol "github.com/StasOkhrym/homeharbor/internal/protocol"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 type coordinationAuthStub struct{}

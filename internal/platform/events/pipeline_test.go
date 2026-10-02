@@ -9,7 +9,7 @@ import (
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/ThreeDotsLabs/watermill/pubsub/gochannel"
 
-	"github.com/sokhrym/go-tunnels/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 )
 
 type blockingAuditSink struct {

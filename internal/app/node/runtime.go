@@ -8,36 +8,37 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/agent/dns"
-	"github.com/sokhrym/go-tunnels/internal/node"
-	"github.com/sokhrym/go-tunnels/internal/platform/config"
-	"github.com/sokhrym/go-tunnels/internal/platform/lifecycle"
-	"github.com/sokhrym/go-tunnels/internal/protocol"
+	"github.com/StasOkhrym/homeharbor/internal/agent/dns"
+	"github.com/StasOkhrym/homeharbor/internal/node"
+	"github.com/StasOkhrym/homeharbor/internal/platform/config"
+	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 // NewRuntime assembles either node role without opening a tunnel. Run owns the
 // deny bootstrap and supervised workers; invalid trust configuration is rejected
 // before identity creation, enrollment or any privileged network operation.
-func NewRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error) {
+func NewRuntime(_ context.Context, role Role, cfg config.Node) (*App, error) {
 	if cfg.Runtime == (config.Runtime{}) {
 		cfg.Runtime = config.DefaultRuntime(false)
 	}
-	if err := cfg.Runtime.Validate(); err != nil {
+
+	if err := validateRuntime(role, cfg); err != nil {
 		return nil, err
 	}
-	if role != Client && role != Gateway {
-		return nil, errors.New("invalid node role")
+
+	return &App{startup: func(ctx context.Context) (*App, error) {
+		return startRuntime(ctx, role, cfg)
+	}}, nil
+}
+
+// startRuntime owns enrollment and local state writes. It assembles workers
+// without starting them; the returned App still installs the deny guard first.
+func startRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	kernel := cfg.WireGuard.InterfaceName != "" || cfg.Coordination.URL != ""
-	if kernel &&
-		(cfg.WireGuard.InterfaceName == "" || cfg.Coordination.URL == "" || cfg.Coordination.RootPublicKeyFile == "") {
-		return nil, errors.New(
-			"kernel node requires signed coordination: -wg-interface, -coordination and -root-public-key",
-		)
-	}
-	if cfg.WireGuard.ListenPort > 65535 {
-		return nil, errors.New("WireGuard port exceeds 65535")
-	}
 	var root ed25519.PublicKey
 	var err error
 	if kernel {
@@ -181,11 +182,15 @@ func prepareRelay(
 		return nil, errors.New("-relay or -relay-udp is required when -relay-ticket is supplied")
 	}
 	bridge := node.RelayBridgeConfig{
-		RelayURL: cfg.Relay.WebSocketURL, RelayUDPAddress: cfg.Relay.UDPAddress,
-		Ticket: cfg.Relay.Ticket, SessionID: cfg.Relay.SessionID,
-		DeviceID: state.DeviceID, DestinationDeviceID: cfg.Relay.DestinationDevice,
-		ListenAddress: cfg.Relay.ListenAddress, WireGuardAddress: cfg.Relay.WireGuardAddress,
-		STUNServer: cfg.Relay.STUNServer,
+		RelayURL:            cfg.Relay.WebSocketURL,
+		RelayUDPAddress:     cfg.Relay.UDPAddress,
+		Ticket:              cfg.Relay.Ticket,
+		SessionID:           cfg.Relay.SessionID,
+		DeviceID:            state.DeviceID,
+		DestinationDeviceID: cfg.Relay.DestinationDevice,
+		ListenAddress:       cfg.Relay.ListenAddress,
+		WireGuardAddress:    cfg.Relay.WireGuardAddress,
+		STUNServer:          cfg.Relay.STUNServer,
 	}
 	bridge.OnObservedEndpoint = func(endpoint netip.AddrPort) {
 		if candidates != nil {
@@ -237,10 +242,16 @@ func prepareRelay(
 		return nil, err
 	}
 	tunnel := node.KernelRelayConfig{
-		RelayBridgeConfig: bridge, InterfaceName: cfg.WireGuard.InterfaceName,
-		PrivateKey: state.WireGuard.PrivateKey, ListenPort: uint16(cfg.WireGuard.ListenPort),
-		OverlayAddress: cfg.WireGuard.OverlayAddress, PeerPublicKey: cfg.WireGuard.PeerPublicKey,
-		AllowedPrefixes: allowed, Routes: routes, EndpointUpdater: peers, PathSelector: paths,
+		RelayBridgeConfig: bridge,
+		InterfaceName:     cfg.WireGuard.InterfaceName,
+		PrivateKey:        state.WireGuard.PrivateKey,
+		ListenPort:        uint16(cfg.WireGuard.ListenPort),
+		OverlayAddress:    cfg.WireGuard.OverlayAddress,
+		PeerPublicKey:     cfg.WireGuard.PeerPublicKey,
+		AllowedPrefixes:   allowed,
+		Routes:            routes,
+		EndpointUpdater:   peers,
+		PathSelector:      paths,
 	}
 	return lifecycle.Func(
 		func(ctx context.Context) error { return node.RunKernelRelayLoop(ctx, tunnel, renew) },
@@ -256,9 +267,13 @@ func prepareCoordination(
 	candidates candidateBindings,
 ) (lifecycle.Component, lifecycle.Component, error) {
 	connection := node.CoordinationConfig{
-		URL: cfg.Coordination.URL, Credential: state.DeviceCredential, DeviceID: state.DeviceID,
-		NetworkID: cfg.Coordination.NetworkID, RootPublicKey: root,
-		StatePath: cfg.Identity.StatePath + ".snapshot", CandidateHandler: candidates.handle,
+		URL:               cfg.Coordination.URL,
+		Credential:        state.DeviceCredential,
+		DeviceID:          state.DeviceID,
+		NetworkID:         cfg.Coordination.NetworkID,
+		RootPublicKey:     root,
+		StatePath:         cfg.Identity.StatePath + ".snapshot",
+		CandidateHandler:  candidates.handle,
 		CandidateProvider: candidates.provide,
 	}
 	if candidates.set != nil {

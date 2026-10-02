@@ -35,6 +35,7 @@ def main():
             )
         ):
             continue
+
         try:
             if path.suffix == ".toml":
                 tomllib.loads(path.read_text())
@@ -42,16 +43,21 @@ def main():
                 json.loads(path.read_text())
         except (ValueError, UnicodeError) as error:
             raise ValueError(f"Invalid {path.suffix} syntax: {path}") from error
+
         if path.suffix == ".sh":
             groups["shell"].append(name)
-        if path.suffix in (".yaml", ".yml") or path.name in (".yamllint.yml", ".ansible-lint"):
+
+        if path.suffix in (".yaml", ".yml") or path.name == ".yamllint.yml":
             groups["yaml"].append(name)
             if path.parts[:2] == (".github", "workflows"):
                 groups["workflow"].append(name)
+
         if path.suffix == ".sql":
             groups["sql"].append(name)
+
         if path.name == "Dockerfile" or path.name.endswith(".Dockerfile"):
             groups["docker"].append(name)
+
     commands = [
         (
             [
@@ -87,11 +93,13 @@ def main():
                 (["hadolint"], "docker"),
             ]
         )
+
     for command, group in commands:
         if groups[group]:
             result = subprocess.run([*command, *sorted(set(groups[group]))], check=False)
             if result.returncode:
                 return result.returncode
+
     return 0
 
 

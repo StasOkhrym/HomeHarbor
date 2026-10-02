@@ -1,5 +1,0 @@
-profile: basic
-exclude_paths:
-  - .local/
-  - .superpowers/
-  - node_modules/

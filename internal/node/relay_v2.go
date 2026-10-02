@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/relay"
+	"github.com/StasOkhrym/homeharbor/internal/relay"
 )
 
 func usesUDPV2(cfg RelayBridgeConfig) bool {

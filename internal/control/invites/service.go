@@ -8,7 +8,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/invite"
 )
 
 type Status string

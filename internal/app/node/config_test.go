@@ -31,7 +31,7 @@ func TestConfigFlagsOverrideTOMLWithoutLosingOtherFields(t *testing.T) {
 }
 
 func TestConfigRejectsUnreadableFileAndPositionalArguments(t *testing.T) {
-	for _, args := range [][]string{{"-config", "/nonexistent/go-tunnels.toml"}, {"unexpected"}} {
+	for _, args := range [][]string{{"-config", "/nonexistent/homeharbor.toml"}, {"unexpected"}} {
 		if _, err := ParseConfig(Client, args, io.Discard); err == nil {
 			t.Errorf("invalid configuration accepted: %v", args)
 		}

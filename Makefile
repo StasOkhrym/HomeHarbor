@@ -17,7 +17,7 @@ help:
 	@printf '%s\n' \
 	  'doctor: report missing local dependencies (PROFILE=backend|compose|e2e)' \
 	  'fmt / lint / test / verify: format, read-only checks, tests, portable gate' \
-	  'verify FULL=1: additionally integration, security, deployment and Linux acceptance' \
+	  'verify FULL=1: additionally integration, security, local Compose and Linux acceptance' \
 	  'security / integration / acceptance: explicit heavier gates' \
 	  'dev-up / dev-down / dev-logs / dev-trust-ca: local UI stack and test CA'
 
@@ -50,7 +50,6 @@ security:
 ifneq ($(SECURITY),vulnerability)
 	cd "$(ROOT)" && go test ./internal/protocol -run '^$$' -fuzz '^FuzzCandidateUpdateJSON$$' -fuzztime=$(FUZZ_TIME)
 	cd "$(ROOT)" && go test ./internal/relay -run '^$$' -fuzz '^FuzzDecodePacket$$' -fuzztime=$(FUZZ_TIME)
-	cd "$(ROOT)" && go test ./internal/relay -run '^$$' -fuzz '^FuzzDecodeUDPPairDatagram$$' -fuzztime=$(FUZZ_TIME)
 	cd "$(ROOT)" && go test ./internal/snapshot -run '^$$' -fuzz '^FuzzDecodeSnapshot$$' -fuzztime=$(FUZZ_TIME)
 endif
 ifneq ($(SECURITY),fuzz)

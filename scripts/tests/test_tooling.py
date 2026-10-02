@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class ToolingTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="go-tunnels-tooling-")
+        self.temp = tempfile.TemporaryDirectory(prefix="homeharbor-tooling-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         shutil.copytree(ROOT / "scripts", self.root / "scripts")
@@ -52,7 +52,6 @@ class ToolingTests(unittest.TestCase):
         python_scripts = {
             "dev-init": "dev_init",
             "compose-check": "compose_check",
-            "deploy-check": "deploy_check",
             "integration": "integration",
             "integration-local": "integration",
         }
@@ -226,7 +225,7 @@ class ToolingTests(unittest.TestCase):
 
         return local, secrets
 
-    def test_dev_init_adds_redis_and_preserves_keys_on_repeat(self):
+    def test_local_restart_preserves_existing_state(self):
         local, secrets = self.local_state()
         (local / "control.toml").write_text('[networking]\nnetwork_id = "custom"\n')
         before = {
@@ -236,15 +235,20 @@ class ToolingTests(unittest.TestCase):
         }
         for _ in range(2):
             result = self.run_script("dev-init")
+
             self.assertEqual(result.returncode, 0, result.stderr)
+
         config = tomllib.loads((local / "control.toml").read_text())
+
         self.assertEqual(
             config["redis"],
             {"url": "redis://redis:6379/0", "password_file": "/run/secrets/redis_password"},
         )
         self.assertEqual(config["networking"]["network_id"], "custom")
+
         for path, content in before.items():
             self.assertEqual(path.read_bytes(), content)
+
         self.assertEqual((secrets / "redis_password").stat().st_mode & 0o777, 0o600)
 
     def test_init_tightens_existing_private_modes_without_rotation(self):
@@ -523,11 +527,11 @@ exit 94
         self.assertNotIn("compose-check", calls)
         self.assertNotIn("deploy-check", calls)
 
-    def test_full_verify_runs_required_gates(self):
+    def test_full_verify_runs_local_not_production_checks(self):
         self.env["FULL"] = "1"
         self.cli("make", 'printf "%s\\n" "$*" >> make-calls\n')
         self.cli("python3", 'printf "%s\\n" "$*" >> python-calls\n')
-        for name in ("go", "node", "ansible-lint"):
+        for name in ("go", "node"):
             self.cli(name)
         result = self.run_script("verify")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -536,7 +540,19 @@ exit 94
         self.assertIn("acceptance", calls)
         python = (self.root / "python-calls").read_text()
         self.assertIn("compose_check.py", python)
-        self.assertIn("deploy_check.py", python)
+        self.assertNotIn("deploy_check.py", python)
+
+    def test_full_verify_propagates_local_gate_failure(self):
+        self.env["FULL"] = "1"
+        self.cli("make", 'printf "%s\\n" "$*" >> make-calls\n')
+        self.cli("python3", 'case "$*" in *compose_check.py*) exit 51 ;; esac\n')
+        for name in ("go", "node"):
+            self.cli(name)
+
+        result = self.run_script("verify")
+
+        self.assertEqual(result.returncode, 51)
+        self.assertNotIn("acceptance", (self.root / "make-calls").read_text())
 
     def test_make_test_runs_browser_tests(self):
         self.cli("go")
@@ -566,34 +582,17 @@ exit 94
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_compose_check_is_read_only_and_rejects_public_redis(self):
-        services = {
-            "control": {
-                "secrets": [
-                    {"source": name}
-                    for name in (
-                        "postgres_password",
-                        "redis_password",
-                        "session_signing_key",
-                        "ceremony_encryption_key",
-                        "relay_ticket_key",
-                        "root_public_key",
-                    )
-                ]
-            },
-            "migrate": {"secrets": [{"source": "postgres_password"}]},
-            "redis": {
-                "secrets": [{"source": "redis_password"}],
-                "ports": [{"target": 6379, "published": "6379"}],
-            },
-        }
-        self.cli("docker", "printf '%s\\n' '" + json.dumps({"services": services}) + "'\n")
+        local, integration = self.local_compose_fixtures()
+        local["services"]["redis"]["ports"] = [{"target": 6379, "published": "6379"}]
+        self.serve_compose_fixtures(local, integration)
         result = self.run_script("compose-check")
+
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Redis", result.stderr)
         self.assertFalse((self.root / ".local").exists())
         self.assertFalse((self.root / "secrets").exists())
 
-    def test_compose_check_accepts_numeric_string_memory_limit(self):
+    def local_compose_fixtures(self):
         redis = {
             "secrets": [{"source": "redis_password"}],
             "command": [
@@ -607,7 +606,7 @@ exit 94
                 ]
             },
         }
-        production = {
+        local = {
             "services": {
                 "control": {
                     "secrets": [
@@ -623,12 +622,31 @@ exit 94
                     ]
                 },
                 "migrate": {"secrets": [{"source": "postgres_password"}]},
+                "db": {},
+                "relay": {
+                    "secrets": [
+                        {"source": name}
+                        for name in (
+                            "relay_ticket_key",
+                            "relay_tls_cert",
+                            "relay_tls_key",
+                            "relay_tls_ca",
+                        )
+                    ]
+                },
                 "redis": redis,
                 "traefik": {
                     "cap_drop": ["ALL"],
                     "read_only": True,
                     "user": "65532:65532",
-                    "secrets": [{"source": "relay_tls_ca"}],
+                    "secrets": [
+                        {"source": name}
+                        for name in ("relay_tls_ca", "frontend_tls_cert", "frontend_tls_key")
+                    ],
+                    "ports": [
+                        {"host_ip": "127.0.0.1", "target": 8443, "published": "8443"},
+                        {"host_ip": "127.0.0.1", "target": 8080, "published": "8088"},
+                    ],
                 },
             }
         }
@@ -643,49 +661,70 @@ exit 94
                 },
             }
         }
-        local = json.loads(json.dumps(production))
-        local["services"]["relay"] = {}
-        local["services"]["traefik"]["secrets"] += [
-            {"source": "frontend_tls_cert"},
-            {"source": "frontend_tls_key"},
-        ]
+
+        return local, integration
+
+    def serve_compose_fixtures(self, local, integration):
         self.cli(
             "docker",
-            "case \"$*\" in *compose.local.yaml*) printf '%s\\n' '"
-            + json.dumps(local)
-            + "' ;; *compose.integration.yaml*) printf '%s\\n' '"
+            'printf "%s\\n" "$*" >> docker-calls\n'
+            + "case \"$*\" in *compose.integration.yaml*) printf '%s\\n' '"
             + json.dumps(integration)
             + "' ;; *) printf '%s\\n' '"
-            + json.dumps(production)
+            + json.dumps(local)
             + "' ;; esac\n",
         )
+
+    def test_single_local_stack_preserves_security_contract(self):
+        local, integration = self.local_compose_fixtures()
+        self.serve_compose_fixtures(local, integration)
         result = self.run_script("compose-check")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.root / ".local").exists())
+        calls = (self.root / "docker-calls").read_text().splitlines()
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(any("compose.local.yaml" in call for call in calls))
 
-        # A socket grants host-level authority even if it is mounted read-only.
-        production["services"]["traefik"]["volumes"] = [
-            {"source": "/var/run/docker.sock", "target": "/var/run/docker.sock"}
-        ]
-        local = json.loads(json.dumps(production))
-        local["services"]["relay"] = {}
-        local["services"]["traefik"]["secrets"] += [
-            {"source": "frontend_tls_cert"},
-            {"source": "frontend_tls_key"},
-        ]
-        self.cli(
-            "docker",
-            "case \"$*\" in *compose.local.yaml*) printf '%s\\n' '"
-            + json.dumps(local)
-            + "' ;; *compose.integration.yaml*) printf '%s\\n' '"
-            + json.dumps(integration)
-            + "' ;; *) printf '%s\\n' '"
-            + json.dumps(production)
-            + "' ;; esac\n",
-        )
+    def test_local_validation_rejects_unsafe_proxy(self):
+        for fault in ("socket", "public", "capability", "tls"):
+            with self.subTest(fault=fault):
+                local, integration = self.local_compose_fixtures()
+                proxy = local["services"]["traefik"]
+                if fault == "socket":
+                    proxy["volumes"] = [{"source": "/var/run/docker.sock"}]
+                elif fault == "public":
+                    proxy["ports"][0]["host_ip"] = "0.0.0.0"
+                elif fault == "capability":
+                    local["services"]["relay"]["cap_add"] = ["NET_ADMIN"]
+                else:
+                    routes = self.root / "deploy/traefik/routes.toml"
+                    routes.write_text(
+                        '[http.serversTransports.relay]\nserverName="relay"\n'
+                        'rootCAs=["/run/secrets/relay_tls_ca"]\ninsecureSkipVerify=true\n'
+                    )
+
+                self.serve_compose_fixtures(local, integration)
+                result = self.run_script("compose-check")
+
+                self.assertNotEqual(result.returncode, 0, fault + " was accepted")
+
+                expected = {
+                    "socket": "socket",
+                    "public": "loopback",
+                    "capability": "capabilities",
+                    "tls": "TLS",
+                }
+
+                self.assertIn(expected[fault], result.stderr)
+
+    def test_local_relay_cannot_receive_identity_secrets(self):
+        local, integration = self.local_compose_fixtures()
+        local["services"]["relay"]["secrets"].append({"source": "ceremony_encryption_key"})
+        self.serve_compose_fixtures(local, integration)
         result = self.run_script("compose-check")
-        self.assertNotEqual(result.returncode, 0, "proxy Docker socket was accepted")
-        self.assertIn("socket", result.stderr)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("relay", result.stderr)
 
     def test_init_rejects_bad_port_without_writing_state(self):
         self.env["DEV_HTTPS_PORT"] = "80"
@@ -888,20 +927,6 @@ exit 94
 
         self.assertEqual(len(calls), 1)
         self.assertIn("lint", calls[0])
-
-    def test_deploy_does_not_retain_legacy_migration_framework(self):
-        import yaml
-
-        play = yaml.safe_load((ROOT / "deploy/ansible/site.yml").read_text())[0]
-        commands = [handler["ansible.builtin.command"] for handler in play["handlers"]]
-        rollout = next(
-            command for command in commands if "cmd" in command and " up " in command["cmd"]
-        )
-        config = rollout["cmd"].split("-f ", 1)[1].split()[0]
-        project_dir = str(Path(config).parent)
-        self.assertEqual(project_dir, "deploy")
-        self.assertFalse(any("legacy_services" in str(command) for command in commands))
-        self.assertFalse(any("docker', 'stop" in str(command) for command in commands))
 
     def test_e2e_doctor_linux_requires_native_tools_not_lima(self):
         self.dependencies()

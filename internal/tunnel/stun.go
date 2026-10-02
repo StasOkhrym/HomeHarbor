@@ -7,7 +7,7 @@ import (
 
 	"github.com/pion/stun/v3"
 
-	controlprotocol "github.com/sokhrym/go-tunnels/internal/protocol"
+	controlprotocol "github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 func DiscoverServerReflexive(

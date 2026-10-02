@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/audit"
-	"github.com/sokhrym/go-tunnels/internal/control/routes"
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/routes"
 )
 
 // The import graph is the module boundary: a domain must not acquire storage
@@ -48,36 +48,45 @@ func checkDomainImports(t *testing.T, repositoryRoot, packagePath string, visite
 	if visited[packagePath] {
 		return
 	}
+
 	visited[packagePath] = true
 	root := filepath.Join(repositoryRoot, packagePath)
+
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") ||
 			strings.HasSuffix(entry.Name(), "_test.go") {
 			continue
 		}
+
 		path := filepath.Join(root, entry.Name())
+
 		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		for _, spec := range file.Imports {
 			importPath, err := strconv.Unquote(spec.Path.Value)
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			if forbiddenDomainImport(importPath) {
 				t.Errorf("domain %s imports adapter %s", path, importPath)
+
 				continue
 			}
-			if strings.HasPrefix(importPath, "github.com/sokhrym/go-tunnels/internal/") {
+
+			if strings.HasPrefix(importPath, "github.com/StasOkhrym/homeharbor/internal/") {
 				checkDomainImports(
 					t,
 					repositoryRoot,
-					strings.TrimPrefix(importPath, "github.com/sokhrym/go-tunnels/"),
+					strings.TrimPrefix(importPath, "github.com/StasOkhrym/homeharbor/"),
 					visited,
 				)
 			}
@@ -91,13 +100,13 @@ func forbiddenDomainImport(path string) bool {
 		strings.HasPrefix(path, "github.com/redis/go-redis/") ||
 		strings.HasPrefix(path, "github.com/go-chi/chi/") ||
 		strings.Contains(path, "/storage") || strings.Contains(path, "/httpapi") ||
-		path == "github.com/sokhrym/go-tunnels/internal/control/network"
+		path == "github.com/StasOkhrym/homeharbor/internal/control/network"
 }
 
 func TestDomainBoundaryRejectsNeutralStorageAdapters(t *testing.T) {
 	for _, path := range []string{
-		"github.com/sokhrym/go-tunnels/internal/control/devices/storage",
-		"github.com/sokhrym/go-tunnels/internal/app/control/storage",
+		"github.com/StasOkhrym/homeharbor/internal/control/devices/storage",
+		"github.com/StasOkhrym/homeharbor/internal/app/control/storage",
 	} {
 		if !forbiddenDomainImport(path) {
 			t.Errorf("domain boundary permits durable adapter %s", path)

@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 )
 
 type Repository struct{ pool *pgxpool.Pool }
@@ -47,7 +47,7 @@ func (s *Repository) replace(
 	// immutable snapshot in the same transaction across control-plane replicas.
 	if _, err = tx.Exec(
 		ctx,
-		`SELECT pg_advisory_xact_lock(hashtext('go_tunnels_policy'))`,
+		`SELECT pg_advisory_xact_lock(hashtext('homeharbor_policy'))`,
 	); err != nil {
 		return policy.Snapshot{}, err
 	}

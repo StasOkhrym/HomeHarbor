@@ -20,7 +20,7 @@ import (
 
 const (
 	SchemaVersion   uint16 = 1
-	signatureDomain        = "go-tunnels/network-snapshot/v1\x00"
+	signatureDomain        = "homeharbor/network-snapshot/v1\x00"
 )
 
 var (
@@ -108,6 +108,7 @@ var canonicalMode = func() cbor.EncMode {
 	if err != nil {
 		panic(err)
 	}
+
 	return mode
 }()
 

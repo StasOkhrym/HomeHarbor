@@ -32,6 +32,19 @@ async function authRequest(path, body) {
       signal: controller.signal,
     });
     if (!response.ok) {
+      // Only the post-registration boundary can assert that the passkey exists.
+      // Never echo arbitrary server error text or store recovery material.
+      const failure = await response.json().catch(() => ({}));
+      if (
+        path === "bootstrap/finish" &&
+        ["bootstrap_recovery_unavailable", "bootstrap_session_unavailable"].includes(failure.code)
+      ) {
+        const error = new Error(
+          "Your passkey was saved, but setup could not finish. Reload this page and sign in with your passkey. Recovery codes were not delivered.",
+        );
+        error.bootstrapIncomplete = true;
+        throw error;
+      }
       if (response.status === 429)
         throw new Error("Too many attempts. Wait a minute and try again.");
       if (response.status === 503)
@@ -54,6 +67,7 @@ async function runAuth(button, action) {
   try {
     await action();
   } catch (error) {
+    if (error.bootstrapIncomplete) button.hidden = true;
     const cancelled = error.name === "NotAllowedError";
     const networkFailure = error.name === "AbortError" || error instanceof TypeError;
     showStatus(

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 )
 
 type recordingAuditSink struct{ event audit.Event }

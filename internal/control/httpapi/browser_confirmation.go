@@ -9,10 +9,6 @@ type BrowserActionConfirmation interface {
 	VerifyAction(string, []byte, string) bool
 }
 
-func WithBrowserActionConfirmation(confirmation BrowserActionConfirmation) ServerOption {
-	return func(server *Server) { server.actionConfirmation = confirmation }
-}
-
 // SignAction authenticates a browser confirmation using the existing cookie
 // signing key, with a separate domain from session/CSRF signatures.
 func (a *BrowserAuth) SignAction(csrf string, payload []byte) string {

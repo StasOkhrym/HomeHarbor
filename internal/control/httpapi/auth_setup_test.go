@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	"github.com/sokhrym/go-tunnels/internal/control/identity"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 )
 
 func TestLoginPageSelectsSetupState(t *testing.T) {

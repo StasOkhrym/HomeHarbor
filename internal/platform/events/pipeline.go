@@ -8,8 +8,8 @@ import (
 
 	"github.com/ThreeDotsLabs/watermill/message"
 
-	"github.com/sokhrym/go-tunnels/internal/control/audit"
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 )
 
 const auditTopic = "internal.audit.outbox"

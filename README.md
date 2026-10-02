@@ -1,9 +1,15 @@
-# Go Tunnels
+# HomeHarbor
 
 Self-hosted access to home-network services: Go control plane, trusted companion,
 WireGuard nodes, encrypted relay and a passkey-authenticated web admin.
 
-This is unfinished security-sensitive software, not a security-audited VPN.
+> HomeHarbor is my pet project for learning and experimenting with private access
+> to my home network. It's a work in progress, not something I'm shipping for other
+> people to use. Please don't treat it as a secure VPN: it hasn't been security-audited,
+> some important flows still aren't tested end to end, and bugs could expose your
+> network. If you poke around, stick to an isolated local setup and don't put anything
+> important behind it.
+
 Backend/UI and component tests work locally. Full signed onboarding → Linux client
 → UDP relay → gateway → dummy LAN, and native-phone/Mom Test, remain unverified.
 
@@ -26,8 +32,7 @@ VPS or public IP. Containers are rebuilt and readiness checked; keys and DB volu
 survive. `make dev-down` stops them; `make dev-logs` follows logs.
 
 Checks also need golangci-lint 2.14.0, Node 24 (`npm ci --ignore-scripts`) and
-Hadolint 2.15.1 from its official checksummed release. Optional Ansible tooling
-uses `requirements-deployment.txt`, not the daily development environment.
+Hadolint 2.15.1 from its official checksummed release. Deployment tooling is local-only.
 
 ## Checks
 
@@ -39,7 +44,7 @@ make verify        # lint, tooling/browser tests, Go race tests and build
 make integration   # disposable SQL/Redis contracts; no required skips
 make security      # bounded parser fuzzing + pinned vulnerability scan
 make acceptance    # isolated Linux namespace/WireGuard/resolved components
-make verify FULL=1 # all above plus optional deployment checks
+make verify FULL=1 # all above plus local Compose validation
 ```
 
 `make help` lists the supported surface. Import-boundary tests run once in the
@@ -64,8 +69,8 @@ and [tooling](docs/deployment-tooling.md). Working plans belong to ignored `.sup
 
 ## Native clients — deferred
 
-Independent local repositories: `~/personal_code/go-tunnels-ios` and
-`~/personal_code/go-tunnels-android`. Extraction preserved commit history and all
+Independent local repositories: `~/personal_code/homeharbor-ios` and
+`~/personal_code/homeharbor-android`. Extraction preserved commit history and all
 pending source changes; bytes and modes were verified before backend removal.
 Neither repository depends on a neighboring backend checkout. Native development,
 CI, signing and physical-device tests are deferred to the native-client/Mom Test

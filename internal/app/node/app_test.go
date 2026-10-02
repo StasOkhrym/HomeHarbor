@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/platform/lifecycle"
+	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 )
 
 func TestAppRunsComponentsThroughSharedLifecycleContract(t *testing.T) {

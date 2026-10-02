@@ -1,4 +1,4 @@
-module github.com/sokhrym/go-tunnels
+module github.com/StasOkhrym/homeharbor
 
 go 1.27.1
 
@@ -13,6 +13,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/pion/stun/v3 v3.1.7
 	github.com/prometheus/client_golang v1.23.2
+	github.com/redis/go-redis/v9 v9.22.0
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 )
 
@@ -42,7 +43,6 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
-	github.com/redis/go-redis/v9 v9.22.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.uber.org/atomic v1.11.0 // indirect

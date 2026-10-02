@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 type compositeOwner struct {

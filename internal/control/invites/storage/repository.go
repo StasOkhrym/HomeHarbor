@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/sokhrym/go-tunnels/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/control/invites"
 )
 
 // Repository persists pending proofs so a control restart cannot silently

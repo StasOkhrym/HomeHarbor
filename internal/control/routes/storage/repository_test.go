@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/routes"
-	routespg "github.com/sokhrym/go-tunnels/internal/control/routes/storage"
-	"github.com/sokhrym/go-tunnels/internal/testutil"
+	"github.com/StasOkhrym/homeharbor/internal/control/routes"
+	routespg "github.com/StasOkhrym/homeharbor/internal/control/routes/storage"
+	"github.com/StasOkhrym/homeharbor/internal/testutil"
 )
 
 func TestPostgresRouteAndDNSApprovalAreTransactional(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	nodeapp "github.com/sokhrym/go-tunnels/internal/app/node"
+	nodeapp "github.com/StasOkhrym/homeharbor/internal/app/node"
 )
 
 func main() {

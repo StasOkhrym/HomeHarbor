@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/platform/redissecurity"
+	"github.com/StasOkhrym/homeharbor/internal/platform/redissecurity"
 )
 
 type sharedChallenges struct{ store *redissecurity.Store }

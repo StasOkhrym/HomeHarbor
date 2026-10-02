@@ -37,8 +37,8 @@ type UDPPairV2Config struct {
 	AllowedOrigins    []string
 }
 
-// UDPPairV2Message is the TLS control protocol. UDP uses only GTU2P + nonce
-// during admission and GTU2C + challenge for return-path validation. Following
+// UDPPairV2Message is the TLS control protocol. UDP uses only HHU2P + nonce
+// during admission and HHU2C + challenge for return-path validation. Following
 // confirmation data datagrams are opaque. During authenticated renewal only
 // the exact outstanding probe nonce is reserved, not an arbitrary UDP prefix.
 type UDPPairV2Message struct {
@@ -455,7 +455,7 @@ func (r *UDPPairV2) readPeer(p *v2Peer) {
 }
 
 func (r *UDPPairV2) probeLocked(p *v2Peer, data []byte, source *net.UDPAddr) bool {
-	if string(data) != "GTU2P"+p.nonce {
+	if string(data) != "HHU2P"+p.nonce {
 		return false
 	}
 	if time.Now().Before(p.deadline) && p.probes < 4 &&
@@ -463,7 +463,7 @@ func (r *UDPPairV2) probeLocked(p *v2Peer, data []byte, source *net.UDPAddr) boo
 		p.candidate = cloneUDPAddr(source)
 		p.probes++
 		_ = p.udp.SetWriteDeadline(time.Now().Add(time.Second))
-		_, _ = p.udp.WriteToUDP([]byte("GTU2C"+p.challenge), source)
+		_, _ = p.udp.WriteToUDP([]byte("HHU2C"+p.challenge), source)
 	}
 	return true
 }

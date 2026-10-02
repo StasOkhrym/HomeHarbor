@@ -30,7 +30,7 @@ pattern='^TestLinux(Namespace|Resolved).*$'
 if [ "$(uname -s)" = Linux ]; then
     go test -tags=network_acceptance ./internal/acceptance -run "$pattern" -count=1 -v
 else
-    instance=${LIMA_INSTANCE:-go-tunnels-acceptance}
+    instance=${LIMA_INSTANCE:-homeharbor-acceptance}
     LIMA_INSTANCE="$instance" sh scripts/vm-up.sh
     vm_arch=$(limactl shell "$instance" uname -m)
     case "$vm_arch" in

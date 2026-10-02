@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/app/control/workflows"
-	"github.com/sokhrym/go-tunnels/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
+	"github.com/StasOkhrym/homeharbor/internal/invite"
 )
 
 func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing.T) {

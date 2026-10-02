@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	controlprotocol "github.com/sokhrym/go-tunnels/internal/protocol"
+	controlprotocol "github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 type endpointRecorder struct {

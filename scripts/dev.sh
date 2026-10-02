@@ -16,7 +16,7 @@ export CONTROL_CONFIG=../.local/control.toml RELAY_CONFIG=../.local/relay.toml
 export TRAEFIK_CONFIG=./traefik/local.toml
 export TRAEFIK_DYNAMIC_DIR=../.local/traefik/dynamic TRAEFIK_STATE_DIR=../.local/traefik/state
 
-compose() { docker compose -f deploy/compose.yaml -f deploy/compose.local.yaml "$@"; }
+compose() { docker compose -f deploy/compose.yaml "$@"; }
 case "${1:-}" in
 up)
     sh scripts/doctor.sh compose

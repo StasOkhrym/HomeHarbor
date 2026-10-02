@@ -1,6 +1,6 @@
 package httpapi
 
-import "github.com/sokhrym/go-tunnels/internal/control/audit"
+import "github.com/StasOkhrym/homeharbor/internal/control/audit"
 
 func adminActionLabel(action string) string {
 	labels := map[string]string{

@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/sokhrym/go-tunnels/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 )
 
 // Repository persists audit events and provides bounded read access for the

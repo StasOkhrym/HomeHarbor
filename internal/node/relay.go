@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	controlprotocol "github.com/sokhrym/go-tunnels/internal/protocol"
-	"github.com/sokhrym/go-tunnels/internal/relay"
-	"github.com/sokhrym/go-tunnels/internal/tunnel"
+	controlprotocol "github.com/StasOkhrym/homeharbor/internal/protocol"
+	"github.com/StasOkhrym/homeharbor/internal/relay"
+	"github.com/StasOkhrym/homeharbor/internal/tunnel"
 )
 
 // RelayBridgeConfig binds a node's local WireGuard UDP socket to an encrypted

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 type stateApplier struct {

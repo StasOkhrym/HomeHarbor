@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net/netip"
 
-	"github.com/sokhrym/go-tunnels/internal/agent/dns"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/agent/dns"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 // DNSReconciler turns only approved snapshot routes with DNS metadata into

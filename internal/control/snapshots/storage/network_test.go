@@ -6,7 +6,7 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 func TestPostgresIndependentNetworksOwnTheirGenesisRevision(t *testing.T) {

@@ -13,9 +13,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/sokhrym/go-tunnels/internal/control/invites"
-	"github.com/sokhrym/go-tunnels/internal/invite"
-	"github.com/sokhrym/go-tunnels/migrations"
+	"github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/invite"
+	"github.com/StasOkhrym/homeharbor/migrations"
 )
 
 func TestPostgresInviteBlocksAfterFiveInvalidCodes(t *testing.T) {
@@ -135,5 +135,5 @@ func invitesTestPool(t *testing.T) *pgxpool.Pool {
 }
 
 func uniqueInviteIntegrationID() string {
-	return fmt.Sprintf("go-tunnels-invite-%d", time.Now().UnixNano())
+	return fmt.Sprintf("homeharbor-invite-%d", time.Now().UnixNano())
 }

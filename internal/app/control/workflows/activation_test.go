@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/app/control/workflows"
-	"github.com/sokhrym/go-tunnels/internal/control/invites"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
+	"github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 type latest struct{ envelope snapshot.Envelope }

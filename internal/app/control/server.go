@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/platform/config"
+	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 )
 
 // serveHTTP joins shutdown before its lifecycle component returns. Serve alone

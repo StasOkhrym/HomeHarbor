@@ -13,7 +13,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	"github.com/sokhrym/go-tunnels/internal/control/identity"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 )
 
 type fakeSessions struct {
@@ -107,15 +107,19 @@ func TestRecoveryLoginSetsHardenedCookies(t *testing.T) {
 	)
 	req.Header.Set("Origin", "https://tunnel.example.com")
 	rec := httptest.NewRecorder()
+
 	auth.Handler().ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
+
 	cookies := rec.Result().Cookies()
+
 	if len(cookies) != 2 {
 		t.Fatalf("cookies = %d", len(cookies))
 	}
-	if cookies[0].Name != "__Host-go_tunnels_admin" || cookies[1].Name != "__Host-go_tunnels_csrf" {
+	if cookies[0].Name != "__Host-homeharbor_admin" || cookies[1].Name != "__Host-homeharbor_csrf" {
 		t.Fatalf("cookie names = %q, %q", cookies[0].Name, cookies[1].Name)
 	}
 	if !cookies[0].Secure || !cookies[0].HttpOnly ||
@@ -132,15 +136,17 @@ func TestBrowserSessionOutageReturns503WithoutIssuingCookies(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			auth, sessions := newBrowserAuthTest(t)
 			sessions.failure = identity.ErrSecurityStateUnavailable
-			server := NewServer(
+			server := mustTestServer(
 				nil,
 				auth,
-				WithBrowserHandlers(
-					auth.Handler(),
-					auth.LoginHandler(),
-					auth.LoginAssetHandler(),
-					auth.AuthorizeMutation,
-				),
+				Dependencies{
+					Browser: BrowserDependencies{
+						API:                auth.Handler(),
+						LoginPage:          auth.LoginHandler(),
+						LoginAsset:         auth.LoginAssetHandler(),
+						MutationAuthorizer: auth.AuthorizeMutation,
+					},
+				},
 			)
 			path := "/api/v1/admin/devices"
 			body := ""

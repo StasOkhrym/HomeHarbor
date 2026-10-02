@@ -12,13 +12,3 @@ func FuzzDecodePacket(f *testing.F) {
 		_, _ = DecodePacket(data)
 	})
 }
-
-// FuzzDecodeUDPPairDatagram checks the UDP ingress envelope independently of
-// ticket verification, ensuring malformed headers cannot reach session state.
-func FuzzDecodeUDPPairDatagram(f *testing.F) {
-	f.Add([]byte("GTUP\x01\x01\x00\x01tdata"))
-	f.Add([]byte{})
-	f.Fuzz(func(_ *testing.T, data []byte) {
-		_, _ = DecodeUDPPairDatagram(data)
-	})
-}

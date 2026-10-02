@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/sokhrym/go-tunnels/internal/control/services"
+	"github.com/StasOkhrym/homeharbor/internal/control/services"
 )
 
 type Repository struct{ pool *pgxpool.Pool }

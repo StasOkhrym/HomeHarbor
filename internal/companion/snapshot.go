@@ -7,7 +7,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 var ErrInvalidSnapshotDiff = errors.New("invalid snapshot diff")

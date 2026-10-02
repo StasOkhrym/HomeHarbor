@@ -62,6 +62,11 @@ Changing the preview payload or copying confirmation to another session is rejec
 Login shows either first-passkey setup or the existing-account flow, based on
 durable credential state. A failed state lookup never opens bootstrap. Recovery
 codes are shown once after bootstrap and each code can be consumed only once.
+If passkey persistence succeeds but recovery/session creation fails, setup reports
+that the passkey was saved and directs the browser to reload and sign in. It does
+not reopen registration or redeliver recovery plaintext. A lost successful
+response also cannot be replayed to retrieve those codes; regeneration is not an
+available feature.
 Recovery entry stays disabled until JavaScript installs its submission handler;
 the form has a POST fallback so a failed script cannot put codes in a URL.
 

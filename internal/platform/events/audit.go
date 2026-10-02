@@ -10,7 +10,7 @@ import (
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/sokhrym/go-tunnels/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 )
 
 // RunOutboxDispatcher delivers committed domain events to Watermill with

@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/identity"
-	"github.com/sokhrym/go-tunnels/internal/platform/redissecurity"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
+	"github.com/StasOkhrym/homeharbor/internal/platform/redissecurity"
 )
 
 // Challenges is the adapter's narrow dependency on shared security storage.

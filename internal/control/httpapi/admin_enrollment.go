@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 )
 
 //go:embed templates/enrollment-token.html

@@ -22,7 +22,7 @@ var (
 	ErrSecurityStateUnavailable = errors.New("security state unavailable")
 )
 
-var adminUserHandle = []byte("go-tunnels-admin-v1")
+var adminUserHandle = []byte("homeharbor-admin-v1")
 
 type Ceremony struct {
 	IDHash            [32]byte
@@ -85,10 +85,11 @@ func NewPasskeyService(
 	if config.CeremonyTTL <= 0 {
 		return nil, errors.New("WebAuthn ceremony TTL must be positive")
 	}
+
 	wa, err := webauthn.New(
 		&webauthn.Config{
 			RPID:          config.RPID,
-			RPDisplayName: "Go Tunnels",
+			RPDisplayName: "HomeHarbor",
 			RPOrigins:     []string{config.RPOrigin},
 			AuthenticatorSelection: protocol.AuthenticatorSelection{
 				ResidentKey:      protocol.ResidentKeyRequirementRequired,
@@ -99,22 +100,27 @@ func NewPasskeyService(
 	if err != nil {
 		return nil, fmt.Errorf("configure WebAuthn: %w", err)
 	}
+
 	block, err := aes.NewCipher(config.EncryptionKey)
 	if err != nil {
 		return nil, err
 	}
+
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
 	}
+
 	if now == nil {
 		now = time.Now
 	}
+
 	// Production omits the injectable reader. Nonces and ceremony identifiers
 	// must still use cryptographic entropy; a supplied reader's errors propagate.
 	if random == nil {
 		random = rand.Reader
 	}
+
 	return &PasskeyService{
 		store:      store,
 		ceremonies: ceremonies,
@@ -301,7 +307,7 @@ type adminUser struct {
 
 func (u adminUser) WebAuthnID() []byte                         { return u.handle }
 func (u adminUser) WebAuthnName() string                       { return "admin" }
-func (u adminUser) WebAuthnDisplayName() string                { return "Go Tunnels Administrator" }
+func (u adminUser) WebAuthnDisplayName() string                { return "HomeHarbor Administrator" }
 func (u adminUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
 
 func randomTokenFrom(reader io.Reader, size int) (string, error) {

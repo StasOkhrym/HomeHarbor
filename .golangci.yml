@@ -36,11 +36,11 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/sokhrym/go-tunnels)
+        - prefix(github.com/StasOkhrym/homeharbor)
       custom-order: true
     goimports:
       local-prefixes:
-        - github.com/sokhrym/go-tunnels
+        - github.com/StasOkhrym/homeharbor
 
 issues:
   fix: false

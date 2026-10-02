@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	"github.com/sokhrym/go-tunnels/internal/control/httpapi"
-	controlinvites "github.com/sokhrym/go-tunnels/internal/control/invites"
-	controlsnapshots "github.com/sokhrym/go-tunnels/internal/control/snapshots"
-	"github.com/sokhrym/go-tunnels/internal/invite"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/httpapi"
+	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
+	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
+	"github.com/StasOkhrym/homeharbor/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
@@ -77,8 +77,11 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 	if err := snapshotService.Publish(context.Background(), initial); err != nil {
 		t.Fatal(err)
 	}
-	handler := httpapi.NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAllAuthorizer{}, httpapi.WithInviteService(inviteService), httpapi.WithSnapshotService(snapshotService), httpapi.WithCompanionRootKey(rootPublic)).
-		Handler()
+	handler := companionHTTPFixture(t, httpapi.ResourceDependencies{
+		Devices:   devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		Invites:   inviteService,
+		Snapshots: snapshotService,
+	}, rootPublic, allowAllAuthorizer{})
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	approver := RemoteApprover{
@@ -152,8 +155,10 @@ func TestRemoteApproverPublishesSignedDeviceRemoval(t *testing.T) {
 	if err := snapshotService.Publish(context.Background(), initial); err != nil {
 		t.Fatal(err)
 	}
-	handler := httpapi.NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), allowAllAuthorizer{}, httpapi.WithSnapshotService(snapshotService), httpapi.WithCompanionRootKey(rootPublic)).
-		Handler()
+	handler := companionHTTPFixture(t, httpapi.ResourceDependencies{
+		Devices:   devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		Snapshots: snapshotService,
+	}, rootPublic, allowAllAuthorizer{})
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
@@ -215,11 +220,10 @@ func TestRemoteApproverBlocksInviteAfterFiveInvalidCodes(t *testing.T) {
 	if err := service.SubmitProof(context.Background(), permit, proof); err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(httpapi.NewServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		allowAllAuthorizer{},
-		httpapi.WithInviteService(service),
-	).Handler())
+	server := httptest.NewServer(companionHTTPFixture(t, httpapi.ResourceDependencies{
+		Devices: devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		Invites: service,
+	}, nil, allowAllAuthorizer{}))
 	defer server.Close()
 	approver := RemoteApprover{
 		Endpoint: server.URL,

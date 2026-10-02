@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
-	controlroutes "github.com/sokhrym/go-tunnels/internal/control/routes"
-	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
+	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
+	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 )
 
 func TestRecoveryFormCannotSubmitSecretsInURL(t *testing.T) {
@@ -42,8 +42,11 @@ func TestProfileCheckboxIDsAreOpaque(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		allowAuthorizer{}, WithServiceCatalog(catalog)).Handler()
+	handler := newTestServer(
+		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		allowAuthorizer{},
+		Dependencies{Resources: ResourceDependencies{Services: catalog}},
+	).Handler()
 	response := postAdminForm(handler, "/admin/access-profiles", url.Values{
 		"name": {"Family"}, "service_ids": {"photos,admin"},
 	})
@@ -67,7 +70,7 @@ func TestRouteActionPreservesExactRecordID(t *testing.T) {
 		}
 	}
 	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		allowAuthorizer{}, WithRouteService(routes)).Handler()
+		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Routes: routes}}).Handler()
 	page := httptest.NewRecorder()
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/admin/network", nil))
 	if strings.Contains(page.Body.String(), `/admin/routes/a/../b/`) {
@@ -93,7 +96,11 @@ func TestMalformedURLNeverRetainsCredentials(t *testing.T) {
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
 		allowAuthorizer{},
-		WithServiceCatalog(controlservices.NewService(controlservices.NewMemoryStore(), time.Now)),
+		Dependencies{
+			Resources: ResourceDependencies{
+				Services: controlservices.NewService(controlservices.NewMemoryStore(), time.Now),
+			},
+		},
 	).Handler()
 	response := postAdminForm(handler, "/admin/services", url.Values{
 		"name": {
@@ -112,8 +119,12 @@ func TestPolicyErrorKeepsUnrelatedProfileID(t *testing.T) {
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
 		allowAuthorizer{},
-		WithServiceCatalog(controlservices.NewService(controlservices.NewMemoryStore(), time.Now)),
-		WithPolicyService(policy.NewService(policy.NewMemoryStore(), policy.Compiler{})),
+		Dependencies{
+			Resources: ResourceDependencies{
+				Services: controlservices.NewService(controlservices.NewMemoryStore(), time.Now),
+				Policy:   policy.NewService(policy.NewMemoryStore(), policy.Compiler{}),
+			},
+		},
 	).Handler()
 	response := postAdminForm(handler, "/admin/policy/preview", url.Values{"rules": {"not JSON"}})
 	if response.Code != http.StatusBadRequest || htmlInput(t, response.Body.String(), "id") == "" {

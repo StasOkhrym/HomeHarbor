@@ -19,7 +19,7 @@ its public half. Local apps run as the owner of bind-mounted secrets, avoiding
 world-readable private keys on Linux. Do not commit or distribute private state.
 
 HTTPS is bound to loopback on an unprivileged port, so Docker Desktop's privileged
-port helper is unnecessary. The backend-only Mac overlay does not publish relay
+port helper is unnecessary. The backend-only Mac stack does not publish relay
 UDP or grant network-admin capabilities. It is not a VPN demonstration.
 
 `make integration` starts disposable authenticated DB/Redis containers, runs all

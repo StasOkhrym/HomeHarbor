@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 )
 
 var ErrRevisionRollback = errors.New("nftables policy revision rollback")
@@ -167,22 +167,26 @@ func applyScript(ctx context.Context, script string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	// The first policy install has no table to flush. A read-only probe lets the
 	// single nft transaction either create the table or flush its old contents;
 	// the policy update itself still succeeds or fails atomically as one script.
 	if tableExists(ctx) {
-		script = "flush table inet go_tunnels\n" + script
+		script = "flush table inet homeharbor\n" + script
 	}
+
 	command := exec.CommandContext(ctx, "nft", "-f", "-")
 	command.Stdin = strings.NewReader(script)
+
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("nft: %w (%s)", err, strings.TrimSpace(string(output)))
 	}
+
 	return nil
 }
 
 func tableExists(ctx context.Context) bool {
-	command := exec.CommandContext(ctx, "nft", "list", "table", "inet", "go_tunnels")
+	command := exec.CommandContext(ctx, "nft", "list", "table", "inet", "homeharbor")
 	return command.Run() == nil
 }

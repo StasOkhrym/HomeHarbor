@@ -6,17 +6,16 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
-	"strings"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/audit"
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	controlinvites "github.com/sokhrym/go-tunnels/internal/control/invites"
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
-	controlroutes "github.com/sokhrym/go-tunnels/internal/control/routes"
-	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
-	"github.com/sokhrym/go-tunnels/internal/invite"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
+	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
+	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
+	"github.com/StasOkhrym/homeharbor/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 // DeviceService is intentionally defined by the HTTP consumer. Keeping this
@@ -82,95 +81,12 @@ type RouteService interface {
 	Reject(context.Context, string) error
 	List(context.Context) ([]controlroutes.Advertisement, error)
 }
-type ServerOption func(*Server)
-
-// WithSnapshotHistoryHandler binds the device-authenticated catch-up transport.
-// Its dependency is explicit rather than discovered on a WebSocket handler.
-func WithSnapshotHistoryHandler(handler http.Handler) ServerOption {
-	return func(s *Server) { s.snapshotHistory = handler }
-}
-
-// WithActivationHandlers explicitly binds device possession endpoints. Neither
-// handler is admin-authenticated: the workflow verifies its one-use key proof.
-func WithActivationHandlers(challenge, claim http.HandlerFunc) ServerOption {
-	return func(s *Server) { s.activationChallenge = challenge; s.activationClaim = claim }
-}
-
-// WithBrowserHandlers makes transport capabilities explicit at composition;
-// the authorization interface cannot silently acquire HTTP routes at runtime.
-func WithBrowserHandlers(
-	api, login, asset http.Handler,
-	mutation func(context.Context, *http.Request) (bool, error),
-) ServerOption {
-	return func(s *Server) {
-		s.browserAPI = api
-		s.loginPage = login
-		s.loginAsset = asset
-		s.mutationAuthorizer = mutation
-	}
-}
-
-func WithMutationAuthorizer(
-	authorize func(context.Context, *http.Request) (bool, error),
-) ServerOption {
-	return func(s *Server) { s.mutationAuthorizer = authorize }
-}
-
-// WithSharedRateLimits scopes distributed guessing quotas to operations that
-// introduce trust. Credential rotation and established coordination remain
-// independent of Redis availability.
-func WithSharedRateLimits(store RateLimitStore) ServerOption {
-	return func(s *Server) {
-		s.authLimiter.shared, s.authLimiter.bucket = store, "auth"
-		s.deviceLimiter.shared, s.deviceLimiter.bucket = store, "onboarding"
-		// Explicit shared authority must never fall back to the test memory map,
-		// including a missing dependency. Middleware returns 503 in that case.
-		s.authLimiter.clients = nil
-		s.deviceLimiter.clients = nil
-	}
-}
-
-// WithRateLimits applies validated quotas without changing their shared store.
-func WithRateLimits(auth, onboarding, api int, storeTimeout time.Duration) ServerOption {
-	return func(s *Server) {
-		s.authLimiter.limit = auth
-		s.deviceLimiter.limit = onboarding
-		s.apiLimiter.limit = api
-		s.authLimiter.storeTimeout = storeTimeout
-		s.deviceLimiter.storeTimeout = storeTimeout
-	}
-}
-
-// WithCompanionTTL changes challenge issuance, never proof validation rules.
-func WithCompanionTTL(ttl time.Duration) ServerOption {
-	return func(s *Server) {
-		if s.companionChallenges == nil {
-			s.companionChallenges = newCompanionChallengeStore()
-		}
-		s.companionChallenges.ttl = ttl
-	}
-}
-
-func WithSharedChallenges(repository ChallengeRepository) ServerOption {
-	return func(s *Server) {
-		if s.companionChallenges == nil {
-			s.companionChallenges = newCompanionChallengeStore()
-		}
-		s.companionChallenges.shared = repository
-	}
-}
 
 // AuditReader is deliberately read-only at the HTTP boundary. Audit writes
 // remain owned by domain event consumers and authentication code, preventing
 // an admin request from rewriting its own history.
 type AuditReader interface {
 	List(context.Context, int) ([]audit.Event, error)
-}
-
-// WithAuditReader adds read-only audit visibility to the admin surface while
-// keeping the audit writer owned by the application composition root.
-func WithAuditReader(reader AuditReader) ServerOption {
-	return func(server *Server) { server.audit = reader }
 }
 
 // RelaySessionIssuer mints a short-lived ticket bound to one device, one peer,
@@ -185,59 +101,10 @@ type RelaySessionIssuer interface {
 // without making the HTTP package depend on snapshot persistence.
 type RelayPeerAuthorizer func(context.Context, devices.Device, devices.Device) bool
 
-func WithRelaySessionIssuer(
-	issuer RelaySessionIssuer,
-	relayURL string,
-	ttl time.Duration,
-) ServerOption {
-	return func(server *Server) {
-		server.relayIssuer = issuer
-		server.relayURL = strings.TrimRight(relayURL, "/")
-		server.relayTTL = ttl
-	}
-}
-
-// WithRelayUDPAddress exposes the separate raw UDP ingress returned to nodes
-// that support the versioned udp_pair_v1 transport. It is intentionally
-// optional so older deployments can continue using the WebSocket bridge.
-func WithRelayUDPAddress(address string) ServerOption {
-	return func(server *Server) { server.relayUDPAddress = strings.TrimSpace(address) }
-}
-
-// WithRelayPeerAuthorizer adds a policy/topology check for relay tickets.
-// Leaving it unset preserves the lower-level role check used by isolated HTTP
-// tests and legacy deployments; production composition supplies it whenever a
-// trusted snapshot service is configured.
-func WithRelayPeerAuthorizer(authorizer RelayPeerAuthorizer) ServerOption {
-	return func(server *Server) { server.relayPeerAuthorizer = authorizer }
-}
-
-func WithRouteService(service RouteService) ServerOption {
-	return func(server *Server) { server.routes = service }
-}
-
 type PolicyService interface {
 	Replace(context.Context, []policy.Rule) (policy.Snapshot, error)
 	ReplaceIfRevision(context.Context, uint64, []policy.Rule) (policy.Snapshot, error)
 	Latest(context.Context) (policy.Snapshot, error)
-}
-
-func WithPolicyService(service PolicyService) ServerOption {
-	return func(server *Server) { server.policy = service }
-}
-
-func WithCoordinationHandler(handler http.Handler) ServerOption {
-	return func(server *Server) { server.coordination = handler }
-}
-
-func WithMetricsHandler(handler http.Handler) ServerOption {
-	return func(server *Server) { server.metrics = handler }
-}
-
-// WithReadiness lets the composition root expose real dependency health without
-// coupling the HTTP package to PostgreSQL, migrations, or a specific runtime.
-func WithReadiness(check func(context.Context) error) ServerOption {
-	return func(server *Server) { server.ready = check }
 }
 
 // ServiceCatalog is the HTTP-facing contract for named services and access
@@ -261,10 +128,6 @@ type InviteService interface {
 	ApproveSigned(context.Context, invite.SignedApproval) (controlinvites.ApprovalResult, error)
 }
 
-func WithInviteService(service InviteService) ServerOption {
-	return func(server *Server) { server.invites = service }
-}
-
 type SnapshotService interface {
 	Publish(context.Context, snapshot.Envelope) error
 	Latest(context.Context) (snapshot.Envelope, error)
@@ -275,57 +138,6 @@ type SnapshotService interface {
 // must remain available even when no coordination peer is connected.
 type SnapshotBroadcaster interface {
 	BroadcastSnapshot(context.Context, snapshot.Envelope)
-}
-
-func WithSnapshotService(service SnapshotService) ServerOption {
-	return func(server *Server) { server.snapshots = service }
-}
-
-func WithSnapshotBroadcaster(broadcaster SnapshotBroadcaster) ServerOption {
-	return func(server *Server) { server.snapshotBroadcaster = broadcaster }
-}
-
-// WithCompanionRootKey enables the challenge-bound snapshot read used by the
-// trusted Mac companion. It is separate from browser admin auth because the
-// companion holds the root private key, not a reusable web session.
-func WithCompanionRootKey(publicKey ed25519.PublicKey) ServerOption {
-	return func(server *Server) {
-		server.companionRoot = append(ed25519.PublicKey(nil), publicKey...)
-		// Constructor options may already supply a lifetime or shared authority;
-		// setting the trust root must not reset either to the memory defaults.
-		if server.companionChallenges == nil {
-			server.companionChallenges = newCompanionChallengeStore()
-		}
-	}
-}
-
-// WithTrustedProxyCIDRs permits forwarded client addresses only when the
-// immediate peer belongs to one of these explicitly configured proxies.
-func WithTrustedProxyCIDRs(prefixes []netip.Prefix) ServerOption {
-	return func(server *Server) { server.trustedProxy = append([]netip.Prefix(nil), prefixes...) }
-}
-
-func WithServiceCatalog(catalog ServiceCatalog) ServerOption {
-	return func(server *Server) { server.services = catalog }
-}
-
-func NewServer(
-	deviceService DeviceService,
-	authorizer Authorizer,
-	options ...ServerOption,
-) *Server {
-	server := &Server{
-		devices:       deviceService,
-		authorizer:    authorizer,
-		logger:        slog.Default(),
-		apiLimiter:    NewRateLimiter(120, time.Minute, nil),
-		authLimiter:   NewRateLimiter(5, time.Minute, nil),
-		deviceLimiter: NewRateLimiter(10, time.Minute, nil),
-	}
-	for _, option := range options {
-		option(server)
-	}
-	return server
 }
 
 func (s *Server) Handler() http.Handler {

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/agent/nft"
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
+	"github.com/StasOkhrym/homeharbor/internal/agent/nft"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 )
 
 func TestLinuxNamespaceDefaultDenyLANAccess(t *testing.T) {
@@ -201,8 +201,8 @@ func applyDefaultDenyPolicy(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runInNamespace(namespace, "nft", "list", "table", "inet", "go_tunnels"); err == nil {
-		script = "flush table inet go_tunnels\n" + script
+	if err := runInNamespace(namespace, "nft", "list", "table", "inet", "homeharbor"); err == nil {
+		script = "flush table inet homeharbor\n" + script
 	}
 	if err := runWithInput(namespace, script, "nft", "-f", "-"); err != nil {
 		t.Fatal(err)

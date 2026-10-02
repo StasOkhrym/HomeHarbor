@@ -18,9 +18,9 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
-	"github.com/sokhrym/go-tunnels/internal/app/control/workflows"
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	"github.com/sokhrym/go-tunnels/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/invite"
 )
 
 // InviteEnrollment pins root and network authority supplied by the caller.
@@ -63,47 +63,60 @@ func PrepareInviteProof(
 	if err := state.Validate(); err != nil {
 		return invite.SignedPermit{}, invite.Proof{}, err
 	}
+
 	if p.DeviceID == "" || state.DeviceID != "" && state.DeviceID != p.DeviceID ||
 		len(p.Code) != 8 {
 		return invite.SignedPermit{}, invite.Proof{}, invite.ErrInvalidProof
 	}
+
 	for _, c := range p.Code {
 		if c < '0' || c > '9' {
 			return invite.SignedPermit{}, invite.Proof{}, invite.ErrInvalidProof
 		}
 	}
+
 	u, err := url.Parse(p.InviteLink)
 	if err != nil {
 		return invite.SignedPermit{}, invite.Proof{}, invite.ErrInvalidPermit
 	}
+
 	fragment, err := url.ParseQuery(u.Fragment)
 	if err != nil || len(fragment) != 2 || len(fragment["permit"]) != 1 ||
 		len(fragment["invite_key"]) != 1 {
 		return invite.SignedPermit{}, invite.Proof{}, invite.ErrInvalidPermit
 	}
+
 	encoded, err := strictInviteBytes(fragment.Get("permit"), -1)
 	if err != nil {
 		return invite.SignedPermit{}, invite.Proof{}, err
 	}
+
 	var signed invite.SignedPermit
+
 	if err := cbor.Unmarshal(encoded, &signed); err != nil {
 		return invite.SignedPermit{}, invite.Proof{}, err
 	}
+
 	canonical, err := inviteCanonical.Marshal(signed)
 	if err != nil || !bytes.Equal(canonical, encoded) {
 		return invite.SignedPermit{}, invite.Proof{}, invite.ErrInvalidPermit
 	}
+
 	if err = invite.VerifyPermit(signed, p.RootPublicKey, p.NetworkID, now); err != nil {
 		return invite.SignedPermit{}, invite.Proof{}, err
 	}
+
 	var permit invite.Permit
+
 	if err = cbor.Unmarshal(signed.Payload, &permit); err != nil {
 		return invite.SignedPermit{}, invite.Proof{}, err
 	}
+
 	inviteSecret, err := strictInviteBytes(fragment.Get("invite_key"), ed25519.PrivateKeySize)
 	if err != nil {
 		return invite.SignedPermit{}, invite.Proof{}, err
 	}
+
 	invitePrivate := ed25519.PrivateKey(inviteSecret)
 	if !bytes.Equal(invitePrivate.Public().(ed25519.PublicKey), permit.InvitePublic) {
 		return invite.SignedPermit{}, invite.Proof{}, invite.ErrInvalidPermit
@@ -112,19 +125,23 @@ func PrepareInviteProof(
 	if !bytes.Equal(ed25519.NewKeyFromSeed(invitePrivate.Seed()), invitePrivate) {
 		return invite.SignedPermit{}, invite.Proof{}, invite.ErrInvalidPermit
 	}
+
 	deviceSecret, err := strictInviteBytes(state.IdentityPrivateKey, ed25519.PrivateKeySize)
 	if err != nil {
 		return invite.SignedPermit{}, invite.Proof{}, err
 	}
+
 	devicePrivate := ed25519.PrivateKey(deviceSecret)
 	if !bytes.Equal(ed25519.NewKeyFromSeed(devicePrivate.Seed()), devicePrivate) {
 		return invite.SignedPermit{}, invite.Proof{}, invite.ErrInvalidProof
 	}
+
 	wg, err := wgtypes.ParseKey(state.WireGuard.PublicKey)
 	if err != nil {
 		return invite.SignedPermit{}, invite.Proof{}, err
 	}
-	digest := sha256.Sum256(append([]byte("go-tunnels/invite-code/v1\x00"), []byte(p.Code)...))
+
+	digest := sha256.Sum256(append([]byte("homeharbor/invite-code/v1\x00"), []byte(p.Code)...))
 	proof := invite.Proof{
 		Version:            invite.Version,
 		InviteID:           permit.InviteID,
@@ -144,12 +161,15 @@ func PrepareInviteProof(
 	if err != nil {
 		return invite.SignedPermit{}, invite.Proof{}, err
 	}
-	message := append([]byte("go-tunnels/invite-proof/v1\x00"), payload...)
+
+	message := append([]byte("homeharbor/invite-proof/v1\x00"), payload...)
 	proof.Signature = ed25519.Sign(invitePrivate, message)
 	proof.DeviceSignature = ed25519.Sign(devicePrivate, message)
+
 	if err = invite.VerifyProof(signed, proof, permit.ProfileID, now); err != nil {
 		return invite.SignedPermit{}, invite.Proof{}, err
 	}
+
 	return signed, proof, nil
 }
 

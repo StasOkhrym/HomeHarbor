@@ -236,7 +236,7 @@ func (b *UDPPairV2Bridge) Bind(parent context.Context, ticket string) error {
 	defer func() { b.mu.Lock(); b.pending = nil; b.mu.Unlock() }()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	probe := func() error { _, err := b.udp.WriteToUDP([]byte("GTU2P"+offer.Nonce), address); return err }
+	probe := func() error { _, err := b.udp.WriteToUDP([]byte("HHU2P"+offer.Nonce), address); return err }
 	if err := probe(); err != nil {
 		return err
 	}
@@ -306,7 +306,7 @@ func (b *UDPPairV2Bridge) readUDP() {
 		pending := b.pending
 		b.mu.Unlock()
 		if pending != nil && sameUDPAddr(source, pending.address) {
-			if n == 48 && strings.HasPrefix(string(buffer[:n]), "GTU2C") {
+			if n == 48 && strings.HasPrefix(string(buffer[:n]), "HHU2C") {
 				select {
 				case pending.challenge <- string(buffer[5:n]):
 				default:

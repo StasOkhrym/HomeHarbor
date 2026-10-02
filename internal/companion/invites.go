@@ -18,10 +18,10 @@ import (
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
-	controlinvites "github.com/sokhrym/go-tunnels/internal/control/invites"
-	"github.com/sokhrym/go-tunnels/internal/invite"
-	"github.com/sokhrym/go-tunnels/internal/protocol"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 // InviteIssuer runs only on the trusted Mac companion. Its output is split

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 )
 
 func TestApplierKeepsLastRevisionWhenNftRejectsUpdate(t *testing.T) {

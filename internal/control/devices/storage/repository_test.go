@@ -15,10 +15,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
-	workflowstorage "github.com/sokhrym/go-tunnels/internal/app/control/storage"
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	devicesstorage "github.com/sokhrym/go-tunnels/internal/control/devices/storage"
-	"github.com/sokhrym/go-tunnels/migrations"
+	workflowstorage "github.com/StasOkhrym/homeharbor/internal/app/control/storage"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	devicesstorage "github.com/StasOkhrym/homeharbor/internal/control/devices/storage"
+	"github.com/StasOkhrym/homeharbor/migrations"
 )
 
 func TestPostgresEnrollmentWritesDeviceAndOutboxAtomically(t *testing.T) {
@@ -132,7 +132,7 @@ func devicesTestPool(t *testing.T) *pgxpool.Pool {
 }
 
 func uniqueIntegrationLabel() string {
-	return fmt.Sprintf("go-tunnels-integration-%d", time.Now().UnixNano())
+	return fmt.Sprintf("homeharbor-integration-%d", time.Now().UnixNano())
 }
 
 func validPostgresPublicKeys(t *testing.T) (identity, wireGuard string) {

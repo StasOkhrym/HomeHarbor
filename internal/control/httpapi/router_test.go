@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 )
 
 func TestRouterAddsRequestID(t *testing.T) {
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		allowAuthorizer{},
+		allowAuthorizer{}, Dependencies{},
 	).Handler()
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
@@ -28,7 +28,7 @@ func TestRouterAddsRequestID(t *testing.T) {
 func TestRouterPreservesIncomingRequestID(t *testing.T) {
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		allowAuthorizer{},
+		allowAuthorizer{}, Dependencies{},
 	).Handler()
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	request.Header.Set("X-Request-ID", "external-request-id")
@@ -42,7 +42,7 @@ func TestRouterPreservesIncomingRequestID(t *testing.T) {
 func TestRouterReplacesUnsafeRequestID(t *testing.T) {
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		allowAuthorizer{},
+		allowAuthorizer{}, Dependencies{},
 	).Handler()
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	request.Header.Set("X-Request-ID", "request\nwith-secret")
@@ -56,7 +56,7 @@ func TestRouterReplacesUnsafeRequestID(t *testing.T) {
 func TestRouterRejectsOversizedAPIBody(t *testing.T) {
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		allowAuthorizer{},
+		allowAuthorizer{}, Dependencies{},
 	).Handler()
 	request := httptest.NewRequest(
 		http.MethodPost,
@@ -96,9 +96,9 @@ type readOnlyAuthorizer struct{}
 func (readOnlyAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) { return true, nil }
 
 func TestAdminMutationRequiresExplicitMutationAuthorization(t *testing.T) {
-	server := NewServer(
+	server := mustTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		readOnlyAuthorizer{},
+		readOnlyAuthorizer{}, Dependencies{},
 	)
 	response := httptest.NewRecorder()
 	server.Handler().

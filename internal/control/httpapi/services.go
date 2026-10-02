@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
+	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 )
 
 func (s *Server) listServices(w http.ResponseWriter, r *http.Request) {

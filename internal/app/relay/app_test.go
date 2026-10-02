@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/binary"
 	"log/slog"
 	"net"
 	"net/http"
@@ -9,9 +10,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/platform/config"
-	relayruntime "github.com/sokhrym/go-tunnels/internal/relay"
+	"github.com/StasOkhrym/homeharbor/internal/platform/config"
+	relayruntime "github.com/StasOkhrym/homeharbor/internal/relay"
 )
+
+func TestRelayConstructorRejectsInvalidConfigBeforeRun(t *testing.T) {
+	cfg := config.RelayServer{Runtime: config.DefaultRuntime(true)}
+	cfg.Runtime.HTTPHeaderTimeout = -time.Second
+	if app, err := New(cfg, nil); err == nil || app != nil {
+		t.Fatal("invalid relay configuration deferred its error until Run")
+	}
+}
 
 func TestRelayConfiguredRuntimeReachesHTTPServer(t *testing.T) {
 	cfg := config.RelayServer{Runtime: config.DefaultRuntime(true)}
@@ -19,9 +28,9 @@ func TestRelayConfiguredRuntimeReachesHTTPServer(t *testing.T) {
 	cfg.Server.UDPListenAddress = "127.0.0.1:0"
 	cfg.Security.TicketKey = "01234567890123456789012345678901"
 	cfg.Runtime.HTTPReadTimeout = 3 * time.Second
-	a := New(cfg, nil)
-	if a.initErr != nil {
-		t.Fatal(a.initErr)
+	a, err := New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		if a.udpV2 != nil {
@@ -38,7 +47,10 @@ func TestRelayReadinessFollowsUDPListenerLifecycle(t *testing.T) {
 	cfg.Server.ListenAddress = "127.0.0.1:0"
 	cfg.Server.UDPListenAddress = "127.0.0.1:0"
 	cfg.Security.TicketKey = "01234567890123456789012345678901"
-	app := New(cfg, slog.Default())
+	app, err := New(cfg, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if status := readinessStatus(app); status != http.StatusServiceUnavailable {
 		t.Fatalf("initial readiness status=%d, want %d", status, http.StatusServiceUnavailable)
 	}
@@ -73,7 +85,10 @@ func TestRelayAppDoesNotExposeLegacyUDPTicketIngress(t *testing.T) {
 	cfg.Server.ListenAddress = "127.0.0.1:0"
 	cfg.Server.UDPListenAddress = "127.0.0.1:0"
 	cfg.Security.TicketKey = "01234567890123456789012345678901"
-	a := New(cfg, nil)
+	a, err := New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tcp, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +116,11 @@ func TestRelayAppDoesNotExposeLegacyUDPTicketIngress(t *testing.T) {
 	}
 	defer func() { _ = sender.Close() }()
 	ticket, _ := a.tickets.IssueForPeer("s", "a", "b", time.Minute)
-	packet, _ := relayruntime.EncodeUDPPairDatagram(ticket, []byte("legacy"))
+	// Keep the obsolete wire fixture, not its removed production encoder.
+	packet := []byte{'G', 'T', 'U', 'P', 1, 1, 0, 0}
+	binary.BigEndian.PutUint16(packet[6:8], uint16(len(ticket)))
+	packet = append(packet, ticket...)
+	packet = append(packet, "legacy"...)
 	if _, err := sender.WriteToUDP(packet, address); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +147,10 @@ func TestRelayReadinessStaysFalseWhenUDPBindFails(t *testing.T) {
 	cfg.Server.ListenAddress = "127.0.0.1:0"
 	cfg.Server.UDPListenAddress = occupied.LocalAddr().String()
 	cfg.Security.TicketKey = "01234567890123456789012345678901"
-	app := New(cfg, slog.Default())
+	app, err := New(cfg, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
 	err = app.Run(context.Background())
 	if err == nil {
 		t.Fatal("Run() error=nil, want UDP bind failure")
@@ -153,11 +175,14 @@ func TestRelayExplicitRangeSelectsStartupPort(t *testing.T) {
 	cfg.Server.ListenAddress = "127.0.0.1:0"
 	cfg.Server.UDPListenAddress = "127.0.0.1:0"
 	cfg.Security.TicketKey = "01234567890123456789012345678901"
-	a := NewWithOptions(
+	a, err := NewWithOptions(
 		cfg,
 		nil,
 		Options{UDPV2: relayruntime.UDPPairV2Config{PortMin: port, PortMax: port}},
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- a.Run(ctx) }()

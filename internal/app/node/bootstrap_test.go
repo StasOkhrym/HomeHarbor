@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/platform/lifecycle"
+	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 )
 
 func TestFailedBootstrapDoesNotStartTunnelWorkers(t *testing.T) {
@@ -33,5 +33,15 @@ func TestBootstrapRunsBeforeEveryTunnelWorker(t *testing.T) {
 	)
 	if err := app.Run(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStartupFailureDoesNotStartTunnelWorkers(t *testing.T) {
+	started := false
+	want := errors.New("enrollment failed")
+	app := New(lifecycle.Func(func(context.Context) error { started = true; return nil }))
+	app.startup = func(context.Context) (*App, error) { return nil, want }
+	if err := app.Run(context.Background()); !errors.Is(err, want) || started {
+		t.Fatalf("startup failure allowed workers: started=%v error=%v", started, err)
 	}
 }

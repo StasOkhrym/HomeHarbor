@@ -6,9 +6,9 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
-	"github.com/sokhrym/go-tunnels/internal/tunnel"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/tunnel"
 )
 
 type snapshotReader struct {

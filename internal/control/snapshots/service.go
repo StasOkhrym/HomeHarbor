@@ -8,7 +8,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 var (

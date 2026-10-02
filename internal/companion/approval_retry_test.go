@@ -14,8 +14,8 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	"github.com/sokhrym/go-tunnels/internal/control/invites"
-	"github.com/sokhrym/go-tunnels/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/invite"
 )
 
 // This boundary fixture exercises companion validation; transactional module

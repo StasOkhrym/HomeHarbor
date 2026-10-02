@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	csrfCookieName = "__Host-go_tunnels_csrf"
+	csrfCookieName = "__Host-homeharbor_csrf"
 	csrfHeaderName = "X-CSRF-Token"
 )
 

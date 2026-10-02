@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/node"
-	"github.com/sokhrym/go-tunnels/internal/platform/config"
-	relayruntime "github.com/sokhrym/go-tunnels/internal/relay"
+	"github.com/StasOkhrym/homeharbor/internal/node"
+	"github.com/StasOkhrym/homeharbor/internal/platform/config"
+	relayruntime "github.com/StasOkhrym/homeharbor/internal/relay"
 )
 
 func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
@@ -27,7 +27,10 @@ func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
 	client := certServer.Client()
 	tlsConfig := certServer.TLS.Clone()
 	certServer.Close()
-	app := NewWithOptions(cfg, slog.Default(), Options{TLSConfig: tlsConfig})
+	app, err := NewWithOptions(cfg, slog.Default(), Options{TLSConfig: tlsConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

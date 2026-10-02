@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
-	policypg "github.com/sokhrym/go-tunnels/internal/control/policy/storage"
-	"github.com/sokhrym/go-tunnels/internal/testutil"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
+	policypg "github.com/StasOkhrym/homeharbor/internal/control/policy/storage"
+	"github.com/StasOkhrym/homeharbor/internal/testutil"
 )
 
 func TestPostgresPolicyRevisionAndRulesRollbackTogether(t *testing.T) {

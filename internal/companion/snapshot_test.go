@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 func TestSnapshotSignerAddsOnlyOneClientToExistingProfile(t *testing.T) {

@@ -11,8 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/sokhrym/go-tunnels/internal/control/identity"
-	"github.com/sokhrym/go-tunnels/migrations"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
+	"github.com/StasOkhrym/homeharbor/migrations"
 )
 
 func TestPostgresRecoveryCodeConcurrentConsume(t *testing.T) {

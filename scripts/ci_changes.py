@@ -4,7 +4,7 @@ import json
 import os
 import subprocess
 
-GATES = ("fast", "integration", "network", "fuzz", "vulnerability", "deployment")
+GATES = ("fast", "integration", "network", "fuzz", "vulnerability", "compose")
 PROTECTED = (
     "internal/node/",
     "internal/agent/",
@@ -49,25 +49,25 @@ def classify(paths: list[str], base_available: bool, full: bool) -> dict[str, bo
         ):
             enabled.add("fast")
             continue
-        deployment = path.startswith(("deploy/", ".github/workflows/"))
+        compose = path.startswith(("deploy/", ".github/workflows/"))
         migration = path.startswith("migrations/")
         protected = path.startswith(PROTECTED)
-        if not (deployment or migration or protected):
+        if not (compose or migration or protected):
             # Shared tooling/dependencies and unclassified runtime files fail safe.
             return dict.fromkeys(GATES, True)
         enabled.add("fast")
         # Categories overlap: signed-state/session storage needs both durable
         # contracts and protected networking/security gates, never just one.
         if (
-            deployment
+            compose
             or migration
             or "/storage/" in path
             or "/redis" in path
             or path.startswith("internal/app/control/workflows/")
         ):
             enabled.add("integration")
-        if deployment:
-            enabled.add("deployment")
+        if compose:
+            enabled.add("compose")
         enabled.update(("network", "fuzz", "vulnerability"))
     return {gate: gate in enabled for gate in GATES}
 

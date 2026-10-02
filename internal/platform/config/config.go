@@ -181,13 +181,13 @@ func LoadRelayServer(path string) (RelayServer, error) {
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return cfg, fmt.Errorf("decode relay config: %w", err)
 	}
-	if value := os.Getenv("GO_TUNNELS_RELAY_LISTEN_ADDRESS"); value != "" {
+	if value := os.Getenv("HOMEHARBOR_RELAY_LISTEN_ADDRESS"); value != "" {
 		cfg.Server.ListenAddress = value
 	}
-	if value := os.Getenv("GO_TUNNELS_RELAY_UDP_LISTEN_ADDRESS"); value != "" {
+	if value := os.Getenv("HOMEHARBOR_RELAY_UDP_LISTEN_ADDRESS"); value != "" {
 		cfg.Server.UDPListenAddress = value
 	}
-	if value := os.Getenv("GO_TUNNELS_RELAY_TICKET_KEY"); value != "" {
+	if value := os.Getenv("HOMEHARBOR_RELAY_TICKET_KEY"); value != "" {
 		cfg.Security.TicketKey = value
 	}
 	if cfg.Security.TicketKey == "" && cfg.Security.TicketKeyFile != "" {
@@ -234,7 +234,7 @@ func LoadDatabase(path string) (Database, error) {
 	if err := file.Database.validateDriver(); err != nil {
 		return Database{}, err
 	}
-	if value := os.Getenv("GO_TUNNELS_DATABASE_URL"); value != "" {
+	if value := os.Getenv("HOMEHARBOR_DATABASE_URL"); value != "" {
 		file.Database.URL = value
 	}
 	if err := resolveDatabaseSecret(&file.Database); err != nil {
@@ -254,10 +254,10 @@ func LoadControl(path string) (Control, error) {
 	if err := cfg.Database.validateDriver(); err != nil {
 		return Control{}, err
 	}
-	if value := os.Getenv("GO_TUNNELS_REDIS_URL"); value != "" {
+	if value := os.Getenv("HOMEHARBOR_REDIS_URL"); value != "" {
 		cfg.Redis.URL = value
 	}
-	if value := os.Getenv("GO_TUNNELS_REDIS_PASSWORD"); value != "" {
+	if value := os.Getenv("HOMEHARBOR_REDIS_PASSWORD"); value != "" {
 		cfg.Redis.Password = value
 	} else if cfg.Redis.PasswordFile != "" {
 		value, err := readSecret(cfg.Redis.PasswordFile, "Redis password")
@@ -276,19 +276,19 @@ func LoadControl(path string) (Control, error) {
 			)
 		}
 	}
-	if value := os.Getenv("GO_TUNNELS_SERVER_LISTEN_ADDRESS"); value != "" {
+	if value := os.Getenv("HOMEHARBOR_SERVER_LISTEN_ADDRESS"); value != "" {
 		cfg.Server.ListenAddress = value
 	}
-	if value := os.Getenv("GO_TUNNELS_DATABASE_URL"); value != "" {
+	if value := os.Getenv("HOMEHARBOR_DATABASE_URL"); value != "" {
 		cfg.Database.URL = value
 	}
-	if value := os.Getenv("GO_TUNNELS_AUTH_SESSION_SIGNING_KEY"); value != "" {
+	if value := os.Getenv("HOMEHARBOR_AUTH_SESSION_SIGNING_KEY"); value != "" {
 		cfg.Auth.SessionSigningKey = value
 	}
-	if value := os.Getenv("GO_TUNNELS_AUTH_CEREMONY_ENCRYPTION_KEY"); value != "" {
+	if value := os.Getenv("HOMEHARBOR_AUTH_CEREMONY_ENCRYPTION_KEY"); value != "" {
 		cfg.Auth.CeremonyEncryptionKey = value
 	}
-	if value := os.Getenv("GO_TUNNELS_RELAY_TICKET_KEY"); value != "" {
+	if value := os.Getenv("HOMEHARBOR_RELAY_TICKET_KEY"); value != "" {
 		cfg.Relay.TicketKey = value
 	}
 	if err := resolveDatabaseSecret(&cfg.Database); err != nil {

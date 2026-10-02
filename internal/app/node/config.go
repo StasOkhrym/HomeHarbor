@@ -5,7 +5,7 @@ import (
 	"flag"
 	"io"
 
-	"github.com/sokhrym/go-tunnels/internal/platform/config"
+	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 )
 
 // Role selects policy ownership; transport configuration is shared by both nodes.

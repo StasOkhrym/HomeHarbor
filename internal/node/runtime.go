@@ -3,7 +3,7 @@ package node
 import (
 	"context"
 
-	"github.com/sokhrym/go-tunnels/internal/platform/lifecycle"
+	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 )
 
 // RunComponents runs independent node components under one cancellation tree.

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 )
 
 type adminPolicyPreview struct {

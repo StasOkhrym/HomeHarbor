@@ -1,22 +1,30 @@
 [http.routers.control]
-rule = {{ ('Host(`' ~ control_domain ~ '`)') | to_json }}
+rule = "Host(`control.localhost`)"
 entryPoints = ["websecure"]
 service = "control"
 [http.routers.control.tls]
-certResolver = "public"
+
 [http.routers.relay]
-rule = {{ ('Host(`' ~ relay_domain ~ '`)') | to_json }}
+rule = "Host(`relay.localhost`)"
 entryPoints = ["websecure"]
 service = "relay"
 [http.routers.relay.tls]
-certResolver = "public"
+
 [http.services.control.loadBalancer]
 [[http.services.control.loadBalancer.servers]]
 url = "http://control:8080"
+
 [http.services.relay.loadBalancer]
 serversTransport = "relay"
 [[http.services.relay.loadBalancer.servers]]
 url = "https://relay:8081"
+
+# Backend transport trust is distinct from the companion signing authority.
 [http.serversTransports.relay]
 serverName = "relay"
 rootCAs = ["/run/secrets/relay_tls_ca"]
+
+[tls]
+[[tls.certificates]]
+certFile = "/run/secrets/frontend_tls_cert"
+keyFile = "/run/secrets/frontend_tls_key"

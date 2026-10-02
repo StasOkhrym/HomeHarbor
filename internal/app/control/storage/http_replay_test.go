@@ -9,8 +9,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/app/control/workflows"
-	"github.com/sokhrym/go-tunnels/internal/control/httpapi"
+	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
+	"github.com/StasOkhrym/homeharbor/internal/control/httpapi"
 )
 
 func TestPostgresHTTPClaimReplayReturnsInvalidClaim400(t *testing.T) {

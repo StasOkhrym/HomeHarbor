@@ -117,7 +117,7 @@ func probeV2(t *testing.T, u *net.UDPConn, offer UDPPairV2Message) (string, *net
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := u.WriteToUDP([]byte("GTU2P"+offer.Nonce), a); err != nil {
+	if _, err := u.WriteToUDP([]byte("HHU2P"+offer.Nonce), a); err != nil {
 		t.Fatal(err)
 	}
 	_ = u.SetReadDeadline(time.Now().Add(time.Second))
@@ -126,7 +126,7 @@ func probeV2(t *testing.T, u *net.UDPConn, offer UDPPairV2Message) (string, *net
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sameUDPAddr(source, a) || !strings.HasPrefix(string(b[:n]), "GTU2C") {
+	if !sameUDPAddr(source, a) || !strings.HasPrefix(string(b[:n]), "HHU2C") {
 		t.Fatalf("unexpected challenge %q from %s", b[:n], source)
 	}
 	return string(b[5:n]), a
@@ -210,12 +210,12 @@ func TestUDPV2LocksEndpointRejectsCapturedProbeAndForwardsRaw(t *testing.T) {
 	if sameUDPAddr(ra, rb) {
 		t.Fatal("peers share an ingress listener")
 	}
-	sendV2(t, attacker, []byte("GTU2P"+offerA.Nonce), ra)
+	sendV2(t, attacker, []byte("HHU2P"+offerA.Nonce), ra)
 	sendV2(t, attacker, []byte("captured-wireguard"), ra)
 	noV2Raw(t, attacker)
 	noV2Raw(t, b)
 	// Even an envelope-looking payload is opaque once the endpoint is locked.
-	payload := []byte("GTU2P" + offerA.Nonce)
+	payload := []byte("HHU2P" + offerA.Nonce)
 	sendV2(t, a, payload, ra)
 	readV2Raw(t, b, payload, rb)
 	sendV2(t, b, []byte{0, 255, 2, 0}, rb)

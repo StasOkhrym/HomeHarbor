@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/sokhrym/go-tunnels/internal/control/routes"
+	"github.com/StasOkhrym/homeharbor/internal/control/routes"
 )
 
 type Repository struct{ pool *pgxpool.Pool }

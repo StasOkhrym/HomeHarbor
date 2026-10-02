@@ -22,9 +22,9 @@ import (
 
 const (
 	Version        uint16 = 1
-	permitDomain          = "go-tunnels/invite-permit/v1\x00"
-	proofDomain           = "go-tunnels/invite-proof/v1\x00"
-	approvalDomain        = "go-tunnels/invite-approval/v1\x00"
+	permitDomain          = "homeharbor/invite-permit/v1\x00"
+	proofDomain           = "homeharbor/invite-proof/v1\x00"
+	approvalDomain        = "homeharbor/invite-approval/v1\x00"
 )
 
 var (
@@ -131,6 +131,7 @@ var canonicalMode = func() cbor.EncMode {
 	if err != nil {
 		panic(err)
 	}
+
 	return mode
 }()
 
@@ -412,6 +413,6 @@ func VerifyApproval(signed SignedApproval, root ed25519.PublicKey, expected Appr
 }
 
 func codeDigest(code string) []byte {
-	hash := sha256.Sum256(append([]byte("go-tunnels/invite-code/v1\x00"), []byte(code)...))
+	hash := sha256.Sum256(append([]byte("homeharbor/invite-code/v1\x00"), []byte(code)...))
 	return hash[:]
 }

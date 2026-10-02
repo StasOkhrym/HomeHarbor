@@ -1,6 +1,6 @@
 # Architecture
 
-Go Tunnels is a modular monolith for coordination and administration, with a
+HomeHarbor is a modular monolith for coordination and administration, with a
 separate encrypted relay and Linux nodes. It is still under development: the
 full signed-onboarding-to-LAN sandbox is not yet verified end to end.
 
@@ -81,8 +81,8 @@ both CA and server name. It has no Docker socket, dashboard or network-admin
 capability. Relay UDP is not an HTTP proxy path. TLS certificates and the
 companion signing root are separate trust authorities.
 
-Local development uses a test CA and loopback port 8443. Production DNS-01/ACME
-configuration is deployment scaffolding, not a validated production rollout.
+Local development uses a test CA and loopback port 8443. Public certificate
+automation and VPS deployment are deferred; no production rollout is provided.
 The control plane never receives DNS-provider credentials or TLS CA private keys.
 
 ## Readability and verification
@@ -122,3 +122,17 @@ maximum UDP payload size and snapshot-chain checks are named trust constants, no
 operator knobs. Container secret paths and runtime UID are deployment contracts.
 Loopback ports are configurable local defaults; sample CIDRs and dummy markers are
 fixtures, not assumptions about the operator's LAN.
+
+## Product namespace
+
+The product is HomeHarbor and its Go module is `github.com/StasOkhrym/homeharbor`.
+Configuration overrides use `HOMEHARBOR_*`; container mounts use `/etc/homeharbor`.
+Cookies, Redis namespaces, database identity and nftables ownership use the same
+product namespace. Snapshot/invite/claim signatures use `homeharbor/...` domains;
+relay binding messages use `HHU2`. There are no previous-product aliases.
+
+This is a deliberate breaking rename of a local experiment, not a rolling
+upgrade. Old signed state and credentials are not claimed compatible. Local
+state setup is separate from source renaming; do not mix old nodes with the new
+control/relay. Deferred native clients must adopt the matching contracts when
+their development resumes. Fixture CIDRs never authorize a real LAN by default.

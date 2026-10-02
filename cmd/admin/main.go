@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/companion"
-	platformconfig "github.com/sokhrym/go-tunnels/internal/platform/config"
+	"github.com/StasOkhrym/homeharbor/internal/companion"
+	platformconfig "github.com/StasOkhrym/homeharbor/internal/platform/config"
 )
 
 func main() {

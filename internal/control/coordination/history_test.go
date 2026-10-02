@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	"github.com/sokhrym/go-tunnels/internal/control/snapshots"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/snapshots"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 type historyAuthenticator struct{}

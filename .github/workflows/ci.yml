@@ -66,13 +66,9 @@ jobs:
       - name: Vulnerability scan
         if: fromJSON(needs.changes.outputs.gates).vulnerability
         run: make security SECURITY=vulnerability
-      - name: Optional deployment validation
-        if: fromJSON(needs.changes.outputs.gates).deployment
-        run: |
-          python -m pip install -r requirements-deployment.txt
-          python scripts/compose_check.py
-          python scripts/deploy_check.py
-          ansible-lint deploy/ansible/site.yml
+      - name: Local Compose validation
+        if: fromJSON(needs.changes.outputs.gates).compose
+        run: python scripts/compose_check.py
       - name: Disposable runner networking prerequisites
         if: fromJSON(needs.changes.outputs.gates).network
         run: |

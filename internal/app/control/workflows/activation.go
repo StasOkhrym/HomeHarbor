@@ -17,17 +17,17 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	"github.com/sokhrym/go-tunnels/internal/control/invites"
-	"github.com/sokhrym/go-tunnels/internal/invite"
-	"github.com/sokhrym/go-tunnels/internal/platform/redissecurity"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/platform/redissecurity"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 const (
 	ClaimTTL     = 2 * time.Minute
 	claimPurpose = "activation-claim-v1"
-	claimDomain  = "go-tunnels/activation-claim/v1\x00"
+	claimDomain  = "homeharbor/activation-claim/v1\x00"
 )
 
 var (

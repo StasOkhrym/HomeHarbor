@@ -1,4 +1,4 @@
-"""Validate rendered production, local and isolated Compose contracts without writing state."""
+"""Validate local and isolated Compose contracts without creating keys or state."""
 
 import json
 import os
@@ -40,8 +40,26 @@ def validate(services, integration):
         raise ValueError("control must receive exactly its runtime secrets")
     if secrets(services["migrate"]) != {"postgres_password"}:
         raise ValueError("migrate must receive only the database password")
+    if secrets(services["relay"]) != {
+        "relay_ticket_key",
+        "relay_tls_cert",
+        "relay_tls_key",
+        "relay_tls_ca",
+    }:
+        raise ValueError("relay must receive only its ticket and TLS secrets")
     if services["redis"].get("ports"):
-        raise ValueError("Redis must remain private in the deployment stack")
+        raise ValueError("Redis must remain private in the local stack")
+    if services["db"].get("ports"):
+        raise ValueError("Database must remain private in the local stack")
+    if services["relay"].get("ports"):
+        raise ValueError("Local relay must not publish UDP ports")
+
+    for service in services.values():
+        if service.get("privileged") or service.get("cap_add"):
+            raise ValueError("Backend development must not acquire network capabilities")
+        if service.get("network_mode") == "host":
+            raise ValueError("Backend development must use isolated Docker networking")
+
     proxy = services["traefik"]
     if (
         set(proxy.get("cap_drop", [])) != {"ALL"}
@@ -53,9 +71,18 @@ def validate(services, integration):
         raise ValueError("proxy must run as a non-root user")
     if any("docker.sock" in str(mount) for mount in proxy.get("volumes", [])):
         raise ValueError("proxy must not receive the Docker socket")
-    if secrets(proxy) != {"relay_tls_ca"}:
-        raise ValueError("production proxy must receive only backend CA, not local TLS keys")
-    dynamic = tomllib.loads((ROOT / "deploy/traefik/dynamic/routes.toml").read_text())
+    if secrets(proxy) != {"relay_tls_ca", "frontend_tls_cert", "frontend_tls_key"}:
+        raise ValueError("Local proxy must receive only backend CA and frontend TLS pair")
+
+    ports = proxy.get("ports", [])
+    if not ports or any(port.get("host_ip") != "127.0.0.1" for port in ports):
+        raise ValueError("Local proxy must bind only to loopback")
+
+    for name, service in services.items():
+        if name != "traefik" and secrets(service) & {"frontend_tls_cert", "frontend_tls_key"}:
+            raise ValueError("Frontend TLS must be exclusive to local Traefik")
+
+    dynamic = tomllib.loads((ROOT / "deploy/traefik/routes.toml").read_text())
     transport = dynamic["http"]["serversTransports"]["relay"]
     if (
         transport.get("insecureSkipVerify")
@@ -63,18 +90,23 @@ def validate(services, integration):
         or transport.get("rootCAs") != ["/run/secrets/relay_tls_ca"]
     ):
         raise ValueError("proxy must authenticate relay TLS using CA and server name")
+
     for router in dynamic["http"]["routers"].values():
-        if router.get("tls", {}).get("certResolver") != "public":
-            raise ValueError("production router must use ACME, not the local test CA")
+        if "certResolver" in router.get("tls", {}):
+            raise ValueError("Local routing must not request public certificates")
+
     if set(integration) != {"postgres", "redis"}:
         raise ValueError("integration stack must contain only PostgreSQL and Redis")
+
     for name, service in integration.items():
         ports = service.get("ports", [])
         if not ports or any(port.get("host_ip") != "127.0.0.1" for port in ports):
             raise ValueError(f"integration {name} ports must bind only to loopback")
+
     for redis in (services["redis"], integration["redis"]):
         if secrets(redis) != {"redis_password"}:
             raise ValueError("Redis must receive only its password secret")
+
         command = "\n".join(redis.get("command", []))
         tokens = shlex.split(command)
         for flag, value in (
@@ -84,10 +116,12 @@ def validate(services, integration):
         ):
             if flag not in tokens or tokens[tokens.index(flag) + 1] != value:
                 raise ValueError(f"Redis must use {flag} {value}")
+
         if "/run/secrets/redis_password" not in command or "sha256sum" not in tokens:
             raise ValueError("Redis ACL must hash the file credential")
         if str(redis.get("mem_limit")) != "268435456":
             raise ValueError("Redis must have a 256 MiB container memory limit")
+
         health = " ".join(redis.get("healthcheck", {}).get("test", []))
         if (
             "REDISCLI_AUTH" not in health
@@ -95,20 +129,8 @@ def validate(services, integration):
             or "PONG" not in health
         ):
             raise ValueError("Redis healthcheck must authenticate and require PONG")
+
     print("Compose SQL/Redis secret boundaries and limits are valid")
-
-
-def validate_local(services):
-    proxy = services["traefik"]
-    if secrets(proxy) != {"relay_tls_ca", "frontend_tls_cert", "frontend_tls_key"}:
-        raise ValueError("Local Traefik must receive exactly backend CA and frontend TLS pair")
-    if services["relay"].get("ports"):
-        raise ValueError("Local relay must not publish UDP ports")
-    if any(p.get("host_ip") != "127.0.0.1" for p in proxy.get("ports", [])):
-        raise ValueError("Local proxy must bind only to loopback")
-    for name, service in services.items():
-        if name != "traefik" and secrets(service) & {"frontend_tls_cert", "frontend_tls_key"}:
-            raise ValueError("Frontend TLS must be exclusive to local Traefik")
 
 
 def environment():
@@ -118,9 +140,9 @@ def environment():
         "RELAY_DOMAIN": "relay.localhost",
         "CONTROL_CONFIG": "../config/control.example.toml",
         "RELAY_CONFIG": "../config/relay.example.toml",
-        "TRAEFIK_CONFIG": "./traefik/traefik.toml",
-        "TRAEFIK_DYNAMIC_DIR": "./traefik/dynamic",
-        "TRAEFIK_STATE_DIR": "../state/traefik",
+        "TRAEFIK_CONFIG": "./traefik/local.toml",
+        "TRAEFIK_DYNAMIC_DIR": "../.local/traefik/dynamic",
+        "TRAEFIK_STATE_DIR": "../.local/traefik/state",
         "RUNTIME_UID": "65532",
         "RUNTIME_GID": "65532",
         "INTEGRATION_POSTGRES_PORT": "55432",
@@ -132,16 +154,9 @@ def main():
     require_commands("docker")
     env = environment()
     base = ROOT / "deploy/compose.yaml"
-    production = render([base], env)["services"]
+    local = render([base], env)["services"]
     integration = render([ROOT / "deploy/compose.integration.yaml"], env)["services"]
-    validate(production, integration)
-    local_env = {
-        **env,
-        "PROXY_BIND_ADDRESS": "127.0.0.1",
-        "PROXY_HTTP_PORT": "8088",
-        "PROXY_HTTPS_PORT": "8443",
-    }
-    validate_local(render([base, ROOT / "deploy/compose.local.yaml"], local_env)["services"])
+    validate(local, integration)
     print("Local and integration Compose contracts are valid")
 
 

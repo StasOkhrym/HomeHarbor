@@ -15,9 +15,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/sokhrym/go-tunnels/internal/platform/config"
-	"github.com/sokhrym/go-tunnels/internal/platform/lifecycle"
-	relayruntime "github.com/sokhrym/go-tunnels/internal/relay"
+	"github.com/StasOkhrym/homeharbor/internal/platform/config"
+	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
+	relayruntime "github.com/StasOkhrym/homeharbor/internal/relay"
 )
 
 // App owns relay HTTP resources and the in-memory session hub. The relay does
@@ -30,14 +30,13 @@ type App struct {
 	tickets         relayruntime.TicketIssuer
 	ready           *atomic.Bool
 	udpV2           *relayruntime.UDPPairV2
-	initErr         error
 	shutdownTimeout time.Duration
 }
 
 var _ lifecycle.Component = (*App)(nil)
 
 // New creates a relay runtime from validated configuration.
-func New(cfg config.RelayServer, logger *slog.Logger) *App {
+func New(cfg config.RelayServer, logger *slog.Logger) (*App, error) {
 	return NewWithOptions(cfg, logger, Options{})
 }
 
@@ -49,12 +48,13 @@ type Options struct {
 	TLSConfig *tls.Config
 }
 
-func NewWithOptions(cfg config.RelayServer, logger *slog.Logger, options Options) *App {
+// NewWithOptions validates the relay without binding listeners or starting workers.
+func NewWithOptions(cfg config.RelayServer, logger *slog.Logger, options Options) (*App, error) {
 	if cfg.Runtime == (config.Runtime{}) {
 		cfg.Runtime = config.DefaultRuntime(true)
 	}
 	if err := cfg.Runtime.Validate(); err != nil {
-		return &App{initErr: err}
+		return nil, err
 	}
 	if options.UDPV2.BindTimeout == 0 {
 		options.UDPV2.BindTimeout = cfg.Runtime.RelayBindTimeout
@@ -78,29 +78,29 @@ func NewWithOptions(cfg config.RelayServer, logger *slog.Logger, options Options
 	ready := &atomic.Bool{}
 	mux := http.NewServeMux()
 	tickets := relayruntime.TicketIssuer{Key: []byte(cfg.Security.TicketKey)}
-	udpAddress, initErr := net.ResolveUDPAddr("udp", cfg.Server.UDPListenAddress)
-	udpListenAddr := cfg.Server.UDPListenAddress
-	if initErr == nil {
-		if options.UDPV2.ListenIP == nil {
-			options.UDPV2.ListenIP = udpAddress.IP
-		}
-		if options.UDPV2.PortMin == 0 && options.UDPV2.PortMax == 0 && udpAddress.Port != 0 {
-			options.UDPV2.PortMin = udpAddress.Port
-			options.UDPV2.PortMax = min(udpAddress.Port+1023, 65535)
-		}
-		port := udpAddress.Port
-		if options.UDPV2.PortMin != 0 {
-			port = options.UDPV2.PortMin
-		}
-		host := ""
-		if options.UDPV2.ListenIP != nil {
-			host = options.UDPV2.ListenIP.String()
-		}
-		udpListenAddr = net.JoinHostPort(host, strconv.Itoa(port))
+	udpAddress, err := net.ResolveUDPAddr("udp", cfg.Server.UDPListenAddress)
+	if err != nil {
+		return nil, fmt.Errorf("configure relay UDP address: %w", err)
 	}
-	var udpV2 *relayruntime.UDPPairV2
-	if initErr == nil {
-		udpV2, initErr = relayruntime.NewUDPPairV2(tickets, options.UDPV2)
+	if options.UDPV2.ListenIP == nil {
+		options.UDPV2.ListenIP = udpAddress.IP
+	}
+	if options.UDPV2.PortMin == 0 && options.UDPV2.PortMax == 0 && udpAddress.Port != 0 {
+		options.UDPV2.PortMin = udpAddress.Port
+		options.UDPV2.PortMax = min(udpAddress.Port+1023, 65535)
+	}
+	port := udpAddress.Port
+	if options.UDPV2.PortMin != 0 {
+		port = options.UDPV2.PortMin
+	}
+	host := ""
+	if options.UDPV2.ListenIP != nil {
+		host = options.UDPV2.ListenIP.String()
+	}
+	udpListenAddr := net.JoinHostPort(host, strconv.Itoa(port))
+	udpV2, err := relayruntime.NewUDPPairV2(tickets, options.UDPV2)
+	if err != nil {
+		return nil, fmt.Errorf("configure relay UDP: %w", err)
 	}
 	if udpV2 != nil {
 		mux.Handle("/relay/udp/v2", udpV2)
@@ -123,7 +123,6 @@ func NewWithOptions(cfg config.RelayServer, logger *slog.Logger, options Options
 		tickets:         relayruntime.TicketIssuer{Key: []byte(cfg.Security.TicketKey)},
 		ready:           ready,
 		udpV2:           udpV2,
-		initErr:         initErr,
 		shutdownTimeout: cfg.Runtime.ShutdownTimeout,
 		server: &http.Server{
 			TLSConfig:         options.TLSConfig,
@@ -135,15 +134,12 @@ func NewWithOptions(cfg config.RelayServer, logger *slog.Logger, options Options
 			IdleTimeout:       cfg.Runtime.HTTPIdleTimeout,
 			MaxHeaderBytes:    64 << 10,
 		},
-	}
+	}, nil
 }
 
 // Run serves the relay until ctx is cancelled. Active WebSocket sessions are
 // closed by net/http shutdown and clients reconnect using their credentials.
 func (a *App) Run(ctx context.Context) error {
-	if a.initErr != nil {
-		return a.initErr
-	}
 	defer func() { _ = a.udpV2.Close() }()
 	tcpListener, err := net.Listen("tcp", a.server.Addr)
 	if err != nil {
@@ -181,9 +177,6 @@ func (a *App) runWithListeners(
 	}
 	defer func() { _ = tcpListener.Close() }()
 	defer func() { _ = udpConnection.Close() }()
-	if a.initErr != nil {
-		return a.initErr
-	}
 	defer func() { _ = a.udpV2.Close() }()
 	if err := a.udpV2.AdoptListener(udpConnection); err != nil {
 		return err

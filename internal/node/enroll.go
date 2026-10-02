@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	"github.com/sokhrym/go-tunnels/internal/protocol"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 func Enroll(

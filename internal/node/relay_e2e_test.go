@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/relay"
+	"github.com/StasOkhrym/homeharbor/internal/relay"
 )
 
 func TestRelayOnlyNodeBridgesForwardOpaqueUDPInBothDirections(t *testing.T) {

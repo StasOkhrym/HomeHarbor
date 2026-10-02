@@ -12,7 +12,5 @@ go build ./cmd/...
 if [ "${FULL:-0}" = 1 ]; then
     make integration security
     python3 scripts/compose_check.py
-    python3 scripts/deploy_check.py
-    ansible-lint deploy/ansible/site.yml
     make acceptance
 fi

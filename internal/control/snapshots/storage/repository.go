@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/sokhrym/go-tunnels/internal/control/snapshots"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/control/snapshots"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 type Repository struct{ pool *pgxpool.Pool }
@@ -35,20 +35,24 @@ func (s *Repository) Append(
 		value.Revision != expectedRevision+1 {
 		return snapshot.ErrRevisionGap
 	}
+
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
 	if _, err := tx.Exec(
 		ctx,
 		`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
-		"go_tunnels_snapshots/"+networkID,
+		"homeharbor_snapshots/"+networkID,
 	); err != nil {
 		return err
 	}
+
 	var revision uint64
 	var hash []byte
+
 	err = tx.QueryRow(ctx, `SELECT revision,hash FROM network_snapshots WHERE network_id=$1 ORDER BY revision DESC LIMIT 1`, networkID).
 		Scan(&revision, &hash)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -60,6 +64,7 @@ func (s *Repository) Append(
 	if !bytes.Equal(value.PreviousHash, hash) {
 		return snapshot.ErrPreviousHash
 	}
+
 	_, err = tx.Exec(
 		ctx,
 		`INSERT INTO network_snapshots(network_id,revision,envelope_version,key_id,payload,hash,signature,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,now())`,
@@ -76,8 +81,10 @@ func (s *Repository) Append(
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return snapshots.ErrSnapshotConflict
 		}
+
 		return err
 	}
+
 	return tx.Commit(ctx)
 }
 

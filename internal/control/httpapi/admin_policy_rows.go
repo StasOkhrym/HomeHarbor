@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/url"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 )
 
 type adminPolicyRow struct {

@@ -1,14 +1,16 @@
+name: homeharbor
+
 services:
   db:
     image: postgres:17.6-alpine
     environment:
-      POSTGRES_DB: go_tunnels
-      POSTGRES_USER: go_tunnels
+      POSTGRES_DB: homeharbor
+      POSTGRES_USER: homeharbor
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     secrets: [postgres_password]
     volumes: [postgres-data:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U go_tunnels -d go_tunnels"]
+      test: ["CMD-SHELL", "pg_isready -U homeharbor -d homeharbor"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -50,10 +52,10 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
       target: control
-    command: ["-config", "/etc/go-tunnels/control.toml"]
+    command: ["-config", "/etc/homeharbor/control.toml"]
     configs:
       - source: control_config
-        target: /etc/go-tunnels/control.toml
+        target: /etc/homeharbor/control.toml
     secrets:
       [
         postgres_password,
@@ -84,10 +86,10 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
       target: migrate
-    command: ["-config", "/etc/go-tunnels/control.toml"]
+    command: ["-config", "/etc/homeharbor/control.toml"]
     configs:
       - source: control_config
-        target: /etc/go-tunnels/control.toml
+        target: /etc/homeharbor/control.toml
     # Schema migration must not receive browser, WebAuthn, or relay secrets.
     # Its dedicated config loader reads only the database section.
     secrets: [postgres_password]
@@ -105,14 +107,14 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
       target: relay
-    command: ["-config", "/etc/go-tunnels/relay.toml"]
+    command: ["-config", "/etc/homeharbor/relay.toml"]
     configs:
       - source: relay_config
-        target: /etc/go-tunnels/relay.toml
+        target: /etc/homeharbor/relay.toml
     secrets: [relay_ticket_key, relay_tls_cert, relay_tls_key, relay_tls_ca]
     environment:
       SSL_CERT_FILE: /run/secrets/relay_tls_ca
-    ports: ["51820-51851:51820-51851/udp"]
+    # Backend/UI development has no public tunnel ingress.
     healthcheck:
       test: ["CMD", "/healthcheck", "https://relay:8081/readyz"]
       interval: 5s
@@ -131,16 +133,16 @@ services:
     command: ["--configFile=/etc/traefik/traefik.toml"]
     ports:
       [
-        "${PROXY_BIND_ADDRESS:-0.0.0.0}:${PROXY_HTTP_PORT:-80}:8080",
-        "${PROXY_BIND_ADDRESS:-0.0.0.0}:${PROXY_HTTPS_PORT:-443}:8443",
+        "${PROXY_BIND_ADDRESS:-127.0.0.1}:${PROXY_HTTP_PORT:-8088}:8080",
+        "${PROXY_BIND_ADDRESS:-127.0.0.1}:${PROXY_HTTPS_PORT:-8443}:8443",
       ]
     configs:
       - source: proxy_config
         target: /etc/traefik/traefik.toml
     volumes:
-      - ${TRAEFIK_DYNAMIC_DIR:-./traefik/dynamic}:/etc/traefik/dynamic:ro
-      - ${TRAEFIK_STATE_DIR:-../state/traefik}:/var/lib/traefik
-    secrets: [relay_tls_ca]
+      - ${TRAEFIK_DYNAMIC_DIR:-../.local/traefik/dynamic}:/etc/traefik/dynamic:ro
+      - ${TRAEFIK_STATE_DIR:-../.local/traefik/state}:/var/lib/traefik
+    secrets: [relay_tls_ca, frontend_tls_cert, frontend_tls_key]
     depends_on:
       control: { condition: service_healthy }
       relay: { condition: service_healthy }
@@ -166,11 +168,11 @@ services:
     restart: unless-stopped
 configs:
   proxy_config:
-    file: "${TRAEFIK_CONFIG:-./traefik/traefik.toml}"
+    file: "${TRAEFIK_CONFIG:-./traefik/local.toml}"
   control_config:
-    file: "${CONTROL_CONFIG:-../config/control.toml}"
+    file: "${CONTROL_CONFIG:-../.local/control.toml}"
   relay_config:
-    file: "${RELAY_CONFIG:-../config/relay.toml}"
+    file: "${RELAY_CONFIG:-../.local/relay.toml}"
 secrets:
   postgres_password: { file: ../secrets/postgres_password }
   redis_password: { file: ../secrets/redis_password }
@@ -181,5 +183,7 @@ secrets:
   relay_tls_cert: { file: ../secrets/relay_tls_cert }
   relay_tls_key: { file: ../secrets/relay_tls_key }
   relay_tls_ca: { file: ../secrets/relay_tls_ca }
+  frontend_tls_cert: { file: ../secrets/frontend_tls_cert }
+  frontend_tls_key: { file: ../secrets/frontend_tls_key }
 volumes:
   postgres-data:

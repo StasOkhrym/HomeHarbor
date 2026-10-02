@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 func TestPublishEnforcesSequentialSignedSnapshots(t *testing.T) {

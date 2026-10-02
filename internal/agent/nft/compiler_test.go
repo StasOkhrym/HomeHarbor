@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 )
 
 func TestCompileScopesDefaultDenyAndExplicitAllows(t *testing.T) {
@@ -30,7 +30,7 @@ func TestCompileScopesDefaultDenyAndExplicitAllows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"table inet go_tunnels", "policy accept", "iifname \"gt0\" drop", "oifname \"gt0\" drop", "hook input", "ip saddr 100.64.0.2/32 ip daddr 10.0.0.10/32 tcp dport 22 accept", "revision=9", "ct original ip saddr 100.64.0.2/32", "ct original ip daddr 10.0.0.10/32", "ct original proto-dst 22"} {
+	for _, want := range []string{"table inet homeharbor", "policy accept", "iifname \"gt0\" drop", "oifname \"gt0\" drop", "hook input", "ip saddr 100.64.0.2/32 ip daddr 10.0.0.10/32 tcp dport 22 accept", "revision=9", "ct original ip saddr 100.64.0.2/32", "ct original ip daddr 10.0.0.10/32", "ct original proto-dst 22"} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
 		}
@@ -39,7 +39,7 @@ func TestCompileScopesDefaultDenyAndExplicitAllows(t *testing.T) {
 		strings.Contains(script, "ct state established,related accept") {
 		t.Fatalf("global deny or established-flow ACL bypass:\n%s", script)
 	}
-	if strings.Contains(script, "flush table inet go_tunnels") {
+	if strings.Contains(script, "flush table inet homeharbor") {
 		t.Fatalf(
 			"Compile() emitted a state-dependent flush before table existence is known:\n%s",
 			script,

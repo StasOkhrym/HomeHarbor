@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 )
 
 // CreateIdentity writes device public metadata only. Approval never creates

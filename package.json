@@ -1,5 +1,5 @@
 {
-  "name": "go-tunnels-tooling",
+  "name": "homeharbor-tooling",
   "private": true,
   "engines": {
     "node": ">=24 <25"

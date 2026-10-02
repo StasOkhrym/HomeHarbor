@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class ProcessOwnershipTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="go-tunnels-process-")
+        self.temp = tempfile.TemporaryDirectory(prefix="homeharbor-process-")
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
         self.pid_file = self.directory / "child.pid"

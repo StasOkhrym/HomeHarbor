@@ -6,6 +6,26 @@ import (
 	"testing"
 )
 
+func TestHomeHarborEnvironmentOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relay.toml")
+	if err := os.WriteFile(
+		path,
+		[]byte("[server]\nlisten_address = '127.0.0.1:0'\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOMEHARBOR_RELAY_TICKET_KEY", "01234567890123456789012345678901")
+	t.Setenv("HOMEHARBOR_RELAY_UDP_LISTEN_ADDRESS", "127.0.0.1:55000")
+	cfg, err := LoadRelayServer(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Server.UDPListenAddress != "127.0.0.1:55000" || cfg.Security.TicketKey == "" {
+		t.Fatal("HomeHarbor environment was ignored")
+	}
+}
+
 func TestLoadControlResolvesFileSecretAndEnvironmentOverride(t *testing.T) {
 	dir := t.TempDir()
 	secretPath := filepath.Join(dir, "database-password")
@@ -62,7 +82,7 @@ metrics_address = ":9090"
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GO_TUNNELS_SERVER_LISTEN_ADDRESS", ":8181")
+	t.Setenv("HOMEHARBOR_SERVER_LISTEN_ADDRESS", ":8181")
 
 	cfg, err := LoadControl(configPath)
 	if err != nil {
@@ -84,7 +104,7 @@ func TestLoadDatabaseRequiresOnlyDatabaseConfig(t *testing.T) {
 	}
 	configPath := filepath.Join(dir, "migration.toml")
 	content := `[database]
-url = "postgres://go_tunnels@db/go_tunnels"
+url = "postgres://homeharbor@db/homeharbor"
 password_file = "` + passwordPath + `"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
@@ -94,7 +114,7 @@ password_file = "` + passwordPath + `"
 	if err != nil {
 		t.Fatalf("LoadDatabase() error = %v", err)
 	}
-	if cfg.URL != "postgres://go_tunnels@db/go_tunnels" || cfg.Password != "secret" {
+	if cfg.URL != "postgres://homeharbor@db/homeharbor" || cfg.Password != "secret" {
 		t.Fatalf("database config = %#v", cfg)
 	}
 }
@@ -189,8 +209,8 @@ func TestLoadRelayServerEnvironmentSecretOverridesMissingFile(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GO_TUNNELS_RELAY_TICKET_KEY", "01234567890123456789012345678901")
-	t.Setenv("GO_TUNNELS_RELAY_UDP_LISTEN_ADDRESS", "127.0.0.1:0")
+	t.Setenv("HOMEHARBOR_RELAY_TICKET_KEY", "01234567890123456789012345678901")
+	t.Setenv("HOMEHARBOR_RELAY_UDP_LISTEN_ADDRESS", "127.0.0.1:0")
 	cfg, err := LoadRelayServer(path)
 	if err != nil {
 		t.Fatal(err)

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/invite"
 )
 
 // Approval responses must be safe to deliver to the companion.

@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 )
 
 func (s *Server) latestPolicy(w http.ResponseWriter, r *http.Request) {

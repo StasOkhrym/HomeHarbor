@@ -8,7 +8,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 )
 
-const companionRequestDomain = "go-tunnels/companion-request/v1\x00"
+const companionRequestDomain = "homeharbor/companion-request/v1\x00"
 
 var (
 	ErrInvalidCompanionRequest = errors.New("invalid companion request")
@@ -17,6 +17,7 @@ var (
 		if err != nil {
 			panic(err)
 		}
+
 		return mode
 	}()
 )

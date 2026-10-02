@@ -15,10 +15,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	"github.com/sokhrym/go-tunnels/internal/control/identity"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 )
 
-const sessionCookieName = "__Host-go_tunnels_admin"
+const sessionCookieName = "__Host-homeharbor_admin"
 
 //go:embed templates/login.html
 var loginPage []byte
@@ -303,17 +303,33 @@ func (a *BrowserAuth) finishBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	codes, err := a.sessions.GenerateRecoveryCodes(r.Context(), 10)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "create recovery codes")
+		a.writeBootstrapFailure(w, r, err, "bootstrap_recovery_unavailable")
 		return
 	}
 	if err = a.establishSession(w, r.Context()); err != nil {
-		a.writeSessionError(w, err)
+		a.writeBootstrapFailure(w, r, err, "bootstrap_session_unavailable")
 		return
 	}
 	a.audit(r.Context(), "admin.bootstrap", true)
 	// Recovery plaintext is deliberately returned only by this bootstrap
 	// response; the identity store persists hashes and cannot reconstruct it.
 	writeJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes})
+}
+
+// Registration already committed before these steps. Neither recovery storage
+// nor Redis session creation can roll it back; retrying bootstrap is not recovery.
+func (a *BrowserAuth) writeBootstrapFailure(
+	w http.ResponseWriter,
+	r *http.Request,
+	err error,
+	code string,
+) {
+	a.audit(r.Context(), "admin.bootstrap", false)
+	status := http.StatusInternalServerError
+	if errors.Is(err, identity.ErrSecurityStateUnavailable) {
+		status = http.StatusServiceUnavailable
+	}
+	writeErrorCode(w, status, code, "passkey saved; setup incomplete; reload and sign in")
 }
 
 func (a *BrowserAuth) finishLogin(w http.ResponseWriter, r *http.Request) {

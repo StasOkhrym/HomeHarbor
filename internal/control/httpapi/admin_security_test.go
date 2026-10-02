@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
-	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
+	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 )
 
 func TestAdminMutationsShareBrowserSecurityBoundary(t *testing.T) {
@@ -20,15 +20,19 @@ func TestAdminMutationsShareBrowserSecurityBoundary(t *testing.T) {
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
 		auth,
-		WithBrowserHandlers(
-			auth.Handler(),
-			auth.LoginHandler(),
-			auth.LoginAssetHandler(),
-			auth.AuthorizeMutation,
-		),
-		WithBrowserActionConfirmation(auth),
-		WithPolicyService(policy.NewService(policy.NewMemoryStore(), policy.Compiler{})),
-		WithServiceCatalog(controlservices.NewService(controlservices.NewMemoryStore(), time.Now)),
+		Dependencies{
+			Resources: ResourceDependencies{
+				Policy:   policy.NewService(policy.NewMemoryStore(), policy.Compiler{}),
+				Services: controlservices.NewService(controlservices.NewMemoryStore(), time.Now),
+			},
+			Browser: BrowserDependencies{
+				API:                auth.Handler(),
+				LoginPage:          auth.LoginHandler(),
+				LoginAsset:         auth.LoginAssetHandler(),
+				MutationAuthorizer: auth.AuthorizeMutation,
+				ActionConfirmation: auth,
+			},
+		},
 	).Handler()
 	for _, path := range []string{"services", "access-profiles", "enrollment-tokens", "policy/preview", "policy", "devices/device-a/revoke"} {
 		t.Run(path, func(t *testing.T) {
@@ -89,8 +93,7 @@ func TestAdminCredentialRevokeRequiresDeviceScopedProof(t *testing.T) {
 	auth, _ := newBrowserAuthTest(t)
 	handler := newTestServer(
 		service,
-		allowAuthorizer{},
-		WithBrowserActionConfirmation(auth),
+		allowAuthorizer{}, Dependencies{Browser: BrowserDependencies{ActionConfirmation: auth}},
 	).Handler()
 	page := httptest.NewRecorder()
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/admin/devices/device-a", nil))
@@ -131,8 +134,12 @@ func TestAdminPolicyPreviewRequiresArray(t *testing.T) {
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
 		allowAuthorizer{},
-		WithPolicyService(policy.NewService(policy.NewMemoryStore(), policy.Compiler{})),
-		WithBrowserActionConfirmation(auth),
+		Dependencies{
+			Resources: ResourceDependencies{
+				Policy: policy.NewService(policy.NewMemoryStore(), policy.Compiler{}),
+			},
+			Browser: BrowserDependencies{ActionConfirmation: auth},
+		},
 	).Handler()
 	response := postAdminForm(handler, "/admin/policy/preview", url.Values{"rules": {"null"}})
 	if response.Code != http.StatusBadRequest {
@@ -142,10 +149,14 @@ func TestAdminPolicyPreviewRequiresArray(t *testing.T) {
 
 func TestAdminPolicyJSONEmptyIsArray(t *testing.T) {
 	model := adminPageModel{Values: url.Values{}}
-	server := NewServer(
+	server := mustTestServer(
 		nil,
 		nil,
-		WithPolicyService(policy.NewService(policy.NewMemoryStore(), policy.Compiler{})),
+		Dependencies{
+			Resources: ResourceDependencies{
+				Policy: policy.NewService(policy.NewMemoryStore(), policy.Compiler{}),
+			},
+		},
 	)
 	server.loadAdminPolicy(context.Background(), &model)
 	var value any

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/identity"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 )
 
 type failingChallenges struct{}

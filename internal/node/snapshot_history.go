@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 const (

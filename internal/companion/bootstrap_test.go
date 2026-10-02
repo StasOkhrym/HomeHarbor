@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	"github.com/sokhrym/go-tunnels/internal/control/httpapi"
-	controlsnapshots "github.com/sokhrym/go-tunnels/internal/control/snapshots"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/httpapi"
+	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 type bootstrapAuthorizer struct{}
@@ -179,8 +179,10 @@ func TestInitialSnapshotPublishesOnlyIntoEmptyControlStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := controlsnapshots.NewService(controlsnapshots.NewMemoryStore(), rootPublic, "home")
-	handler := httpapi.NewServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil), bootstrapAuthorizer{}, httpapi.WithSnapshotService(service), httpapi.WithCompanionRootKey(rootPublic)).
-		Handler()
+	handler := companionHTTPFixture(t, httpapi.ResourceDependencies{
+		Devices:   devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		Snapshots: service,
+	}, rootPublic, bootstrapAuthorizer{})
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	approver := RemoteApprover{Client: server.Client(), Endpoint: server.URL}

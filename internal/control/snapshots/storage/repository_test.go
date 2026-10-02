@@ -15,9 +15,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/sokhrym/go-tunnels/internal/control/snapshots"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
-	"github.com/sokhrym/go-tunnels/migrations"
+	"github.com/StasOkhrym/homeharbor/internal/control/snapshots"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/migrations"
 )
 
 func snapshotTestPool(t *testing.T) *pgxpool.Pool {

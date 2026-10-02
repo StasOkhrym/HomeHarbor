@@ -40,21 +40,38 @@ func TestSharedLimiterFailsClosedOnStoreFailure(t *testing.T) {
 }
 
 func TestConfiguredRateLimitsPreserveSharedFailure(t *testing.T) {
-	for _, options := range [][]ServerOption{
-		{WithRateLimits(6, 12, 140, 2*time.Second), WithSharedRateLimits(unavailableLimitStore{})},
-		{WithSharedRateLimits(unavailableLimitStore{}), WithRateLimits(6, 12, 140, 2*time.Second)},
-		{WithRateLimits(6, 12, 140, 2*time.Second), WithSharedRateLimits(nil)},
-	} {
-		s := NewServer(nil, nil, options...)
+	for _, store := range []RateLimitStore{unavailableLimitStore{}, nil} {
+		deps := explicitTestDependencies()
+		deps.Security.AuthLimiter = NewSharedRateLimiter(store, "auth", 6, time.Minute)
+		deps.Security.DeviceLimiter = NewSharedRateLimiter(store, "onboarding", 12, time.Minute)
+		deps.Security.AuthLimiter.storeTimeout = 2 * time.Second
+		deps.Security.DeviceLimiter.storeTimeout = 2 * time.Second
+
+		s, err := NewServer(deps)
+		if store == nil {
+			if err == nil {
+				t.Fatal("missing shared authority was accepted")
+			}
+
+			continue
+		}
+
+		if err != nil {
+			t.Fatal(err)
+		}
+
 		if s.authLimiter.limit != 6 || s.deviceLimiter.limit != 12 {
 			t.Fatal("option order reset configured quotas")
 		}
+
 		response := httptest.NewRecorder()
+
 		s.authLimiter.Middleware(func(*http.Request) string { return "client" })(
 			http.HandlerFunc(
 				func(http.ResponseWriter, *http.Request) { t.Fatal("shared failure admitted request") },
 			),
 		).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/login", nil))
+
 		if response.Code != http.StatusServiceUnavailable {
 			t.Fatalf("status = %d", response.Code)
 		}

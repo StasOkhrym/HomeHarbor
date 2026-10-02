@@ -10,21 +10,21 @@ import (
 	"os/signal"
 	"syscall"
 
-	relayapp "github.com/sokhrym/go-tunnels/internal/app/relay"
-	"github.com/sokhrym/go-tunnels/internal/platform/config"
-	"github.com/sokhrym/go-tunnels/internal/relay"
+	relayapp "github.com/StasOkhrym/homeharbor/internal/app/relay"
+	"github.com/StasOkhrym/homeharbor/internal/platform/config"
+	"github.com/StasOkhrym/homeharbor/internal/relay"
 )
 
 func main() {
 	path := flag.String("config", "config/relay.toml", "relay configuration path")
 	certFile := flag.String(
 		"tls-cert",
-		os.Getenv("GO_TUNNELS_RELAY_TLS_CERT_FILE"),
+		os.Getenv("HOMEHARBOR_RELAY_TLS_CERT_FILE"),
 		"relay TLS certificate PEM file (required)",
 	)
 	keyFile := flag.String(
 		"tls-key",
-		os.Getenv("GO_TUNNELS_RELAY_TLS_KEY_FILE"),
+		os.Getenv("HOMEHARBOR_RELAY_TLS_KEY_FILE"),
 		"relay TLS private key PEM file (required)",
 	)
 	portMin := flag.Int(
@@ -69,7 +69,7 @@ func main() {
 		logger.Error("load relay TLS", "error", err)
 		os.Exit(1)
 	}
-	app := relayapp.NewWithOptions(
+	app, err := relayapp.NewWithOptions(
 		cfg,
 		logger,
 		relayapp.Options{
@@ -81,7 +81,11 @@ func main() {
 			},
 		},
 	)
-	logger.Info("relay listening", "address", cfg.Server.ListenAddress)
+	if err != nil {
+		logger.Error("configure relay", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("relay starting", "address", cfg.Server.ListenAddress)
 	if err = app.Run(ctx); err != nil {
 		logger.Error("serve relay", "error", err)
 		os.Exit(1)

@@ -8,11 +8,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/sokhrym/go-tunnels/internal/app/control/workflows"
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	devicepg "github.com/sokhrym/go-tunnels/internal/control/devices/storage"
-	invitepg "github.com/sokhrym/go-tunnels/internal/control/invites/storage"
-	profilepg "github.com/sokhrym/go-tunnels/internal/control/services/storage"
+	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	devicepg "github.com/StasOkhrym/homeharbor/internal/control/devices/storage"
+	invitepg "github.com/StasOkhrym/homeharbor/internal/control/invites/storage"
+	profilepg "github.com/StasOkhrym/homeharbor/internal/control/services/storage"
 )
 
 type ActivationUnitOfWork struct{ pool *pgxpool.Pool }

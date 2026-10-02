@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sokhrym/go-tunnels/internal/agent/dns"
+	"github.com/StasOkhrym/homeharbor/internal/agent/dns"
 )
 
 // VM harness contract: run as root in a disposable Linux VM with the REAL

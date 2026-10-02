@@ -3,15 +3,15 @@ services:
   postgres:
     image: postgres:17.6-alpine
     environment:
-      POSTGRES_DB: go_tunnels
-      POSTGRES_USER: go_tunnels
+      POSTGRES_DB: homeharbor
+      POSTGRES_USER: homeharbor
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     secrets: [postgres_password]
     volumes: [postgres-data:/var/lib/postgresql/data]
     ports:
       - "127.0.0.1:${INTEGRATION_POSTGRES_PORT:-55432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U go_tunnels -d go_tunnels"]
+      test: ["CMD-SHELL", "pg_isready -U homeharbor -d homeharbor"]
       interval: 5s
       timeout: 3s
       retries: 20

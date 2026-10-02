@@ -35,7 +35,7 @@ ADAPTERS.add("app/control/storage")
 
 def test_urls(postgres_password, redis_password, postgres_port, redis_port):
     return {
-        "TEST_DATABASE_URL": f"postgres://go_tunnels:{quote(postgres_password, safe='')}@127.0.0.1:{postgres_port}/go_tunnels?sslmode=disable",
+        "TEST_DATABASE_URL": f"postgres://homeharbor:{quote(postgres_password, safe='')}@127.0.0.1:{postgres_port}/homeharbor?sslmode=disable",
         "TEST_REDIS_URL": f"redis://:{quote(redis_password, safe='')}@127.0.0.1:{redis_port}/0",
     }
 
@@ -145,6 +145,7 @@ def contracts(env):
         "-json",
         "-p=1",
         *packages,
+        "./internal/app/control",
         "./internal/control/identity/redis",
         "./internal/app/control/storage",
         "./internal/platform/events",
@@ -207,7 +208,7 @@ def main():
     result = run(["docker", "info"], env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if result:
         raise ValueError("Docker daemon unavailable; start Docker first")
-    project = "go-tunnels-integration-" + uuid.uuid4().hex[:12]
+    project = "homeharbor-integration-" + uuid.uuid4().hex[:12]
     compose = [
         "docker",
         "compose",

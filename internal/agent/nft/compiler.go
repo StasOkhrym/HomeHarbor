@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 )
 
 var interfaceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,15}$`)
@@ -50,7 +50,7 @@ func Compile(
 	// their drops. Gateway-local services are a separate default-deny boundary.
 	fmt.Fprintf(
 		&b,
-		"# go-tunnels policy revision=%d\ntable inet go_tunnels {\n  chain input {\n    type filter hook input priority -10; policy accept;\n    iifname %q drop\n  }\n  chain forward {\n    type filter hook forward priority -10; policy accept;\n",
+		"# homeharbor policy revision=%d\ntable inet homeharbor {\n  chain input {\n    type filter hook input priority -10; policy accept;\n    iifname %q drop\n  }\n  chain forward {\n    type filter hook forward priority -10; policy accept;\n",
 		snapshot.Revision,
 		interfaceName,
 	)
@@ -84,7 +84,7 @@ func Compile(
 		if rule.PortTo != rule.PortFrom {
 			fmt.Fprintf(&b, "-%d", rule.PortTo)
 		}
-		fmt.Fprintf(&b, " accept comment %q\n", "go-tunnels:"+rule.ID)
+		fmt.Fprintf(&b, " accept comment %q\n", "homeharbor:"+rule.ID)
 		// Established is evidence of a reply, never authorization. Recheck
 		// the CURRENT ACL against conntrack's original tuple on every reply.
 		// No broad related acceptance: ICMP helpers must not open another path.
@@ -102,7 +102,7 @@ func Compile(
 		if rule.PortTo != rule.PortFrom {
 			fmt.Fprintf(&b, "-%d", rule.PortTo)
 		}
-		fmt.Fprintf(&b, " accept comment %q\n", "go-tunnels:reply:"+rule.ID)
+		fmt.Fprintf(&b, " accept comment %q\n", "homeharbor:reply:"+rule.ID)
 	}
 	fmt.Fprintf(
 		&b,

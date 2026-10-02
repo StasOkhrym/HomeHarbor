@@ -223,7 +223,7 @@ def initialize():
         else:
             pending[path] = (base64.b64encode(secrets.token_bytes(size)), 0o600)
     # Stage all generated material privately; a command failure publishes nothing.
-    with tempfile.TemporaryDirectory(prefix="go-tunnels-init-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="homeharbor-init-") as scratch:
         temp = Path(scratch)
         if has_relay:
             verify_pair(cert, key, ca, ["relay"])
@@ -244,7 +244,7 @@ def initialize():
                 "3650",
                 "-sha256",
                 "-subj",
-                "/CN=Go Tunnels Local Relay CA",
+                "/CN=HomeHarbor Local Relay CA",
                 "-keyout",
                 str(staged_ca_key),
                 "-out",
@@ -303,11 +303,10 @@ def initialize():
             public = root_public.read_bytes()
         if not mounted_public.exists():
             pending[mounted_public] = (public, 0o644)
-    routes = tomlkit.parse((ROOT / "deploy/traefik/dynamic/routes.toml").read_text())
+    routes = tomlkit.parse((ROOT / "deploy/traefik/routes.toml").read_text())
     for name, domain in (("control", control_name), ("relay", relay_name)):
         router = routes["http"]["routers"][name]
         router["rule"] = f"Host(`{domain}`)"
-        router["tls"].pop("certResolver", None)
     routes["tls"] = {
         "certificates": [
             {

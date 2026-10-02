@@ -12,6 +12,15 @@ SPEC.loader.exec_module(MODULE)
 
 
 class ChangeTests(unittest.TestCase):
+    def test_local_compose_changes_select_required_gates(self):
+        for path in ("deploy/compose.yaml", "deploy/traefik/routes.toml"):
+            with self.subTest(path=path):
+                gates = MODULE.classify(["README.md", path], True, False)
+
+                self.assertTrue(gates["compose"])
+                self.assertTrue(all(gates.values()))
+                self.assertNotIn("deployment", gates)
+
     def test_classification(self):
         cases = (
             (["docs/architecture.md", "README.md"], set()),

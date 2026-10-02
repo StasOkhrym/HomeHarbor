@@ -8,8 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/sokhrym/go-tunnels/internal/platform/config"
-	"github.com/sokhrym/go-tunnels/migrations"
+	"github.com/StasOkhrym/homeharbor/internal/platform/config"
+	"github.com/StasOkhrym/homeharbor/migrations"
 )
 
 func main() {

@@ -10,14 +10,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/sokhrym/go-tunnels/internal/control/audit"
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	controlinvites "github.com/sokhrym/go-tunnels/internal/control/invites"
-	"github.com/sokhrym/go-tunnels/internal/control/policy"
-	controlroutes "github.com/sokhrym/go-tunnels/internal/control/routes"
-	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
-	controlsnapshots "github.com/sokhrym/go-tunnels/internal/control/snapshots"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/control/policy"
+	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
+	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
+	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 // A failed read is not an empty collection. Keeping availability alongside

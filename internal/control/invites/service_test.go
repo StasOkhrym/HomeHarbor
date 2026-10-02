@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/invite"
 )
 
 func TestInviteProofIsPendingUntilTrustedCompanionApproves(t *testing.T) {

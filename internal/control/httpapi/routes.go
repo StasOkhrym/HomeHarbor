@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"net/netip"
 
-	controlroutes "github.com/sokhrym/go-tunnels/internal/control/routes"
+	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 )
 
 func (s *Server) advertiseRoute(w http.ResponseWriter, r *http.Request) {

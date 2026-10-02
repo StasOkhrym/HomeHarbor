@@ -10,8 +10,8 @@ import (
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
-	"github.com/sokhrym/go-tunnels/internal/tunnel"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/tunnel"
 )
 
 var (

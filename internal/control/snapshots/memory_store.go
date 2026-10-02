@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 // MemoryStore is an in-process test double for Repository.

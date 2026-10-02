@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sokhrym/go-tunnels/internal/protocol"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 func (s *Server) publishSnapshot(w http.ResponseWriter, r *http.Request) {

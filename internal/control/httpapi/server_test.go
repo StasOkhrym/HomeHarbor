@@ -18,21 +18,21 @@ import (
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
-	"github.com/sokhrym/go-tunnels/internal/control/audit"
-	"github.com/sokhrym/go-tunnels/internal/control/devices"
-	controlinvites "github.com/sokhrym/go-tunnels/internal/control/invites"
-	controlroutes "github.com/sokhrym/go-tunnels/internal/control/routes"
-	controlservices "github.com/sokhrym/go-tunnels/internal/control/services"
-	controlsnapshots "github.com/sokhrym/go-tunnels/internal/control/snapshots"
-	"github.com/sokhrym/go-tunnels/internal/invite"
-	"github.com/sokhrym/go-tunnels/internal/protocol"
-	"github.com/sokhrym/go-tunnels/internal/relay"
-	"github.com/sokhrym/go-tunnels/internal/snapshot"
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
+	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
+	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
+	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
+	"github.com/StasOkhrym/homeharbor/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
+	"github.com/StasOkhrym/homeharbor/internal/relay"
+	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 func TestEnrollmentAPIRequiresAdminAndEnrollsDevice(t *testing.T) {
 	deviceService := devices.NewService(devices.NewMemoryStore(), time.Now, nil)
-	handler := newTestServer(deviceService, headerAuthorizer{}).Handler()
+	handler := newTestServer(deviceService, headerAuthorizer{}, Dependencies{}).Handler()
 
 	unauthorized := httptest.NewRecorder()
 	handler.ServeHTTP(
@@ -129,7 +129,13 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 	handler := newTestServer(
 		deviceService,
 		allowAuthorizer{},
-		WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/udp/v2", time.Minute),
+		Dependencies{
+			Relay: RelayDependencies{
+				Issuer: issuer,
+				URL:    "wss://relay.example.com/relay/udp/v2",
+				TTL:    time.Minute,
+			},
+		},
 	).Handler()
 
 	request := httptest.NewRequest(
@@ -226,7 +232,13 @@ func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
 	handler := newTestServer(
 		deviceService,
 		allowAuthorizer{},
-		WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/v1", time.Minute),
+		Dependencies{
+			Relay: RelayDependencies{
+				Issuer: issuer,
+				URL:    "wss://relay.example.com/relay/v1",
+				TTL:    time.Minute,
+			},
+		},
 	).Handler()
 	request := httptest.NewRequest(
 		http.MethodPost,
@@ -277,10 +289,14 @@ func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
 	handler := newTestServer(
 		deviceService,
 		allowAuthorizer{},
-		WithRelaySessionIssuer(issuer, "wss://relay.example.com/relay/v1", time.Minute),
-		WithRelayPeerAuthorizer(
-			func(context.Context, devices.Device, devices.Device) bool { return false },
-		),
+		Dependencies{
+			Relay: RelayDependencies{
+				Issuer:         issuer,
+				URL:            "wss://relay.example.com/relay/v1",
+				TTL:            time.Minute,
+				PeerAuthorizer: func(context.Context, devices.Device, devices.Device) bool { return false },
+			},
+		},
 	).Handler()
 	request := httptest.NewRequest(
 		http.MethodPost,
@@ -298,7 +314,7 @@ func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
 func TestHealthEndpoints(t *testing.T) {
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		allowAuthorizer{},
+		allowAuthorizer{}, Dependencies{},
 	).Handler()
 	for _, path := range []string{"/healthz", "/readyz"} {
 		recorder := httptest.NewRecorder()
@@ -313,9 +329,9 @@ func TestReadinessAndSecurityHeaders(t *testing.T) {
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
 		allowAuthorizer{},
-		WithReadiness(func(context.Context) error {
+		Dependencies{Observability: ObservabilityDependencies{Ready: func(context.Context) error {
 			return errors.New("database unavailable")
-		}),
+		}}},
 	).Handler()
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
@@ -375,8 +391,7 @@ func TestAdminPageUsesLocalAssets(t *testing.T) {
 	}
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		allowAuthorizer{},
-		WithServiceCatalog(catalog),
+		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/", nil))
@@ -413,8 +428,7 @@ func TestAdminFormCreatesServiceThroughDomainCatalog(t *testing.T) {
 	)
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		allowAuthorizer{},
-		WithServiceCatalog(catalog),
+		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 	form := url.Values{
 		"id":          {"cloud"},
@@ -450,8 +464,7 @@ func TestAdminFormCreatesRouteThroughNetworkService(t *testing.T) {
 	routeService := controlroutes.NewService(controlroutes.NewMemoryStore(), time.Now)
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		allowAuthorizer{},
-		WithRouteService(routeService),
+		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Routes: routeService}},
 	).Handler()
 	form := url.Values{
 		"id":                {"home-lan"},
@@ -532,8 +545,7 @@ func TestAvailableServicesRequireDeviceCredentialAndProfileMembership(t *testing
 	}
 	handler := newTestServer(
 		deviceService,
-		allowAuthorizer{},
-		WithServiceCatalog(catalog),
+		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 
 	unauthorized := httptest.NewRecorder()
@@ -559,8 +571,7 @@ func TestGroupedResourceRoutesKeepAdminBoundary(t *testing.T) {
 	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		headerAuthorizer{},
-		WithServiceCatalog(catalog),
+		headerAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 
 	unauthorized := httptest.NewRecorder()
@@ -607,8 +618,7 @@ func TestAuditAPIRequiresAdminAndBoundsResults(t *testing.T) {
 	}}}
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		headerAuthorizer{},
-		WithAuditReader(reader),
+		headerAuthorizer{}, Dependencies{Resources: ResourceDependencies{Audit: reader}},
 	).Handler()
 
 	unauthorized := httptest.NewRecorder()
@@ -634,8 +644,7 @@ func TestServiceCatalogAPIUsesAdminBoundary(t *testing.T) {
 	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		headerAuthorizer{},
-		WithServiceCatalog(catalog),
+		headerAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 	request := httptest.NewRequest(
 		http.MethodPost,
@@ -690,8 +699,7 @@ func TestInviteProofAPIDoesNotRequireAdmin(t *testing.T) {
 	)
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		headerAuthorizer{},
-		WithInviteService(service),
+		headerAuthorizer{}, Dependencies{Resources: ResourceDependencies{Invites: service}},
 	).Handler()
 	body, _ := json.Marshal(map[string]any{"permit": permit, "proof": proof})
 	recorder := httptest.NewRecorder()
@@ -708,7 +716,11 @@ func TestClientKeyUsesForwardedAddressOnlyFromTrustedProxy(t *testing.T) {
 	server := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
 		allowAuthorizer{},
-		WithTrustedProxyCIDRs([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}),
+		Dependencies{
+			Security: SecurityDependencies{
+				TrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
+			},
+		},
 	)
 	trusted := httptest.NewRequest(http.MethodGet, "/", nil)
 	trusted.RemoteAddr = "10.1.2.3:443"
@@ -746,8 +758,7 @@ func TestSignedSnapshotPublishDoesNotRequireAdmin(t *testing.T) {
 	service := controlsnapshots.NewService(controlsnapshots.NewMemoryStore(), rootPublic, "home")
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
-		headerAuthorizer{},
-		WithSnapshotService(service),
+		headerAuthorizer{}, Dependencies{Resources: ResourceDependencies{Snapshots: service}},
 	).Handler()
 	body, _ := json.Marshal(envelope)
 	recorder := httptest.NewRecorder()
@@ -788,8 +799,10 @@ func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
 		headerAuthorizer{},
-		WithSnapshotService(snapshotService),
-		WithCompanionRootKey(rootPublic),
+		Dependencies{
+			Resources: ResourceDependencies{Snapshots: snapshotService},
+			Security:  SecurityDependencies{RootPublicKey: rootPublic},
+		},
 	).Handler()
 	challengeRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(
@@ -854,9 +867,11 @@ type allowAuthorizer struct{}
 
 // Test handlers opt into mutation authorization explicitly. Production uses
 // BrowserAuth's Origin/CSRF checks instead of this test-only admin predicate.
-func newTestServer(service DeviceService, auth Authorizer, options ...ServerOption) *Server {
-	options = append([]ServerOption{WithMutationAuthorizer(auth.IsAdmin)}, options...)
-	return NewServer(service, auth, options...)
+func newTestServer(service DeviceService, auth Authorizer, deps Dependencies) *Server {
+	if deps.Browser.MutationAuthorizer == nil {
+		deps.Browser.MutationAuthorizer = auth.IsAdmin
+	}
+	return mustTestServer(service, auth, deps)
 }
 
 func (allowAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) { return true, nil }

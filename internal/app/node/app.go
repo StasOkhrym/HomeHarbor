@@ -6,12 +6,13 @@ package node
 import (
 	"context"
 
-	"github.com/sokhrym/go-tunnels/internal/platform/lifecycle"
+	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 )
 
 // App owns the cancellation tree for node transports such as coordination,
 // relay forwarding, WireGuard reconciliation, and split-DNS cleanup.
 type App struct {
+	startup    func(context.Context) (*App, error)
 	bootstrap  lifecycle.Component
 	components []lifecycle.Component
 }
@@ -19,7 +20,7 @@ type App struct {
 var _ lifecycle.Component = (*App)(nil)
 
 // New copies the component list so later caller mutations cannot change the
-// running application. NewRuntime performs concrete dependency construction.
+// running application. NewRuntime defers concrete startup to Run.
 func New(components ...lifecycle.Component) *App {
 	owned := append([]lifecycle.Component(nil), components...)
 	return &App{components: owned}
@@ -38,6 +39,16 @@ func NewWithBootstrap(bootstrap lifecycle.Component, components ...lifecycle.Com
 func (a *App) Run(ctx context.Context) error {
 	if a == nil {
 		return lifecycle.ErrNilComponent
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	if a.startup != nil {
+		assembled, err := a.startup(ctx)
+		if err != nil {
+			return err
+		}
+		return assembled.Run(ctx)
 	}
 	if a.bootstrap != nil {
 		if err := a.bootstrap.Run(ctx); err != nil {
