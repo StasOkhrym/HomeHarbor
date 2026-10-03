@@ -10,7 +10,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 )
 
-func TestControlConstructionFailureClosesAcquiredResources(t *testing.T) {
+func TestControlRunConstructionFailureClosesAcquiredResources(t *testing.T) {
 	var closed []string
 	stores := &runtimeStores{closers: []func(){
 		func() { closed = append(closed, "redis") },
@@ -21,7 +21,10 @@ func TestControlConstructionFailureClosesAcquiredResources(t *testing.T) {
 	// Invalid passkey configuration fails after stores have been acquired,
 	// before any repository operation requires a real external database.
 	app, err := newWithStores(context.Background(), config.Control{}, nil, acquire)
-	if err == nil || app != nil {
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Run(context.Background()); err == nil {
 		t.Fatal("invalid passkeys were accepted")
 	}
 	stores.close()
@@ -49,5 +52,24 @@ func TestControlShutdownWaitsForAuditBeforeClosingStores(t *testing.T) {
 	}
 	if !stopped {
 		t.Fatal("audit worker was not supervised")
+	}
+}
+
+func TestControlNewDoesNotAcquireStores(t *testing.T) {
+	acquired := false
+	app, err := newWithStores(
+		context.Background(),
+		config.Control{},
+		nil,
+		func(context.Context, config.Control, *slog.Logger) (*runtimeStores, error) {
+			acquired = true
+			return &runtimeStores{}, nil
+		},
+	)
+	if acquired {
+		t.Fatal("constructor acquired stores")
+	}
+	if err != nil || app == nil {
+		t.Fatalf("side effect free constructor: %v", err)
 	}
 }

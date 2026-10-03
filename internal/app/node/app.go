@@ -5,6 +5,7 @@ package node
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 )
@@ -15,6 +16,7 @@ type App struct {
 	startup    func(context.Context) (*App, error)
 	bootstrap  lifecycle.Component
 	components []lifecycle.Component
+	workers    []lifecycle.Worker
 }
 
 var _ lifecycle.Component = (*App)(nil)
@@ -58,5 +60,12 @@ func (a *App) Run(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return nil
 	}
-	return lifecycle.Run(ctx, a.components...)
+	workers := append([]lifecycle.Worker(nil), a.workers...)
+	for i, component := range a.components {
+		workers = append(
+			workers,
+			lifecycle.Worker{Name: fmt.Sprintf("node-%d", i+1), Component: component},
+		)
+	}
+	return lifecycle.RunEssential(ctx, workers...)
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
+	"github.com/StasOkhrym/homeharbor/internal/platform/httpserver"
 	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 	relayruntime "github.com/StasOkhrym/homeharbor/internal/relay"
 )
@@ -137,8 +138,8 @@ func NewWithOptions(cfg config.RelayServer, logger *slog.Logger, options Options
 	}, nil
 }
 
-// Run serves the relay until ctx is cancelled. Active WebSocket sessions are
-// closed by net/http shutdown and clients reconnect using their credentials.
+// Run serves the relay until ctx is cancelled. The UDP pair owner closes
+// and joins upgraded WebSocket sessions; HTTP joins ordinary handlers.
 func (a *App) Run(ctx context.Context) error {
 	defer func() { _ = a.udpV2.Close() }()
 	tcpListener, err := net.Listen("tcp", a.server.Addr)
@@ -186,39 +187,27 @@ func (a *App) runWithListeners(
 	}
 	a.ready.Store(true)
 	defer a.ready.Store(false)
-	runContext, cancel := context.WithCancel(ctx)
-	defer cancel()
-	serverErr := make(chan error, 2)
-	go func() { serverErr <- a.server.Serve(tcpListener) }()
-	go func() { serverErr <- a.udpV2.Run(runContext) }()
-	var err error
-	consumed := 0
-	select {
-	case err = <-serverErr:
-		consumed++
-	case <-ctx.Done():
-	}
-	cancel()
-	_ = a.udpV2.Close()
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), a.shutdownTimeout)
-	defer shutdownCancel()
-	if shutdownErr := a.server.Shutdown(shutdownCtx); shutdownErr != nil {
-		_ = a.server.Close()
-		if err == nil {
-			err = shutdownErr
-		}
-	}
-	// Both owners finish before returning. Hijacked WSS handshakes are closed
-	// and awaited by UDPv2.Close rather than relying on net/http Shutdown.
-	for consumed < 2 {
-		result := <-serverErr
-		consumed++
-		if err == nil && result != nil && !errors.Is(result, http.ErrServerClosed) {
-			err = result
-		}
-	}
-	if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
-		err = nil
-	}
-	return err
+	return lifecycle.RunEssential(ctx,
+		lifecycle.Worker{Name: "http", Component: lifecycle.Func(func(ctx context.Context) error {
+			return httpserver.Serve(ctx, a.server, tcpListener, a.shutdownTimeout)
+		})},
+		lifecycle.Worker{Name: "udp", Component: lifecycle.Func(func(ctx context.Context) error {
+			// Close owns upgraded WSS handshakes, which net/http cannot drain.
+			stopped := make(chan struct{})
+			closed := make(chan struct{})
+			go func() {
+				defer close(closed)
+				select {
+				case <-ctx.Done():
+					_ = a.udpV2.Close()
+				case <-stopped:
+				}
+			}()
+			err := a.udpV2.Run(ctx)
+			close(stopped)
+			<-closed
+			_ = a.udpV2.Close()
+			return err
+		})},
+	)
 }

@@ -69,13 +69,13 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error)
 	if err != nil {
 		return nil, err
 	}
-	var components []lifecycle.Component
+	var workers []lifecycle.Worker
 	if cfg.Relay.WebSocketURL != "" || cfg.Relay.UDPAddress != "" || cfg.Relay.Ticket != "" {
 		relay, err := prepareRelay(ctx, cfg, state, peers, paths, candidates.set)
 		if err != nil {
 			return nil, err
 		}
-		components = append(components, relay)
+		workers = append(workers, lifecycle.Worker{Name: "relay", Component: relay})
 	}
 	var bootstrap lifecycle.Component
 	if kernel {
@@ -84,9 +84,9 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error)
 			return nil, err
 		}
 		bootstrap = guard
-		components = append(components, coordination)
+		workers = append(workers, lifecycle.Worker{Name: "coordination", Component: coordination})
 	}
-	return NewWithBootstrap(bootstrap, components...), nil
+	return &App{bootstrap: bootstrap, workers: workers}, nil
 }
 
 func prepareIdentity(ctx context.Context, cfg config.Node) (node.State, error) {

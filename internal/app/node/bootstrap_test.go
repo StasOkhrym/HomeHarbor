@@ -21,6 +21,8 @@ func TestFailedBootstrapDoesNotStartTunnelWorkers(t *testing.T) {
 }
 
 func TestBootstrapRunsBeforeEveryTunnelWorker(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	guarded := false
 	app := NewWithBootstrap(
 		lifecycle.Func(func(context.Context) error { guarded = true; return nil }),
@@ -28,10 +30,11 @@ func TestBootstrapRunsBeforeEveryTunnelWorker(t *testing.T) {
 			if !guarded {
 				return errors.New("tunnel started before deny guard")
 			}
+			cancel()
 			return nil
 		}),
 	)
-	if err := app.Run(context.Background()); err != nil {
+	if err := app.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -329,7 +329,16 @@ func runCoordination(
 	heartbeat := time.NewTicker(heartbeatEvery)
 	defer heartbeat.Stop()
 	candidateChanges := cfg.CandidateChanges
-	go runCandidatePublisher(sessionContext, heartbeat.C, candidateChanges, write, sendCandidates)
+	publisherDone := make(chan struct{})
+	go func() {
+		defer close(publisherDone)
+		runCandidatePublisher(sessionContext, heartbeat.C, candidateChanges, write, sendCandidates)
+	}()
+	defer func() {
+		sessionCancel()
+		_ = connection.CloseNow()
+		<-publisherDone
+	}()
 
 	for {
 		readContext, readCancel := context.WithTimeout(sessionContext, 2*time.Minute)

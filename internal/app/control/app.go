@@ -19,6 +19,8 @@ import (
 // App owns the control-plane process and its shutdown order. Dependencies are
 // closed in reverse ownership order so consumers stop before their stores.
 type App struct {
+	cfg             config.Control
+	acquire         func(context.Context, config.Control, *slog.Logger) (*runtimeStores, error)
 	stores          *runtimeStores
 	server          *http.Server
 	metricsServer   *http.Server
@@ -30,7 +32,7 @@ type App struct {
 
 var _ lifecycle.Component = (*App)(nil)
 
-// New acquires validated stores, builds modules and transfers ownership to Run.
+// New validates configuration without acquiring resources. Run owns acquisition.
 func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, error) {
 	return newWithStores(ctx, cfg, logger, openStores)
 }
@@ -38,7 +40,7 @@ func New(ctx context.Context, cfg config.Control, logger *slog.Logger) (*App, er
 // Migration ownership stays in the dedicated migrate process rather than here or in
 // HTTP readiness: only one process should mutate the database schema.
 func newWithStores(
-	ctx context.Context,
+	_ context.Context,
 	cfg config.Control,
 	logger *slog.Logger,
 	acquire func(context.Context, config.Control, *slog.Logger) (*runtimeStores, error),
@@ -52,6 +54,13 @@ func newWithStores(
 	if logger == nil {
 		logger = slog.Default()
 	}
+
+	return &App{cfg: cfg, acquire: acquire, logger: logger}, nil
+}
+
+// assemble acquires stores and builds consumers within the Run ownership scope.
+func (a *App) assemble(ctx context.Context) error {
+	cfg, logger := a.cfg, a.logger
 	if cfg.Runtime.AuthPerMinute > 5 || cfg.Runtime.OnboardingPerMinute > 10 {
 		logger.Warn(
 			"authentication quotas exceed safe defaults",
@@ -62,10 +71,11 @@ func newWithStores(
 		)
 	}
 
-	stores, err := acquire(ctx, cfg, logger)
+	stores, err := a.acquire(ctx, cfg, logger)
 	if err != nil {
-		return nil, err
+		return err
 	}
+	a.stores = stores
 	keepStores := false
 	defer func() {
 		if !keepStores {
@@ -74,33 +84,34 @@ func newWithStores(
 	}()
 	httpServer, coordinationHandler, auditPipeline, err := buildHTTP(cfg, logger, stores)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	handler := httpServer.Handler()
-	metricsServer := newMetricsServer(cfg)
+	a.coordination = coordinationHandler
+	a.auditPipeline = auditPipeline
+	a.shutdownTimeout = cfg.Runtime.ShutdownTimeout
+	a.metricsServer = newMetricsServer(cfg)
+	a.server = &http.Server{
+		Addr:              cfg.Server.ListenAddress,
+		Handler:           httpServer.Handler(),
+		ReadHeaderTimeout: cfg.Runtime.HTTPHeaderTimeout,
+		ReadTimeout:       cfg.Runtime.HTTPReadTimeout,
+		WriteTimeout:      cfg.Runtime.HTTPWriteTimeout,
+		IdleTimeout:       cfg.Runtime.HTTPIdleTimeout,
+		MaxHeaderBytes:    64 << 10,
+	}
 	keepStores = true
-	return &App{
-		stores:          stores,
-		coordination:    coordinationHandler,
-		shutdownTimeout: cfg.Runtime.ShutdownTimeout,
-		auditPipeline:   auditPipeline,
-		logger:          logger,
-		metricsServer:   metricsServer,
-		server: &http.Server{
-			Addr:              cfg.Server.ListenAddress,
-			Handler:           handler,
-			ReadHeaderTimeout: cfg.Runtime.HTTPHeaderTimeout,
-			ReadTimeout:       cfg.Runtime.HTTPReadTimeout,
-			WriteTimeout:      cfg.Runtime.HTTPWriteTimeout,
-			IdleTimeout:       cfg.Runtime.HTTPIdleTimeout,
-			MaxHeaderBytes:    64 << 10,
-		},
-	}, nil
+	return nil
 }
 
-// Run serves HTTP until the context is cancelled. Shutdown has a bounded
-// deadline so a stuck client cannot prevent the process from exiting.
+// Run owns acquisition and joins workers before releasing their stores.
+// The CLI host owns hard termination if a handler cannot finish draining.
 func (a *App) Run(ctx context.Context) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	if err := a.assemble(ctx); err != nil {
+		return err
+	}
 	// Run owns every dependency even if listener creation fails. Workers stop
 	// before stores close; a deferred cleanup cannot race a still-running sink.
 	defer a.stores.close()
@@ -117,25 +128,31 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		defer func() { _ = metricsListener.Close() }()
 	}
-	components := []lifecycle.Component{
-		a.coordination,
-		a.auditPipeline,
-		lifecycle.Func(func(ctx context.Context) error {
+	workers := []lifecycle.Worker{
+		{Name: "coordination", Component: a.coordination},
+		{Name: "audit", Component: a.auditPipeline},
+		{Name: "outbox", Component: lifecycle.Func(func(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return nil
 			case <-a.auditPipeline.Ready():
 			}
 			return events.RunOutboxDispatcher(ctx, a.stores.pool, a.auditPipeline, a.logger)
-		}),
-		lifecycle.Func(
+		})},
+		{Name: "http", Component: lifecycle.Func(
 			func(ctx context.Context) error { return serveHTTP(ctx, a.server, listener, a.shutdownTimeout) },
-		),
+		)},
 	}
 	if a.metricsServer != nil {
-		components = append(components, lifecycle.Func(func(ctx context.Context) error {
-			return serveHTTP(ctx, a.metricsServer, metricsListener, a.shutdownTimeout)
-		}))
+		workers = append(
+			workers,
+			lifecycle.Worker{
+				Name: "metrics",
+				Component: lifecycle.Func(func(ctx context.Context) error {
+					return serveHTTP(ctx, a.metricsServer, metricsListener, a.shutdownTimeout)
+				}),
+			},
+		)
 	}
-	return a.stores.run(ctx, components...)
+	return lifecycle.RunEssential(ctx, workers...)
 }

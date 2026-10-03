@@ -84,3 +84,59 @@ func TestHTTPComponentReturnsListenerFailure(t *testing.T) {
 		t.Fatalf("error = %v, want closed listener", err)
 	}
 }
+
+func TestServerDoesNotCloseStoresBeforeHandlersExit(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	entered, cancelled, release, closed := make(
+		chan struct{},
+	), make(
+		chan struct{},
+	), make(
+		chan struct{},
+	), make(
+		chan struct{},
+	)
+	server := &http.Server{Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-r.Context().Done()
+		close(cancelled)
+		<-release
+	})}
+	stores := &runtimeStores{closers: []func(){func() { close(closed) }}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { defer stores.close(); done <- serveHTTP(ctx, server, listener, -time.Nanosecond) }()
+	go func() {
+		response, err := http.Get("http://" + listener.Addr().String())
+		if err == nil {
+			_ = response.Body.Close()
+		}
+	}()
+	<-entered
+	cancel()
+	<-cancelled
+	select {
+	case <-closed:
+		close(release)
+		<-done
+
+		t.Fatal("stores closed under active handler")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("handler shutdown not joined")
+	}
+
+	<-closed
+}

@@ -51,7 +51,8 @@ func TestRelayReadinessFollowsUDPListenerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status := readinessStatus(app); status != http.StatusServiceUnavailable {
+	handler := app.server.Handler
+	if status := readinessStatus(handler); status != http.StatusServiceUnavailable {
 		t.Fatalf("initial readiness status=%d, want %d", status, http.StatusServiceUnavailable)
 	}
 
@@ -60,10 +61,10 @@ func TestRelayReadinessFollowsUDPListenerLifecycle(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- app.Run(ctx) }()
 	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && readinessStatus(app) != http.StatusOK {
+	for time.Now().Before(deadline) && readinessStatus(handler) != http.StatusOK {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if status := readinessStatus(app); status != http.StatusOK {
+	if status := readinessStatus(handler); status != http.StatusOK {
 		t.Fatalf("running readiness status=%d, want %d", status, http.StatusOK)
 	}
 	cancel()
@@ -75,7 +76,7 @@ func TestRelayReadinessFollowsUDPListenerLifecycle(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("relay did not stop after cancellation")
 	}
-	if status := readinessStatus(app); status != http.StatusServiceUnavailable {
+	if status := readinessStatus(handler); status != http.StatusServiceUnavailable {
 		t.Fatalf("stopped readiness status=%d, want %d", status, http.StatusServiceUnavailable)
 	}
 }
@@ -98,6 +99,7 @@ func TestRelayAppDoesNotExposeLegacyUDPTicketIngress(t *testing.T) {
 		_ = tcp.Close()
 		t.Fatal(err)
 	}
+	handler := a.server.Handler
 	address := udp.LocalAddr().(*net.UDPAddr)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -130,7 +132,7 @@ func TestRelayAppDoesNotExposeLegacyUDPTicketIngress(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodGet, "/relay/udp/v2", nil)
 	recorder := httptest.NewRecorder()
-	a.server.Handler.ServeHTTP(recorder, request)
+	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusUpgradeRequired {
 		t.Fatalf("v2 plaintext status=%d, want TLS requirement", recorder.Code)
 	}
@@ -151,11 +153,12 @@ func TestRelayReadinessStaysFalseWhenUDPBindFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	handler := app.server.Handler
 	err = app.Run(context.Background())
 	if err == nil {
 		t.Fatal("Run() error=nil, want UDP bind failure")
 	}
-	if status := readinessStatus(app); status != http.StatusServiceUnavailable {
+	if status := readinessStatus(handler); status != http.StatusServiceUnavailable {
 		t.Fatalf(
 			"failed startup readiness status=%d, want %d",
 			status,
@@ -183,6 +186,7 @@ func TestRelayExplicitRangeSelectsStartupPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	handler := a.server.Handler
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- a.Run(ctx) }()
@@ -195,7 +199,7 @@ func TestRelayExplicitRangeSelectsStartupPort(t *testing.T) {
 		}
 	})
 	deadline := time.Now().Add(time.Second)
-	for readinessStatus(a) != http.StatusOK && time.Now().Before(deadline) {
+	for readinessStatus(handler) != http.StatusOK && time.Now().Before(deadline) {
 		select {
 		case err := <-done:
 			done <- err
@@ -204,7 +208,7 @@ func TestRelayExplicitRangeSelectsStartupPort(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if readinessStatus(a) != http.StatusOK {
+	if readinessStatus(handler) != http.StatusOK {
 		t.Fatal("configured range never became ready")
 	}
 	occupied, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port})
@@ -214,9 +218,10 @@ func TestRelayExplicitRangeSelectsStartupPort(t *testing.T) {
 	}
 }
 
-func readinessStatus(app *App) int {
+func readinessStatus(handler http.Handler) int {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
-	app.server.Handler.ServeHTTP(recorder, request)
+
+	handler.ServeHTTP(recorder, request)
 	return recorder.Code
 }

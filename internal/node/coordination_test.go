@@ -363,3 +363,80 @@ func newCoordinationTestServer(t *testing.T, envelope snapshot.Envelope) *httpte
 		consumeCoordinationTestPeer(r.Context(), connection)
 	}))
 }
+
+func TestCandidatePublisherJoined(t *testing.T) {
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes := make(chan struct{}, 1)
+	entered, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer func() { _ = c.CloseNow() }()
+		var hello controlprotocol.Hello
+		if err := wsjson.Read(r.Context(), c, &hello); err != nil {
+			t.Error(err)
+			return
+		}
+		err = wsjson.Write(
+			r.Context(),
+			c,
+			map[string]any{
+				"type": "welcome",
+				"protocol": controlprotocol.Negotiated{
+					Version: controlprotocol.CurrentVersion,
+					Capabilities: []string{
+						controlprotocol.CapabilityRelay,
+						controlprotocol.CapabilityDirectUDP,
+					},
+				},
+			},
+		)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		<-entered
+		_ = c.CloseNow()
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var calls atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		done <- runCoordination(ctx, CoordinationConfig{
+			URL: "ws" + server.URL[len("http"):], Credential: "credential", DeviceID: "device", NetworkID: "home", RootPublicKey: public,
+			CandidateChanges: changes,
+			CandidateProvider: func(ctx context.Context) ([]controlprotocol.CandidateUpdate, error) {
+				if calls.Add(1) == 1 {
+					changes <- struct{}{}
+					return nil, nil
+				}
+				close(entered)
+				<-ctx.Done()
+				close(cancelled)
+				<-release
+				return nil, nil
+			},
+		}, &snapshotRecorder{}, &coordinationCursor{})
+	}()
+	<-cancelled
+	select {
+	case <-done:
+		close(release)
+		t.Fatal("session returned before publisher exited")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("session did not join publisher")
+	}
+}

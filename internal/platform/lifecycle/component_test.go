@@ -41,3 +41,13 @@ func TestFuncImplementsComponent(t *testing.T) {
 		t.Fatalf("component.Run() error=%v", err)
 	}
 }
+
+// Finite tasks retain their original completion contract outside supervision.
+func TestRunAllowsFiniteSuccessfulTasks(t *testing.T) {
+	if err := Run(
+		context.Background(),
+		Func(func(context.Context) error { return nil }),
+	); err != nil {
+		t.Fatal(err)
+	}
+}
