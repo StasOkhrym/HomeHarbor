@@ -46,7 +46,7 @@ func TestConfiguredCredentialTTLControlsEnrollmentAndRotation(t *testing.T) {
 		t.Fatal("old credential remains valid")
 	}
 	now = now.Add(2*time.Minute + time.Second)
-	if _, err = s.Authenticate(context.Background(), rotated); err == nil {
+	if _, err = s.Authenticate(context.Background(), rotated.Credential); err == nil {
 		t.Fatal("rotation ignored configured credential expiry")
 	}
 }
@@ -241,7 +241,7 @@ func TestRotateCredentialRevokesPreviousCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rotated == device.Credential {
+	if rotated.Credential == device.Credential {
 		t.Fatal("rotation returned the previous credential")
 	}
 	if _, err := service.Authenticate(
@@ -255,7 +255,7 @@ func TestRotateCredentialRevokesPreviousCredential(t *testing.T) {
 	}
 	if got, err := service.Authenticate(
 		context.Background(),
-		rotated,
+		rotated.Credential,
 	); err != nil ||
 		got.ID != device.ID {
 		t.Fatalf("new credential authentication = %#v, %v", got, err)
@@ -376,4 +376,40 @@ func (r *sequenceRandom) Read(p []byte) (int, error) {
 	}
 
 	return len(p), nil
+}
+
+func TestRotatedCredentialAuthenticatesWithItsIssuanceExpiry(t *testing.T) {
+	now := time.Now().UTC()
+	service := NewService(NewMemoryStore(), func() time.Time { return now }, nil)
+	token, err := service.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, wg := validPublicKeys(t)
+	request := EnrollRequest{
+		Token:              token.Token,
+		Name:               "expiry",
+		IdentityPublicKey:  identity,
+		WireGuardPublicKey: wg,
+	}
+	d, err := service.Enroll(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(5 * time.Minute)
+	lease, err := service.RotateCredential(context.Background(), d.ID, d.Credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := service.Authenticate(context.Background(), lease.Credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !admitted.CredentialExpiresAt.Equal(lease.ExpiresAt) {
+		t.Fatalf(
+			"admitted expiry=%v, lease expiry=%v",
+			admitted.CredentialExpiresAt,
+			lease.ExpiresAt,
+		)
+	}
 }

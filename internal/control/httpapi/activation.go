@@ -12,6 +12,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 // ActivationChallenger and ActivationClaimer are the only workflow ports
@@ -107,7 +108,9 @@ func (h *ActivationHandler) Claim(w http.ResponseWriter, r *http.Request) {
 		activationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, struct {
+		Device protocol.EnrolledDevice `json:"device"`
+	}{enrolledDevice(result.Device)})
 }
 
 func activationError(w http.ResponseWriter, err error) {

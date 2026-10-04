@@ -2,9 +2,14 @@ package node
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
 )
 
 func TestNewStateAndAtomicSave(t *testing.T) {
@@ -102,7 +107,7 @@ func TestLoadRejectsWorldReadableState(t *testing.T) {
 func TestInvalidKeysFailClosed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	original := []byte(`{"identity_private_key":"invalid"}`)
-	if err := os.WriteFile(path, original, 0600); err != nil {
+	if err := os.WriteFile(path, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadOrCreate(path); err == nil {
@@ -127,5 +132,34 @@ func TestValidateRejectsInconsistentEd25519Seed(t *testing.T) {
 	state.IdentityPrivateKey = base64.RawURLEncoding.EncodeToString(private)
 	if err := state.Validate(); err == nil {
 		t.Fatal("private seed inconsistent with public key accepted")
+	}
+}
+
+func TestStateWrappersPreserveErrorsAndReleaseOwnership(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	state, err := NewState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.CredentialExpiresAt = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+	var marshalError *json.MarshalerError
+	if err := state.Save(path); !errors.As(err, &marshalError) {
+		t.Fatalf("save lost JSON issuance error: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, load := range []func(string) (State, error){Load, LoadOrCreate} {
+		var syntaxError *json.SyntaxError
+		if _, err := load(path); !errors.As(err, &syntaxError) {
+			t.Fatalf("load lost original JSON error: %v", err)
+		}
+		owner, err := localstate.Open(path)
+		if err != nil {
+			t.Fatalf("failed operation leaked lifetime lock: %v", err)
+		}
+		if err := owner.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

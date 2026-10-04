@@ -260,11 +260,13 @@ func (s *Repository) AuthenticateCredential(
 	now time.Time,
 ) (devices.Device, error) {
 	var d devices.Device
-	err := s.db.QueryRow(ctx, `SELECT d.id,d.name,d.role,d.status,d.identity_public_key,d.wireguard_public_key,d.created_at,d.revoked_at FROM device_credentials c JOIN devices d ON d.id=c.device_id WHERE c.credential_hash=$1 AND c.revoked_at IS NULL AND c.expires_at>$2 AND d.status='active'`, hash[:], now).
-		Scan(&d.ID, &d.Name, &d.Role, &d.Status, &d.IdentityPublicKey, &d.WireGuardPublicKey, &d.CreatedAt, &d.RevokedAt)
+
+	err := s.db.QueryRow(ctx, `SELECT d.id,d.name,d.role,d.status,d.identity_public_key,d.wireguard_public_key,d.created_at,d.revoked_at,c.expires_at FROM device_credentials c JOIN devices d ON d.id=c.device_id WHERE c.credential_hash=$1 AND c.revoked_at IS NULL AND c.expires_at>$2 AND d.status='active'`, hash[:], now).
+		Scan(&d.ID, &d.Name, &d.Role, &d.Status, &d.IdentityPublicKey, &d.WireGuardPublicKey, &d.CreatedAt, &d.RevokedAt, &d.CredentialExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return devices.Device{}, devices.ErrDeviceNotFound
 	}
+
 	return d, err
 }
 
@@ -336,3 +338,58 @@ var (
 	_ devices.Repository     = (*Repository)(nil)
 	_ devices.EnrollmentPort = (*Repository)(nil)
 )
+
+// RecoverCredential locks the device before credential rows, matching rotation,
+// claim and revocation. The identity used to verify proof is checked under lock.
+func (s *Repository) RecoverCredential(
+	ctx context.Context,
+	id, identity string,
+	hash [32]byte,
+	now, expires time.Time,
+) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var registered string
+
+	err = tx.QueryRow(ctx, `SELECT identity_public_key FROM devices WHERE id=$1 AND status='active' FOR UPDATE`, id).
+		Scan(&registered)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && registered != identity {
+		return devices.ErrDeviceNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(
+		ctx,
+		`UPDATE device_credentials SET revoked_at=$2 WHERE device_id=$1 AND revoked_at IS NULL`,
+		id,
+		now,
+	); err != nil {
+		return err
+	}
+
+	if _, err = tx.Exec(
+		ctx,
+		`INSERT INTO device_credentials(device_id,credential_hash,expires_at) VALUES($1,$2,$3)`,
+		id,
+		hash[:],
+		expires,
+	); err != nil {
+		return err
+	}
+
+	if err = s.appendEvent(
+		ctx,
+		tx,
+		devices.Event{Type: "device.credential_recovered", AggregateID: id, OccurredAt: now},
+	); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}

@@ -3,8 +3,6 @@ package node
 import (
 	"bytes"
 	"context"
-	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
-	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
+	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 )
 
 func runtimeFixture(t *testing.T) (config.Node, *atomic.Int32) {
@@ -199,17 +199,28 @@ func TestStartupFailureReleasesStateOwner(t *testing.T) {
 func TestRuntimeRetainsStateOwnerDuringWorkerCleanup(t *testing.T) {
 	cfg := config.DefaultClient()
 	cfg.Identity.StatePath = filepath.Join(t.TempDir(), "state.json")
+
 	app, err := startRuntime(context.Background(), Client, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	cleanup := make(chan struct{})
 	release := make(chan struct{})
 	started := make(chan struct{})
 	defer close(release)
-	app.workers = []lifecycle.Worker{{Name: "cleanup", Component: lifecycle.Func(func(ctx context.Context) error { close(started); <-ctx.Done(); close(cleanup); <-release; return nil })}}
+
+	app.workers = []lifecycle.Worker{
+		{
+			Name: "cleanup",
+			Component: lifecycle.Func(
+				func(ctx context.Context) error { close(started); <-ctx.Done(); close(cleanup); <-release; return nil },
+			),
+		},
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	stopped := make(chan error, 1)
 	go func() { stopped <- app.Run(ctx) }()
 	select {
@@ -217,17 +228,21 @@ func TestRuntimeRetainsStateOwnerDuringWorkerCleanup(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("worker did not start")
 	}
+
 	cancel()
 	select {
 	case <-cleanup:
 	case <-time.After(3 * time.Second):
 		t.Fatal("worker did not enter cleanup")
 	}
+
 	store, err := localstate.Open(cfg.Identity.StatePath)
 	if err == nil {
 		_ = store.Close()
+
 		t.Fatal("state owner released before worker cleanup")
 	}
+
 	release <- struct{}{}
 	select {
 	case err := <-stopped:
@@ -237,9 +252,11 @@ func TestRuntimeRetainsStateOwnerDuringWorkerCleanup(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("runtime did not stop")
 	}
+
 	store, err = localstate.Open(cfg.Identity.StatePath)
 	if err != nil {
 		t.Fatalf("runtime did not release state: %v", err)
 	}
+
 	_ = store.Close()
 }

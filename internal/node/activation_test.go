@@ -78,7 +78,7 @@ func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing
 				t.Error("invalid possession proof")
 			}
 			_ = json.NewEncoder(w).
-				Encode(map[string]any{"device": map[string]any{"id": "linux", "role": "client", "status": "active", "identity_public_key": state.IdentityPublicKey, "wireguard_public_key": state.WireGuard.PublicKey, "credential": base64.RawURLEncoding.EncodeToString(make([]byte, 32))}})
+				Encode(map[string]any{"device": map[string]any{"credential_expires_at": time.Now().Add(15 * time.Minute), "id": "linux", "role": "client", "status": "active", "identity_public_key": state.IdentityPublicKey, "wireguard_public_key": state.WireGuard.PublicKey, "credential": base64.RawURLEncoding.EncodeToString(make([]byte, 32))}})
 		default:
 			t.Errorf("unexpected request %s", r.URL)
 			w.WriteHeader(404)

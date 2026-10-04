@@ -101,7 +101,11 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error)
 	return &App{bootstrap: bootstrap, workers: workers, close: store.Close}, nil
 }
 
-func prepareIdentity(ctx context.Context, cfg config.Node, store *localstate.Store) (node.State, error) {
+func prepareIdentity(
+	ctx context.Context,
+	cfg config.Node,
+	store *localstate.Store,
+) (node.State, error) {
 	state, err := node.LoadOrCreateFrom(store)
 	if err != nil {
 		return node.State{}, err

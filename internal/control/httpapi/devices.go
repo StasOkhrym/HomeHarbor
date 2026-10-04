@@ -7,9 +7,11 @@ import (
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 func (s *Server) issueToken(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	var input struct {
 		Role       devices.Role `json:"role"`
 		TTLSeconds int64        `json:"ttl_seconds"`
@@ -17,6 +19,7 @@ func (s *Server) issueToken(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+
 	token, err := s.devices.IssueEnrollmentToken(
 		r.Context(),
 		input.Role,
@@ -38,17 +41,29 @@ func (s *Server) issueToken(w http.ResponseWriter, r *http.Request) {
 				"could not create enrollment token",
 			)
 		}
+
 		return
 	}
+
 	writeJSON(w, http.StatusCreated, token)
 }
 
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
-	var input devices.EnrollRequest
+	w.Header().Set("Cache-Control", "no-store")
+	var input protocol.EnrollmentRequest
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	device, err := s.devices.Enroll(r.Context(), input)
+
+	device, err := s.devices.Enroll(
+		r.Context(),
+		devices.EnrollRequest{
+			Token:              input.Token,
+			Name:               input.Name,
+			IdentityPublicKey:  input.IdentityPublicKey,
+			WireGuardPublicKey: input.WireGuardPublicKey,
+		},
+	)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, devices.ErrInvalidEnrollmentToken) {
@@ -69,24 +84,29 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 				"could not enroll device",
 			)
 		}
+
 		return
 	}
-	writeJSON(w, http.StatusCreated, device)
+
+	writeJSON(w, http.StatusCreated, enrolledDevice(device))
 }
 
 func (s *Server) rotateCredential(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	credential := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	device, err := s.devices.Authenticate(r.Context(), credential)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid device credential")
 		return
 	}
+
 	rotated, err := s.devices.RotateCredential(r.Context(), device.ID, credential)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "device credential expired or revoked")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"credential": rotated})
+
+	writeJSON(w, http.StatusOK, rotated)
 }
 
 func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
@@ -115,4 +135,72 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func enrolledDevice(d devices.Device) protocol.EnrolledDevice {
+	return protocol.EnrolledDevice{
+		ID:                  d.ID,
+		Name:                d.Name,
+		Role:                string(d.Role),
+		Status:              string(d.Status),
+		IdentityPublicKey:   d.IdentityPublicKey,
+		WireGuardPublicKey:  d.WireGuardPublicKey,
+		CreatedAt:           d.CreatedAt,
+		RevokedAt:           d.RevokedAt,
+		Credential:          d.Credential,
+		CredentialExpiresAt: d.CredentialExpiresAt,
+	}
+}
+
+func (s *Server) credentialChallenge(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	var input struct {
+		DeviceID string `json:"device_id"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+
+	c, err := s.recovery.Challenge(r.Context(), input.DeviceID)
+	if err != nil {
+		credentialRecoveryError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, c)
+}
+
+func (s *Server) recoverCredential(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	var proof protocol.CredentialProof
+	if !decodeJSON(w, r, &proof) {
+		return
+	}
+
+	lease, err := s.recovery.Recover(r.Context(), proof)
+	if err != nil {
+		credentialRecoveryError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, lease)
+}
+
+func credentialRecoveryError(w http.ResponseWriter, err error) {
+	if errors.Is(err, protocol.ErrInvalidCredentialProof) {
+		writeErrorCode(
+			w,
+			http.StatusUnauthorized,
+			"invalid_credential_proof",
+			"invalid credential proof",
+		)
+		return
+	}
+
+	writeErrorCode(
+		w,
+		http.StatusServiceUnavailable,
+		"recovery_unavailable",
+		"credential recovery unavailable",
+	)
 }

@@ -16,7 +16,14 @@ from urllib.parse import quote, urlsplit
 
 from tooling import ROOT, cli, port, require_commands
 
-REQUIRED = {"PostgreSQL", "Redis", "Redis browser sessions", "migration advisory lock"}
+REQUIRED = {
+    "PostgreSQL",
+    "Redis",
+    "Redis browser sessions",
+    "migration advisory lock",
+    "credential recovery Redis",
+    "credential recovery SQL",
+}
 ADAPTERS = {
     f"control/{module}/storage"
     for module in (
@@ -112,6 +119,14 @@ def validate_events(stream):
             skipped.append(f"{package}/{name}")
         if event.get("Action") != "pass" or not name or "/" in name:
             continue
+        if name == "TestRedisRecoveryChallengeConsumedOnceAcrossReplicas" and package.endswith(
+            "/control/workflows"
+        ):
+            passed.add("credential recovery Redis")
+        if name == "TestPostgresRecoveredCredentialInvalidatesOldCredential" and package.endswith(
+            "/control/devices/storage"
+        ):
+            passed.add("credential recovery SQL")
         if name.startswith("TestPostgres") and "/control/" in package:
             passed.add("PostgreSQL")
             if package.endswith("/storage"):
@@ -146,6 +161,7 @@ def contracts(env):
         "-p=1",
         *packages,
         "./internal/app/control",
+        "./internal/control/workflows",
         "./internal/control/identity/redis",
         "./internal/app/control/storage",
         "./internal/platform/events",

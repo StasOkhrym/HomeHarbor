@@ -82,7 +82,9 @@ class ToolingTests(unittest.TestCase):
         ):
             self.cli(name)
 
-    def integration_events(self, *, skip=False, missing_redis=False, missing_sessions=False):
+    def integration_events(
+        self, *, skip=False, missing_redis=False, missing_sessions=False, missing_recovery=False
+    ):
         events = [
             {
                 "Action": "pass",
@@ -117,6 +119,21 @@ class ToolingTests(unittest.TestCase):
                     "Package": "example/internal/platform/redissecurity",
                     "Test": "TestRedisChallenge",
                 }
+            )
+        if not missing_recovery:
+            events.extend(
+                [
+                    {
+                        "Action": "pass",
+                        "Package": "example/internal/control/workflows",
+                        "Test": "TestRedisRecoveryChallengeConsumedOnceAcrossReplicas",
+                    },
+                    {
+                        "Action": "pass",
+                        "Package": "example/internal/control/devices/storage",
+                        "Test": "TestPostgresRecoveredCredentialInvalidatesOldCredential",
+                    },
+                ]
             )
         if not missing_sessions:
             events.append(
@@ -197,6 +214,13 @@ class ToolingTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("browser sessions", result.stderr)
+
+    def test_integration_requires_recovery_contracts(self):
+        self.integration_events(missing_recovery=True)
+        result = self.run_script("integration")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("credential recovery", result.stderr)
 
     def test_integration_propagates_go_failure(self):
         self.integration_events()

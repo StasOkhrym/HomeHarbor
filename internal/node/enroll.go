@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
@@ -24,7 +23,7 @@ func Enroll(
 		httpClient = http.DefaultClient
 	}
 	body, err := json.Marshal(
-		devices.EnrollRequest{
+		protocol.EnrollmentRequest{
 			Token:              token,
 			Name:               name,
 			IdentityPublicKey:  state.IdentityPublicKey,
@@ -52,15 +51,16 @@ func Enroll(
 	if response.StatusCode != http.StatusCreated {
 		return fmt.Errorf("enroll device: control plane returned %s", response.Status)
 	}
-	var device devices.Device
+	var device protocol.EnrolledDevice
 	if err = json.NewDecoder(response.Body).Decode(&device); err != nil {
 		return err
 	}
-	if device.ID == "" || device.Credential == "" {
+	if device.ID == "" || device.Credential == "" || device.CredentialExpiresAt.IsZero() {
 		return errors.New("control plane returned incomplete enrollment")
 	}
 	state.DeviceID = device.ID
 	state.DeviceCredential = device.Credential
+	state.CredentialExpiresAt = device.CredentialExpiresAt
 	return nil
 }
 
@@ -97,16 +97,15 @@ func RefreshCredential(
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("rotate device credential: control plane returned %s", response.Status)
 	}
-	var result struct {
-		Credential string `json:"credential"`
-	}
+	var result protocol.CredentialLease
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		return err
 	}
-	if result.Credential == "" {
+	if result.Credential == "" || result.DeviceID != state.DeviceID || result.ExpiresAt.IsZero() {
 		return errors.New("control plane returned an empty rotated credential")
 	}
 	state.DeviceCredential = result.Credential
+	state.CredentialExpiresAt = result.ExpiresAt
 	return nil
 }
 

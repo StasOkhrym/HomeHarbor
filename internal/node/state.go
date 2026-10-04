@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"time"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
@@ -16,11 +17,12 @@ import (
 )
 
 type State struct {
-	DeviceID           string          `json:"device_id,omitempty"`
-	DeviceCredential   string          `json:"device_credential,omitempty"`
-	IdentityPrivateKey string          `json:"identity_private_key"`
-	IdentityPublicKey  string          `json:"identity_public_key"`
-	WireGuard          tunnel.Identity `json:"wireguard"`
+	DeviceID            string          `json:"device_id,omitempty"`
+	CredentialExpiresAt time.Time       `json:"credential_expires_at,omitempty"`
+	DeviceCredential    string          `json:"device_credential,omitempty"`
+	IdentityPrivateKey  string          `json:"identity_private_key"`
+	IdentityPublicKey   string          `json:"identity_public_key"`
+	WireGuard           tunnel.Identity `json:"wireguard"`
 }
 
 func NewState() (State, error) {
@@ -43,12 +45,12 @@ func NewState() (State, error) {
 
 // Save acquires a short-lived owner for command-boundary persistence.
 // Running processes use SaveTo with their already-owned lifetime store.
-func (s State) Save(path string) error {
+func (s State) Save(path string) (err error) {
 	store, err := localstate.Open(path)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() { err = errors.Join(err, store.Close()) }()
 	return s.SaveTo(store)
 }
 
@@ -62,12 +64,12 @@ func (s State) SaveTo(store *localstate.Store) error {
 }
 
 // LoadOrCreate never replaces corrupt or invalid state with a new identity.
-func LoadOrCreate(path string) (State, error) {
+func LoadOrCreate(path string) (state State, err error) {
 	store, err := localstate.Open(path)
 	if err != nil {
 		return State{}, err
 	}
-	defer store.Close()
+	defer func() { err = errors.Join(err, store.Close()) }()
 	return LoadOrCreateFrom(store)
 }
 
@@ -93,12 +95,12 @@ func LoadOrCreateFrom(store *localstate.Store) (State, error) {
 	return state, nil
 }
 
-func Load(path string) (State, error) {
+func Load(path string) (state State, err error) {
 	store, err := localstate.Open(path)
 	if err != nil {
 		return State{}, err
 	}
-	defer store.Close()
+	defer func() { err = errors.Join(err, store.Close()) }()
 	return LoadFrom(store)
 }
 

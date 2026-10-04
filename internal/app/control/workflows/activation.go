@@ -425,6 +425,7 @@ func (a *Activation) Claim(ctx context.Context, id string, proof ClaimProof) (Cl
 			now,
 			now.Add(a.credentialTTL),
 		)
+		d.CredentialExpiresAt = now.Add(a.credentialTTL)
 		if lockErr != nil {
 			return lockErr
 		}

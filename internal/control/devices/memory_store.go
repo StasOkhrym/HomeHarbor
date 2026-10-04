@@ -137,6 +137,7 @@ func (s *MemoryStore) AuthenticateCredential(
 	for _, device := range s.devices {
 		if device.CredentialHash == hash && device.Status == StatusActive &&
 			now.Before(s.credentialExpires[device.ID]) {
+			device.CredentialExpiresAt = s.credentialExpires[device.ID]
 			return device, nil
 		}
 	}

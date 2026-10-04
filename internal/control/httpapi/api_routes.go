@@ -74,6 +74,12 @@ func (s *Server) registerDeviceAPI(api chi.Router) {
 		// Rotation authenticates the existing DB-backed device credential. It
 		// must not inherit browser auth or Redis-dependent onboarding quotas.
 		device.Post("/credentials/rotate", s.rotateCredential)
+		if s.recovery != nil {
+			device.With(s.deviceLimiter.Middleware(s.clientKey)).
+				Post("/credentials/challenge", s.credentialChallenge)
+			device.With(s.deviceLimiter.Middleware(s.clientKey)).
+				Post("/credentials/recovery", s.recoverCredential)
+		}
 	})
 }
 

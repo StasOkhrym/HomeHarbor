@@ -19,8 +19,8 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
-	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 // InviteEnrollment pins root and network authority supplied by the caller.
@@ -288,12 +288,14 @@ func EnrollByInvite(
 			if signErr != nil {
 				return signErr
 			}
-			var result workflows.ClaimResult
+			var result struct {
+				Device protocol.EnrolledDevice `json:"device"`
+			}
 			status, err = activationRequest(ctx, &client, endpoint+"/claim", signed, &result)
 			if err == nil && status == http.StatusOK {
 				d := result.Device
-				if d.ID != p.DeviceID || d.Status != devices.StatusActive ||
-					d.Role != devices.RoleClient ||
+				if d.CredentialExpiresAt.IsZero() || d.ID != p.DeviceID || d.Status != "active" ||
+					d.Role != "client" ||
 					d.IdentityPublicKey != state.IdentityPublicKey ||
 					d.WireGuardPublicKey != state.WireGuard.PublicKey {
 					return errors.New("claim returned a different device identity")
@@ -304,6 +306,7 @@ func EnrollByInvite(
 				updated := *state
 				updated.DeviceID = d.ID
 				updated.DeviceCredential = d.Credential
+				updated.CredentialExpiresAt = d.CredentialExpiresAt
 				if err := updated.Save(p.StatePath); err != nil {
 					return err
 				}

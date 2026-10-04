@@ -15,6 +15,7 @@ import (
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
@@ -28,7 +29,7 @@ type DeviceService interface {
 	Revoke(context.Context, string) error
 	Authenticate(context.Context, string) (devices.Device, error)
 	Device(context.Context, string) (devices.Device, error)
-	RotateCredential(context.Context, string, string) (string, error)
+	RotateCredential(context.Context, string, string) (protocol.CredentialLease, error)
 }
 
 type Authorizer interface {
@@ -39,6 +40,7 @@ type Authorizer interface {
 // services remain unaware of chi and continue to satisfy narrow interfaces.
 type Server struct {
 	devices             DeviceService
+	recovery            CredentialRecovery
 	routes              RouteService
 	policy              PolicyService
 	authorizer          Authorizer
@@ -142,4 +144,9 @@ type SnapshotBroadcaster interface {
 
 func (s *Server) Handler() http.Handler {
 	return NewRouter(s)
+}
+
+type CredentialRecovery interface {
+	Challenge(context.Context, string) (protocol.CredentialChallenge, error)
+	Recover(context.Context, protocol.CredentialProof) (protocol.CredentialLease, error)
 }

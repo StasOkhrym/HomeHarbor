@@ -31,6 +31,7 @@ import (
 	servicesstorage "github.com/StasOkhrym/homeharbor/internal/control/services/storage"
 	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
 	snapshotsstorage "github.com/StasOkhrym/homeharbor/internal/control/snapshots/storage"
+	recoveryworkflow "github.com/StasOkhrym/homeharbor/internal/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 	"github.com/StasOkhrym/homeharbor/internal/platform/events"
 	"github.com/StasOkhrym/homeharbor/internal/platform/redissecurity"
@@ -111,7 +112,14 @@ func buildHTTP(
 
 	deps := httpapi.Dependencies{
 		Resources: httpapi.ResourceDependencies{
-			Devices:  deviceService,
+			Devices: deviceService,
+			Recovery: recoveryworkflow.NewCredentialRecovery(
+				deviceService,
+				sharedChallenges{store: securityState, timeout: cfg.Runtime.RedisTimeout},
+				cfg.Networking.NetworkID,
+				time.Now,
+				nil,
+			),
 			Routes:   routeService,
 			Policy:   policyService,
 			Services: serviceCatalog,
@@ -218,7 +226,10 @@ func buildHTTP(
 		}
 		deps.Resources.Snapshots = signedSnapshots
 		deps.Security.RootPublicKey = rootPublic
-		deps.Security.Challenges = sharedChallenges{store: securityState}
+		deps.Security.Challenges = sharedChallenges{
+			store:   securityState,
+			timeout: cfg.Runtime.RedisTimeout,
+		}
 		// Candidate exchange must use the same signed topology as relay ticket
 		// issuance. A role-only check would disclose endpoint candidates for a
 		// client/gateway pair that has no approved route or ACL relationship.

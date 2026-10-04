@@ -13,6 +13,8 @@ import (
 	"unicode/utf8"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 type Role string
@@ -128,7 +130,11 @@ type Option func(*Service)
 
 // WithCredentialTTL supplies a startup-validated issuance lifetime.
 func WithCredentialTTL(ttl time.Duration) Option {
-	return func(s *Service) { s.credentialTTL = ttl }
+	return func(s *Service) {
+		if ttl > 0 && ttl <= CredentialTTL {
+			s.credentialTTL = ttl
+		}
+	}
 }
 
 func WithPublisher(publisher Publisher) Option {
@@ -314,14 +320,16 @@ func (s *Service) Authenticate(ctx context.Context, credential string) (Device, 
 func (s *Service) RotateCredential(
 	ctx context.Context,
 	deviceID, credential string,
-) (string, error) {
+) (protocol.CredentialLease, error) {
 	if strings.TrimSpace(deviceID) == "" || credential == "" {
-		return "", ErrDeviceNotFound
+		return protocol.CredentialLease{}, ErrDeviceNotFound
 	}
+
 	newCredential, err := s.randomString(32)
 	if err != nil {
-		return "", err
+		return protocol.CredentialLease{}, err
 	}
+
 	now := s.now().UTC()
 	if err := s.store.RotateCredential(
 		ctx,
@@ -331,9 +339,14 @@ func (s *Service) RotateCredential(
 		now,
 		now.Add(s.credentialTTL),
 	); err != nil {
-		return "", err
+		return protocol.CredentialLease{}, err
 	}
-	return newCredential, nil
+
+	return protocol.CredentialLease{
+		DeviceID:   deviceID,
+		Credential: newCredential,
+		ExpiresAt:  now.Add(s.credentialTTL),
+	}, nil
 }
 
 func (s *Service) randomString(size int) (string, error) {
@@ -343,4 +356,44 @@ func (s *Service) randomString(size int) (string, error) {
 	}
 
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// RecoveryRepository serializes the active identity check, replacement and outbox
+// in a single transaction. Recovery cannot be emulated through ordinary rotation.
+type RecoveryRepository interface {
+	RecoverCredential(context.Context, string, string, [32]byte, time.Time, time.Time) error
+}
+
+func (s *Service) RecoverCredential(
+	ctx context.Context,
+	id, identity string,
+) (protocol.CredentialLease, error) {
+	store, ok := s.store.(RecoveryRepository)
+	if !ok {
+		return protocol.CredentialLease{}, errors.New("credential recovery unavailable")
+	}
+
+	secret, err := s.randomString(32)
+	if err != nil {
+		return protocol.CredentialLease{}, err
+	}
+
+	now := s.now().UTC()
+	lease := protocol.CredentialLease{
+		DeviceID:   id,
+		Credential: secret,
+		ExpiresAt:  now.Add(s.credentialTTL),
+	}
+	if err = store.RecoverCredential(
+		ctx,
+		id,
+		identity,
+		sha256.Sum256([]byte(secret)),
+		now,
+		lease.ExpiresAt,
+	); err != nil {
+		return protocol.CredentialLease{}, err
+	}
+
+	return lease, nil
 }

@@ -137,3 +137,16 @@ Fresh `go test -race` passed for `internal/platform/lifecycle`, `internal/app/no
 Still required before implementation completion: live WebSocket revoke/expiry test; controlled-clock credential rotation including lost response/save failure; SQL pool-size-one and replay/consumer-failure tests; Linux guard-before-admission and restart/crash verification; stopped-handler/worker ownership under drain timeout; CLI help/overrides/cancellation and deployment invocation migration.
 
 Implement in that order of safety first, then shared CLI/config/runtime libraries, then event adapter/projections and broader module relocation. Folder structure alone does not repair these execution contracts.
+
+### Selected credential recovery contract (Runtime Task 3)
+
+Use identity-proof reauthentication, with no old-bearer overlap. The fixed
+[credential protocol](../../api/protocol.md) binds a fresh 32-byte single-use
+nonce, network, device and 60-second expiry under the distinct Ed25519 signing
+domain `homeharbor/credential-recovery/v1\x00` (actual trailing NUL). Redis owns
+shared challenge consumption and fail-closed onboarding quota. SQL locks the
+device row, rechecks active identity, and atomically replaces credentials with
+an outbox fact. Unknown devices receive ordinary challenges without lookup;
+completion uses generic proof errors. A lost response or local persistence
+failure requires a fresh challenge, never reenrollment. Leases expose actual
+issuance expiry capped at 15 minutes and persist it with local identity state.
