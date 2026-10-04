@@ -10,6 +10,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/agent/dns"
 	"github.com/StasOkhrym/homeharbor/internal/node"
+	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
@@ -47,7 +48,17 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error)
 			return nil, err
 		}
 	}
-	state, err := prepareIdentity(ctx, cfg)
+	store, err := localstate.Open(cfg.Identity.StatePath)
+	if err != nil {
+		return nil, err
+	}
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			_ = store.Close()
+		}
+	}()
+	state, err := prepareIdentity(ctx, cfg, store)
 	if err != nil {
 		return nil, err
 	}
@@ -86,11 +97,12 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error)
 		bootstrap = guard
 		workers = append(workers, lifecycle.Worker{Name: "coordination", Component: coordination})
 	}
-	return &App{bootstrap: bootstrap, workers: workers}, nil
+	handedOff = true
+	return &App{bootstrap: bootstrap, workers: workers, close: store.Close}, nil
 }
 
-func prepareIdentity(ctx context.Context, cfg config.Node) (node.State, error) {
-	state, err := node.LoadOrCreate(cfg.Identity.StatePath)
+func prepareIdentity(ctx context.Context, cfg config.Node, store *localstate.Store) (node.State, error) {
+	state, err := node.LoadOrCreateFrom(store)
 	if err != nil {
 		return node.State{}, err
 	}
@@ -111,7 +123,7 @@ func prepareIdentity(ctx context.Context, cfg config.Node) (node.State, error) {
 	if err != nil {
 		return node.State{}, err
 	}
-	if err := state.Save(cfg.Identity.StatePath); err != nil {
+	if err := state.SaveTo(store); err != nil {
 		return node.State{}, err
 	}
 	return state, nil

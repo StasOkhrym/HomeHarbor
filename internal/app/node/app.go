@@ -5,6 +5,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
@@ -17,6 +18,7 @@ type App struct {
 	bootstrap  lifecycle.Component
 	components []lifecycle.Component
 	workers    []lifecycle.Worker
+	close      func() error
 }
 
 var _ lifecycle.Component = (*App)(nil)
@@ -38,9 +40,12 @@ func NewWithBootstrap(bootstrap lifecycle.Component, components ...lifecycle.Com
 
 // Run waits until all node components stop. A component failure cancels its
 // siblings and is returned after their cleanup has completed.
-func (a *App) Run(ctx context.Context) error {
+func (a *App) Run(ctx context.Context) (result error) {
 	if a == nil {
 		return lifecycle.ErrNilComponent
+	}
+	if a.close != nil {
+		defer func() { result = errors.Join(result, a.close()) }()
 	}
 	if ctx.Err() != nil {
 		return nil

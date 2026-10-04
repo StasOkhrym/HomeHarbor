@@ -98,3 +98,34 @@ func TestLoadRejectsWorldReadableState(t *testing.T) {
 		t.Fatal("Load() accepted a state file readable by other users")
 	}
 }
+
+func TestInvalidKeysFailClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	original := []byte(`{"identity_private_key":"invalid"}`)
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadOrCreate(path); err == nil {
+		t.Fatal("corrupt state generated a replacement identity")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(original) {
+		t.Fatalf("corrupt bytes changed: %q, %v", after, err)
+	}
+}
+
+func TestValidateRejectsInconsistentEd25519Seed(t *testing.T) {
+	state, err := NewState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	private, err := base64.RawURLEncoding.DecodeString(state.IdentityPrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	private[0] ^= 0xff
+	state.IdentityPrivateKey = base64.RawURLEncoding.EncodeToString(private)
+	if err := state.Validate(); err == nil {
+		t.Fatal("private seed inconsistent with public key accepted")
+	}
+}
