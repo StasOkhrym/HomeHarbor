@@ -52,10 +52,19 @@ func (a *liveAuthority) Device(_ context.Context, id string) (devices.Device, er
 
 func dialLeasePeer(t *testing.T, server *httptest.Server, id string) *websocket.Conn {
 	t.Helper()
+	return dialCredentialPeer(t, server, id, id)
+}
+
+func dialCredentialPeer(
+	t *testing.T,
+	server *httptest.Server,
+	id, credential string,
+) *websocket.Conn {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	header := make(http.Header)
-	header.Set("Authorization", "Bearer "+id)
+	header.Set("Authorization", "Bearer "+credential)
 	c, _, err := websocket.Dial(
 		ctx,
 		"ws"+server.URL[4:],
@@ -188,18 +197,24 @@ func TestRotationReplacesSessionWithoutDuplicates(t *testing.T) {
 	}
 }
 
-func TestIdleSessionRevalidatesAcrossReplicas(t *testing.T) {
+func TestIdleSessionRevalidatesAuthoritativeState(t *testing.T) {
 	a := &liveAuthority{expiry: time.Now().Add(time.Minute)}
+
 	h := leaseHandler(a)
 	s := httptest.NewServer(h)
 	defer s.Close()
+
 	c := dialLeasePeer(t, s, "source")
+
 	a.mu.Lock()
 	a.revoked = true
+
 	a.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
+
 	var m any
+
 	if err := wsjson.Read(ctx, c, &m); err == nil || ctx.Err() != nil {
 		t.Fatalf("idle revoked session survived authoritative recheck: %v", err)
 	}

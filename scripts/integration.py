@@ -23,6 +23,7 @@ REQUIRED = {
     "migration advisory lock",
     "credential recovery Redis",
     "credential recovery SQL",
+    "coordination cross-replica revoke",
 }
 ADAPTERS = {
     f"control/{module}/storage"
@@ -127,6 +128,10 @@ def validate_events(stream):
             "/control/devices/storage"
         ):
             passed.add("credential recovery SQL")
+        if name == "TestPostgresCoordinationCrossReplicaRevoke" and package.endswith(
+            "/control/coordination"
+        ):
+            passed.add("coordination cross-replica revoke")
         if name.startswith("TestPostgres") and "/control/" in package:
             passed.add("PostgreSQL")
             if package.endswith("/storage"):
@@ -162,6 +167,7 @@ def contracts(env):
         *packages,
         "./internal/app/control",
         "./internal/control/workflows",
+        "./internal/control/coordination",
         "./internal/control/identity/redis",
         "./internal/app/control/storage",
         "./internal/platform/events",

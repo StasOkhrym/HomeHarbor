@@ -150,3 +150,39 @@ an outbox fact. Unknown devices receive ordinary challenges without lookup;
 completion uses generic proof errors. A lost response or local persistence
 failure requires a fresh challenge, never reenrollment. Leases expose actual
 issuance expiry capped at 15 minutes and persist it with local identity state.
+
+### Gateway startup and stop safety (Runtime Task 5, 2026-10-07)
+
+Gateway startup now orders read-only configuration/trust validation, exclusive
+local-state ownership, HomeHarbor-owned tunnel deny, identity loading/creation
+and durable saves, enrollment/credential/relay admission, then supervised
+workers. The state lock is an ownership prerequisite: a competing process or
+filesystem ownership failure returns before firewall mutation. Successful deny
+installation is required before identity work or admission. If nft installation
+fails, startup returns its error and starts no admission or workers; it cannot
+promise that a guard was established. Clients never install forwarding guards.
+
+A complete verified signed snapshot remains the boundary for releasing deny.
+Partial application does not advance the applied revision. Orderly gateway stop
+joins all workers and their cleanup, then reinstalls owned deny using a bounded
+fresh cleanup context before releasing the state owner. Worker, guard-cleanup
+and state-close errors are joined. The guard changes only HomeHarbor's table and
+tunnel-interface traffic; it does not disable unrelated host forwarding.
+
+The Linux namespace packet fixture measured the crash limitation directly:
+SIGKILL of a running runtime retained the previous kernel allow and private HTTP
+remained reachable. Restart against unavailable control replaced that allow with
+deny before credential admission, so private HTTP failed. SIGTERM shutdown also
+left private HTTP denied. An unrelated forwarding path stayed reachable and a
+separate owner's nft table remained identical after both transitions. An abrupt
+crash therefore does not immediately revoke the last applied policy; denial
+requires a successful restart guard (or an external owner intervention).
+
+Evidence: `TestLinuxNamespaceGatewayRestartRetainedAllow` passed in the existing
+disposable Linux arm64 VM, alongside both existing namespace policy/WireGuard
+fixtures and `TestLinuxResolvedSplitDNSLifecycle`. The restart fixture runs the
+production runtime and real nft commands, but explicitly seeds the retained
+allow directly; it does not claim signed-snapshot delivery coverage. The focused
+race suite for `internal/app/node`, `internal/agent/nft`, and `internal/node`
+passed, including guard-before-enrollment/renewal/relay, failed admission,
+failed guard, shutdown cleanup failure, and client isolation regressions.

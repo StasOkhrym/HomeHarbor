@@ -83,7 +83,13 @@ class ToolingTests(unittest.TestCase):
             self.cli(name)
 
     def integration_events(
-        self, *, skip=False, missing_redis=False, missing_sessions=False, missing_recovery=False
+        self,
+        *,
+        skip=False,
+        missing_redis=False,
+        missing_sessions=False,
+        missing_recovery=False,
+        missing_coordination=False,
     ):
         events = [
             {
@@ -135,6 +141,14 @@ class ToolingTests(unittest.TestCase):
                     },
                 ]
             )
+        if not missing_coordination:
+            events.append(
+                {
+                    "Action": "pass",
+                    "Package": "example/internal/control/coordination",
+                    "Test": "TestPostgresCoordinationCrossReplicaRevoke",
+                }
+            )
         if not missing_sessions:
             events.append(
                 {
@@ -146,6 +160,7 @@ class ToolingTests(unittest.TestCase):
         self.cli(
             "go",
             '[ "$1" = test ] || exit 99\n[ "$2" = -json ] || exit 98\n'
+            + "printf '%s\\n' \"$*\" >> integration-go.log\n"
             + "printf '%s\\n' '"
             + "\n".join(json.dumps(e) for e in events)
             + "'\n",
@@ -221,6 +236,16 @@ class ToolingTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("credential recovery", result.stderr)
+
+    def test_integration_requires_coordination_cross_replica_revoke(self):
+        self.integration_events(missing_coordination=True)
+        result = self.run_script("integration")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("coordination cross-replica revoke", result.stderr)
+        self.assertIn(
+            "./internal/control/coordination", (self.root / "integration-go.log").read_text()
+        )
 
     def test_integration_propagates_go_failure(self):
         self.integration_events()

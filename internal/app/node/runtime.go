@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/agent/dns"
+	"github.com/StasOkhrym/homeharbor/internal/agent/nft"
 	"github.com/StasOkhrym/homeharbor/internal/node"
 	"github.com/StasOkhrym/homeharbor/internal/node/credentials"
 	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
@@ -34,9 +35,10 @@ func NewRuntime(_ context.Context, role Role, cfg config.Node) (*App, error) {
 	}}, nil
 }
 
-// startRuntime owns enrollment and local state writes. It assembles workers
-// without starting them; the returned App still installs the deny guard first.
-func startRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error) {
+// startRuntime acquires exclusive local ownership before touching the firewall,
+// then denies gateway traffic before identity writes or network admission.
+// Ownership failure cannot safely mutate a competing process's firewall.
+func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, result error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -56,9 +58,19 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error)
 	handedOff := false
 	defer func() {
 		if !handedOff {
-			_ = store.Close()
+			result = errors.Join(result, store.Close())
 		}
 	}()
+	var guard *nft.Applier
+	if kernel && role == Gateway {
+		guard = nft.NewApplier(cfg.WireGuard.InterfaceName, nil)
+		operation, cancel := context.WithTimeout(ctx, cfg.Runtime.OperationTimeout)
+		err := guard.Guard(operation)
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+	}
 	state, err := prepareIdentity(ctx, cfg, store)
 	if err != nil {
 		return nil, err
@@ -103,9 +115,8 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error)
 		}
 		workers = append(workers, lifecycle.Worker{Name: "relay", Component: relay})
 	}
-	var bootstrap lifecycle.Component
 	if kernel {
-		coordination, guard, err := prepareCoordination(
+		coordination, err := prepareCoordination(
 			role,
 			cfg,
 			state,
@@ -117,11 +128,20 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error)
 		if err != nil {
 			return nil, err
 		}
-		bootstrap = guard
 		workers = append(workers, lifecycle.Worker{Name: "coordination", Component: coordination})
 	}
 	handedOff = true
-	return &App{bootstrap: bootstrap, workers: workers, close: store.Close}, nil
+	return &App{workers: workers, close: func() error {
+		// App calls close only after every worker and its cleanup have joined.
+		// A bounded fresh context allows deny installation during cancellation.
+		var denyErr error
+		if guard != nil {
+			cleanup, cancel := context.WithTimeout(context.Background(), cfg.Runtime.CleanupTimeout)
+			denyErr = guard.Guard(cleanup)
+			cancel()
+		}
+		return errors.Join(denyErr, store.Close())
+	}}, nil
 }
 
 func prepareIdentity(
@@ -289,9 +309,9 @@ func prepareCoordination(
 	root ed25519.PublicKey,
 	peers *node.SnapshotWireGuardReconciler,
 	candidates candidateBindings,
-) (lifecycle.Component, lifecycle.Component, error) {
+) (lifecycle.Component, error) {
 	if leases == nil {
-		return nil, nil, errors.New("coordination requires a control credential owner")
+		return nil, errors.New("coordination requires a control credential owner")
 	}
 	connection := node.CoordinationConfig{
 		URL:               cfg.Coordination.URL,
@@ -314,7 +334,7 @@ func prepareCoordination(
 		)
 		return lifecycle.Func(
 			func(ctx context.Context) error { return node.RunCoordinationLoop(ctx, connection, applier) },
-		), nil, nil
+		), nil
 	}
 	var managedDNS *dns.Manager
 	var resolver *node.DNSReconciler
@@ -322,7 +342,7 @@ func prepareCoordination(
 		var err error
 		managedDNS, err = dns.NewManager(cfg.DNS.Link)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		resolver = node.NewDNSReconciler(managedDNS)
 	}
@@ -343,7 +363,7 @@ func prepareCoordination(
 		defer cancel()
 		return errors.Join(err, managedDNS.Close(cleanup))
 	})
-	return worker, lifecycle.Func(gateway.Bootstrap), nil
+	return worker, nil
 }
 
 // RunCommand is shared by the thin entrypoints; it never exits the process.

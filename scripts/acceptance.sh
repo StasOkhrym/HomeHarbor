@@ -41,8 +41,22 @@ else
         exit 2
         ;;
     esac
-    mkdir -p .local
-    binary=".local/acceptance-linux-$go_arch.test"
+    # The checkout can be a worktree outside the VM's read-only source mount.
+    # Copy only this freshly built binary; never execute stale mounted sources
+    # or write artifacts through a checkout's shared .local symlink.
+    artifact_dir=$(mktemp -d "${TMPDIR:-/tmp}/homeharbor-acceptance.XXXXXX")
+    guest_dir=
+    cleanup() {
+        rm -rf "$artifact_dir"
+        if [ -n "$guest_dir" ]; then
+            limactl shell "$instance" rm -rf "$guest_dir"
+        fi
+    }
+    trap cleanup EXIT HUP INT TERM
+    binary="$artifact_dir/acceptance-linux-$go_arch.test"
     GOOS=linux GOARCH="$go_arch" go test -tags=network_acceptance -c ./internal/acceptance -o "$binary"
-    limactl shell "$instance" sudo -- "$(pwd)/$binary" -test.run="$pattern" -test.count=1 -test.v
+    guest_dir=$(limactl shell "$instance" mktemp -d /tmp/homeharbor-acceptance.XXXXXX)
+    limactl copy --backend=scp "$binary" "$instance:$guest_dir/acceptance.test"
+    limactl shell "$instance" chmod 700 "$guest_dir/acceptance.test"
+    limactl shell "$instance" sudo -- "$guest_dir/acceptance.test" -test.run="$pattern" -test.count=1 -test.timeout=5m -test.v
 fi

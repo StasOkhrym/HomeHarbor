@@ -3,17 +3,25 @@ package node
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	nodedomain "github.com/StasOkhrym/homeharbor/internal/node"
 	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 func runtimeFixture(t *testing.T) (config.Node, *atomic.Int32) {
@@ -259,4 +267,323 @@ func TestRuntimeRetainsStateOwnerDuringWorkerCleanup(t *testing.T) {
 	}
 
 	_ = store.Close()
+}
+
+// The command boundary is faked because these tests must never change host
+// firewall state. Enrollment, renewal, relay admission and local state are real.
+func guardedRuntimeFixture(t *testing.T) (config.Node, string) {
+	t.Helper()
+	cfg := config.DefaultClient()
+	dir := t.TempDir()
+	cfg.Identity.StatePath = filepath.Join(dir, "state.json")
+	cfg.Identity.Token = "test-enrollment"
+	cfg.WireGuard.InterfaceName = "hh-test"
+	cfg.Coordination.URL = "ws://127.0.0.1:1/coordination"
+	cfg.Coordination.NetworkID = "test-network"
+	cfg.Coordination.RootPublicKeyFile = filepath.Join(dir, "root.pub")
+
+	if err := os.WriteFile(
+		cfg.Coordination.RootPublicKeyFile,
+		[]byte(base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	guard := filepath.Join(dir, "firewall")
+	t.Setenv("HH_TEST_GUARD", guard)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if err := os.WriteFile(
+		filepath.Join(dir, "nft"),
+		[]byte(
+			"#!/bin/sh\nif [ \"$1\" = list ]; then exit 0; fi\nif [ \"${HH_TEST_GUARD_FAIL:-}\" = yes ]; then exit 1; fi\ncat > \"$HH_TEST_GUARD\"\n",
+		),
+		0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	return cfg, guard
+}
+
+func assertOwnedDeny(t *testing.T, path string) {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+
+	if err != nil || !bytes.Contains(data, []byte(`iifname "hh-test" drop`)) ||
+		!bytes.Contains(data, []byte(`oifname "hh-test" drop`)) ||
+		bytes.Contains(data, []byte("dport")) {
+		t.Errorf("owned deny missing: %q, %v", data, err)
+	}
+}
+
+func TestDenyPrecedesEnrollmentAndRelayAdmission(t *testing.T) {
+	cfg, guard := guardedRuntimeFixture(t)
+	var enrollment, rotation, relay atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertOwnedDeny(t, guard)
+		switch r.URL.Path {
+		case "/api/v1/enroll":
+			enrollment.Add(1)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).
+				Encode(protocol.EnrolledDevice{ID: "gateway", Credential: "first", CredentialExpiresAt: time.Now().Add(time.Hour)})
+		case "/api/v1/devices/credentials/rotate":
+			rotation.Add(1)
+			_ = json.NewEncoder(w).
+				Encode(protocol.CredentialLease{DeviceID: "gateway", Credential: "renewed", ExpiresAt: time.Now().Add(time.Hour)})
+		default:
+			relay.Add(1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	defer server.Close()
+	cfg.Identity.ControlURL = server.URL
+	state, err := nodedomain.NewState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.WireGuard.PeerPublicKey = state.WireGuard.PublicKey
+	cfg.WireGuard.ListenPort = 51820
+	cfg.WireGuard.OverlayAddress = "100.64.0.1/32"
+	cfg.Relay.WebSocketURL = "ws://127.0.0.1:1/relay"
+	cfg.Relay.SessionID = "session"
+	cfg.Relay.DestinationDevice = "peer"
+	app, err := NewRuntime(context.Background(), Gateway, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Run(context.Background()); err == nil {
+		t.Fatal("relay admission unexpectedly succeeded")
+	}
+	if enrollment.Load() != 1 || rotation.Load() != 1 || relay.Load() != 1 {
+		t.Fatalf(
+			"missing admission coverage: enroll=%d rotate=%d relay=%d",
+			enrollment.Load(),
+			rotation.Load(),
+			relay.Load(),
+		)
+	}
+}
+
+func TestAdmissionFailureLeavesOwnedDeny(t *testing.T) {
+	cfg, guard := guardedRuntimeFixture(t)
+
+	if err := os.WriteFile(guard, []byte("retained allow"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(
+		http.HandlerFunc(
+			func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) },
+		),
+	)
+	defer server.Close()
+
+	cfg.Identity.ControlURL = server.URL
+
+	app, err := NewRuntime(context.Background(), Gateway, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Run(context.Background()); err == nil {
+		t.Fatal("enrollment unexpectedly succeeded")
+	}
+
+	assertOwnedDeny(t, guard)
+
+	store, err := localstate.Open(cfg.Identity.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFailedRuntimeGuardPreventsIdentityAndAdmission(t *testing.T) {
+	cfg, _ := guardedRuntimeFixture(t)
+	t.Setenv("HH_TEST_GUARD_FAIL", "yes")
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	cfg.Identity.ControlURL = server.URL
+
+	app, err := NewRuntime(context.Background(), Gateway, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Run(context.Background()); err == nil {
+		t.Fatal("failed guard accepted")
+	}
+
+	assertNoStartupEffects(t, cfg, &calls)
+}
+
+func TestClientRuntimeNeverInstallsForwardingGuard(t *testing.T) {
+	cfg, guard := guardedRuntimeFixture(t)
+	server := httptest.NewServer(
+		http.HandlerFunc(
+			func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) },
+		),
+	)
+	defer server.Close()
+
+	cfg.Identity.ControlURL = server.URL
+
+	app, err := NewRuntime(context.Background(), Client, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Run(context.Background()); err == nil {
+		t.Fatal("enrollment unexpectedly succeeded")
+	}
+
+	if _, err := os.Stat(guard); !os.IsNotExist(err) {
+		t.Fatalf("client touched firewall: %v", err)
+	}
+}
+
+func TestOrderlyGatewayStopLeavesDenyAndReportsCleanupFailure(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			cfg, guard := guardedRuntimeFixture(t)
+			server := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/api/v1/enroll" {
+						w.WriteHeader(http.StatusCreated)
+						_ = json.NewEncoder(w).
+							Encode(protocol.EnrolledDevice{ID: "gateway", Credential: "first", CredentialExpiresAt: time.Now().Add(time.Hour)})
+
+						return
+					}
+
+					_ = json.NewEncoder(w).
+						Encode(protocol.CredentialLease{DeviceID: "gateway", Credential: "renewed", ExpiresAt: time.Now().Add(time.Hour)})
+				}),
+			)
+			defer server.Close()
+
+			cfg.Identity.ControlURL = server.URL
+
+			app, err := startRuntime(context.Background(), Gateway, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			workerErr := errors.New("worker stopped")
+			app.workers = []lifecycle.Worker{
+				{Name: "fixture", Component: lifecycle.Func(func(context.Context) error {
+					// Simulate the last signed policy apply; cleanup must replace this
+					// only after this worker has finished its last mutation.
+					if err := os.WriteFile(guard, []byte("retained allow"), 0o600); err != nil {
+						return err
+					}
+
+					if fail {
+						t.Setenv("HH_TEST_GUARD_FAIL", "yes")
+					}
+
+					return workerErr
+				})},
+			}
+
+			err = app.Run(context.Background())
+
+			if !errors.Is(err, workerErr) {
+				t.Fatalf("lost worker failure: %v", err)
+			}
+
+			if fail {
+				if !strings.Contains(err.Error(), "deny guard") {
+					t.Fatalf("lost guard cleanup failure: %v", err)
+				}
+			} else {
+				assertOwnedDeny(t, guard)
+			}
+
+			store, err := localstate.Open(cfg.Identity.StatePath)
+			if err != nil {
+				t.Fatalf("cleanup did not release owner: %v", err)
+			}
+
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRuntimeOwnershipFailureDoesNotReplaceLivePolicy(t *testing.T) {
+	cfg, guard := guardedRuntimeFixture(t)
+
+	store, err := localstate.Open(cfg.Identity.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	if err := os.WriteFile(guard, []byte("live owner policy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	app, err := NewRuntime(context.Background(), Gateway, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Run(
+		context.Background(),
+	); err == nil ||
+		!strings.Contains(err.Error(), "acquire state lock") {
+		t.Fatalf("expected ownership failure: %v", err)
+	}
+
+	data, err := os.ReadFile(guard)
+
+	if err != nil || string(data) != "live owner policy" {
+		t.Fatalf("competing runtime changed policy: %q %v", data, err)
+	}
+}
+
+func TestRuntimeRechecksTrustBeforeGuardOrIdentity(t *testing.T) {
+	cfg, guard := guardedRuntimeFixture(t)
+	app, err := NewRuntime(context.Background(), Gateway, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(
+		cfg.Coordination.RootPublicKeyFile,
+		[]byte("invalid"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Run(context.Background()); err == nil {
+		t.Fatal("changed trust anchor accepted")
+	}
+
+	if _, err := os.Stat(guard); !os.IsNotExist(err) {
+		t.Fatalf("invalid trust changed firewall: %v", err)
+	}
+
+	var calls atomic.Int32
+
+	assertNoStartupEffects(t, cfg, &calls)
 }

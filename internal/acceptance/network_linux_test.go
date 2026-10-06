@@ -4,17 +4,29 @@ package acceptance
 
 import (
 	"bufio"
+	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"os/exec"
+	"os/signal"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/agent/nft"
+	appnode "github.com/StasOkhrym/homeharbor/internal/app/node"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
+	"github.com/StasOkhrym/homeharbor/internal/platform/config"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 func TestLinuxNamespaceDefaultDenyLANAccess(t *testing.T) {
@@ -752,4 +764,235 @@ func commandOutputWithInput(t *testing.T, input, command string, arguments ...st
 	}
 
 	return string(output)
+}
+
+// TestGatewayRuntimeProcess is re-executed inside the gateway namespace by the
+// packet fixture. It runs the production runtime, including real nft commands.
+func TestGatewayRuntimeProcess(t *testing.T) {
+	mode := os.Getenv("HH_ACCEPTANCE_RUNTIME")
+	if mode == "" {
+		return
+	}
+	dir := os.Getenv("HH_ACCEPTANCE_DIR")
+	cfg := config.DefaultClient()
+	cfg.Identity.StatePath = filepath.Join(dir, "state.json")
+	cfg.Identity.Token = "fixture-enrollment"
+	cfg.Identity.ControlURL = "http://127.0.0.1:1"
+	cfg.Coordination.URL = "ws://127.0.0.1:1/coordination"
+	cfg.Coordination.RootPublicKeyFile = filepath.Join(dir, "root.pub")
+	cfg.Coordination.NetworkID = "fixture"
+	cfg.WireGuard.InterfaceName = "gt0"
+	cfg.Runtime.OperationTimeout = 2 * time.Second
+	cfg.Runtime.CleanupTimeout = 2 * time.Second
+	if mode == "running" {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/v1/enroll":
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).
+					Encode(protocol.EnrolledDevice{ID: "gateway", Credential: "first", CredentialExpiresAt: time.Now().Add(time.Hour)})
+			case "/api/v1/devices/credentials/rotate":
+				_ = json.NewEncoder(w).
+					Encode(protocol.CredentialLease{DeviceID: "gateway", Credential: "renewed", ExpiresAt: time.Now().Add(time.Hour)})
+			case "/coordination":
+				if err := os.WriteFile(
+					filepath.Join(dir, "ready"),
+					[]byte("ready"),
+					0o600,
+				); err != nil {
+					t.Error(err)
+				}
+				w.WriteHeader(http.StatusServiceUnavailable)
+			default:
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}
+		}))
+		defer server.Close()
+		cfg.Identity.ControlURL = server.URL
+		cfg.Coordination.URL = "ws" + strings.TrimPrefix(server.URL, "http") + "/coordination"
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM)
+	defer cancel()
+	ctx, timeout := context.WithTimeout(ctx, 30*time.Second)
+	defer timeout()
+	err := appnode.RunCommand(ctx, appnode.Gateway, cfg)
+	if mode == "unavailable" {
+		if err == nil || !strings.Contains(err.Error(), "connection refused") {
+			t.Fatalf("expected unavailable control admission, got %v", err)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLinuxNamespaceGatewayRestartRetainedAllow(t *testing.T) {
+	requireNetworkTools(t, false)
+	suffix := fmt.Sprintf("%d-restart", os.Getpid())
+	clientNS, gatewayNS, lanNS := "hh-c-"+suffix, "hh-g-"+suffix, "hh-l-"+suffix
+	for _, ns := range []string{clientNS, gatewayNS, lanNS} {
+		if err := run("ip", "netns", "add", ns); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = run("ip", "netns", "del", ns) })
+	}
+	createVethTopology(t, clientNS, gatewayNS, lanNS)
+	configureTopology(t, clientNS, gatewayNS, lanNS, true)
+	servers := startHTTPServers(t, lanNS)
+	t.Cleanup(func() {
+		for _, server := range servers {
+			_ = server.Process.Kill()
+			_ = server.Wait()
+		}
+	})
+	waitForHTTP(t, clientNS, "http://192.168.50.2:8080")
+	verifyUnrelatedForwarding(t, clientNS, gatewayNS, lanNS)
+	// An independent firewall owner must survive both runtime restarts.
+	const foreign = "table inet fixture_owner {\n chain forward {\n type filter hook forward priority 10; policy accept;\n }\n}\n"
+	if err := runWithInput(gatewayNS, foreign, "nft", "-f", "-"); err != nil {
+		t.Fatal(err)
+	}
+	foreignBefore := commandOutput(
+		t,
+		"ip",
+		"netns",
+		"exec",
+		gatewayNS,
+		"nft",
+		"list",
+		"table",
+		"inet",
+		"fixture_owner",
+	)
+	dir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(dir, "root.pub"),
+		[]byte(base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := func(mode string) *exec.Cmd {
+		cmd := exec.Command(
+			"ip",
+			"netns",
+			"exec",
+			gatewayNS,
+			binary,
+			"-test.run=^TestGatewayRuntimeProcess$",
+			"-test.v",
+			"-test.timeout=40s",
+		)
+		cmd.Env = append(os.Environ(), "HH_ACCEPTANCE_RUNTIME="+mode, "HH_ACCEPTANCE_DIR="+dir)
+		return cmd
+	}
+	start := func() *exec.Cmd {
+		_ = os.Remove(filepath.Join(dir, "ready"))
+		cmd := command("running")
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = cmd.Process.Kill() })
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(filepath.Join(dir, "ready")); err == nil {
+				return cmd
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatal("gateway did not reach coordination worker")
+		return nil
+	}
+	allow := func() {
+		// Seed the retained kernel policy independently of signed-snapshot
+		// delivery: this fixture tests runtime ownership, not control signing.
+		applyDefaultDenyPolicy(
+			t,
+			gatewayNS,
+			"gt0",
+			map[string]netip.Prefix{"client": netip.MustParsePrefix("100.64.0.2/32")},
+			policy.Snapshot{
+				Revision:      1,
+				DefaultAction: policy.ActionDeny,
+				Rules: []policy.Rule{
+					{
+						ID:             "fixture",
+						SourceDeviceID: "client",
+						Destination:    netip.MustParsePrefix("192.168.50.2/32"),
+						Protocol:       policy.ProtocolTCP,
+						PortFrom:       8080,
+						PortTo:         8080,
+					},
+				},
+			},
+		)
+		waitForHTTP(t, clientNS, "http://192.168.50.2:8080")
+	}
+	check := func() {
+		if err := curl(clientNS, "http://192.168.50.2:8080"); err == nil {
+			t.Fatal("owned private fixture remained reachable")
+		}
+		if err := runInNamespace(
+			clientNS,
+			"curl",
+			"--interface",
+			"172.20.0.2",
+			"--fail",
+			"--silent",
+			"--max-time",
+			"2",
+			"http://192.168.50.2:8081",
+		); err != nil {
+			t.Fatalf("unrelated forwarding changed: %v", err)
+		}
+		if after := commandOutput(
+			t,
+			"ip",
+			"netns",
+			"exec",
+			gatewayNS,
+			"nft",
+			"list",
+			"table",
+			"inet",
+			"fixture_owner",
+		); after != foreignBefore {
+			t.Fatal("unrelated firewall table changed")
+		}
+	}
+	process := start()
+	allow()
+	if err := process.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if err := process.Wait(); err == nil {
+		t.Fatal("SIGKILL unexpectedly clean")
+	}
+	waitForHTTP(t, clientNS, "http://192.168.50.2:8080")
+	t.Log("SIGKILL retains prior kernel allow until restart: private HTTP reachable")
+	if output, err := command("unavailable").CombinedOutput(); err != nil {
+		t.Fatalf("failed restart fixture: %v\n%s", err, output)
+	}
+	check()
+	t.Log(
+		"control-unavailable restart: private HTTP denied; unrelated forwarding and foreign table unchanged",
+	)
+	process = start()
+	allow()
+	if err := process.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := process.Wait(); err != nil {
+		t.Fatalf("orderly stop: %v", err)
+	}
+	check()
+	t.Log(
+		"orderly runtime stop: private HTTP denied; unrelated forwarding and foreign table unchanged",
+	)
 }

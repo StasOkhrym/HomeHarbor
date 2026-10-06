@@ -60,6 +60,8 @@ func (a *Applier) Prepare(
 // Guard atomically denies tunnel input and both forwarding directions before
 // any link, WireGuard, route or DNS mutation. No cleanup releases this guard
 // on failure: the coordinator must retry and explicitly Commit after success.
+// Kernel rules outlive the process. Orderly runtime shutdown must call Guard;
+// SIGKILL or a crash retains the last rules until the next successful Guard.
 func (a *Applier) Guard(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
