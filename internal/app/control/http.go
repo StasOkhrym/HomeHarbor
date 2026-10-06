@@ -258,6 +258,7 @@ func buildHTTP(
 	if signedSnapshots != nil {
 		deps.Resources.SnapshotBroadcaster = coordinationHandler
 	}
+	deps.Resources.InvalidateDevice = coordinationHandler.InvalidateDevice
 	deps.Coordination = coordinationHandler
 	deps.SnapshotHistory = http.HandlerFunc(coordinationHandler.ServeHistory)
 	deps.Relay.PeerAuthorizer = peerAuthorization

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/snapshots"
@@ -26,7 +27,12 @@ func (historyAuthenticator) Authenticate(
 	if credential != "credential" {
 		return devices.Device{}, errors.New("invalid credential")
 	}
-	return devices.Device{ID: "device-1", Status: devices.StatusActive}, nil
+
+	return devices.Device{
+		ID:                  "device-1",
+		Status:              devices.StatusActive,
+		CredentialExpiresAt: time.Now().Add(time.Minute),
+	}, nil
 }
 
 func TestHistoryRequiresExplicitDependency(t *testing.T) {

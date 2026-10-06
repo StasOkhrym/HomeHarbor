@@ -331,5 +331,8 @@ func (s *Server) revokeDeviceForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+	if s.invalidateDevice != nil {
+		s.invalidateDevice(r.PathValue("id"))
+	}
 	redirectAdmin(w, r, "device-revoked")
 }

@@ -52,6 +52,19 @@ func fetchSnapshotHistory(
 	if err != nil {
 		return nil, err
 	}
+	if cfg.Leases != nil {
+		lease, err := cfg.Leases.Current(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if lease.DeviceID != cfg.DeviceID || !lease.ExpiresAt.After(time.Now()) {
+			return nil, errors.New("invalid history credential lease")
+		}
+		operation, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
+		defer cancel()
+		request = request.WithContext(operation)
+		cfg.Credential = lease.Credential
+	}
 	request.Header.Set("Authorization", "Bearer "+cfg.Credential)
 	// Use normal TLS validation. A redirect must not move a credential-bearing
 	// history request to another endpoint or silently switch its trust boundary.

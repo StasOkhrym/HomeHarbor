@@ -35,6 +35,7 @@ type ResourceDependencies struct {
 	Invites             InviteService
 	Snapshots           SnapshotService
 	SnapshotBroadcaster SnapshotBroadcaster
+	InvalidateDevice    func(string)
 }
 
 // BrowserDependencies binds login rendering and mutation checks explicitly.
@@ -143,6 +144,7 @@ func NewServer(deps Dependencies) (*Server, error) {
 		invites:             deps.Resources.Invites,
 		snapshots:           deps.Resources.Snapshots,
 		snapshotBroadcaster: deps.Resources.SnapshotBroadcaster,
+		invalidateDevice:    deps.Resources.InvalidateDevice,
 		authorizer:          security.Authorizer,
 		apiLimiter:          security.APILimiter,
 		authLimiter:         security.AuthLimiter,

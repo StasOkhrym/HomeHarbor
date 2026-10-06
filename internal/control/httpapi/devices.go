@@ -132,8 +132,14 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 		} else {
 			writeErrorCode(w, status, "internal_error", "could not revoke device credentials")
 		}
+
 		return
 	}
+
+	if s.invalidateDevice != nil {
+		s.invalidateDevice(r.PathValue("id"))
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

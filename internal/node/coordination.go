@@ -16,6 +16,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"github.com/StasOkhrym/homeharbor/internal/node/credentials"
 	controlprotocol "github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
@@ -111,6 +112,7 @@ func (a *CompositeSnapshotApplier) Apply(
 type CoordinationConfig struct {
 	URL           string
 	Credential    string
+	Leases        credentials.LeaseSource
 	DeviceID      string
 	NetworkID     string
 	RootPublicKey ed25519.PublicKey
@@ -227,6 +229,18 @@ func runCoordination(
 	applier SnapshotApplier,
 	cursor *coordinationCursor,
 ) error {
+	var admitted controlprotocol.CredentialLease
+	if cfg.Leases != nil {
+		var err error
+		admitted, err = cfg.Leases.Current(ctx)
+		if err != nil {
+			return err
+		}
+		if admitted.DeviceID != cfg.DeviceID || !admitted.ExpiresAt.After(time.Now()) {
+			return errors.New("invalid coordination lease")
+		}
+		cfg.Credential = admitted.Credential
+	}
 	if cfg.URL == "" || cfg.Credential == "" || cfg.DeviceID == "" || cfg.NetworkID == "" ||
 		len(cfg.RootPublicKey) != ed25519.PublicKeySize ||
 		applier == nil {
@@ -234,10 +248,16 @@ func runCoordination(
 			"coordination URL, credentials, device, network, root key, and applier are required",
 		)
 	}
+	sessionContext, sessionCancel := context.WithCancel(ctx)
+	if cfg.Leases != nil {
+		sessionCancel()
+		sessionContext, sessionCancel = context.WithDeadline(ctx, admitted.ExpiresAt)
+	}
+	defer sessionCancel()
 	header := make(http.Header)
 	header.Set("Authorization", "Bearer "+cfg.Credential)
 	connection, _, err := websocket.Dial(
-		ctx,
+		sessionContext,
 		cfg.URL,
 		&websocket.DialOptions{HTTPHeader: header, CompressionMode: websocket.CompressionDisabled},
 	)
@@ -245,12 +265,41 @@ func runCoordination(
 		return fmt.Errorf("dial coordination: %w", err)
 	}
 	defer func() { _ = connection.CloseNow() }()
-	sessionContext, sessionCancel := context.WithCancel(ctx)
-	defer sessionCancel()
+	if cfg.Leases != nil {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-sessionContext.Done():
+					return
+				case <-ticker.C:
+					current, err := cfg.Leases.Current(sessionContext)
+					if err != nil || current != admitted {
+						sessionCancel()
+						return
+					}
+				}
+			}
+		}()
+		defer func() { sessionCancel(); <-done }()
+	}
 	connection.SetReadLimit(64 << 10)
 
 	writeMu := sync.Mutex{}
 	write := func(value any) error {
+		if cfg.Leases != nil {
+			current, err := cfg.Leases.Current(sessionContext)
+			if err != nil {
+				return err
+			}
+			if current != admitted {
+				sessionCancel()
+				return errors.New("coordination lease replaced")
+			}
+		}
 		writeMu.Lock()
 		defer writeMu.Unlock()
 		writeContext, cancel := context.WithTimeout(sessionContext, 10*time.Second)
@@ -357,7 +406,13 @@ func runCoordination(
 			if err := json.Unmarshal(message.Payload, &envelope); err != nil {
 				return fmt.Errorf("decode network snapshot envelope: %w", err)
 			}
-			if err := reconcileSnapshotHead(ctx, cfg, applier, cursor, envelope); err != nil {
+			if err := reconcileSnapshotHead(
+				sessionContext,
+				cfg,
+				applier,
+				cursor,
+				envelope,
+			); err != nil {
 				return err
 			}
 		case "heartbeat.ack":
@@ -374,7 +429,7 @@ func runCoordination(
 				if err := update.Validate(); err != nil {
 					return fmt.Errorf("validate candidate update: %w", err)
 				}
-				if err := cfg.CandidateHandler(ctx, update); err != nil {
+				if err := cfg.CandidateHandler(sessionContext, update); err != nil {
 					return fmt.Errorf("handle candidate update: %w", err)
 				}
 				continue

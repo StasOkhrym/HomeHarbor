@@ -63,6 +63,7 @@ type Server struct {
 	activationClaim     http.HandlerFunc
 	snapshots           SnapshotService
 	snapshotBroadcaster SnapshotBroadcaster
+	invalidateDevice    func(string)
 	companionRoot       ed25519.PublicKey
 	companionChallenges *companionChallengeStore
 	relayIssuer         RelaySessionIssuer

@@ -37,21 +37,25 @@ func (h *Handler) ServeHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "device authentication unavailable", http.StatusServiceUnavailable)
 		return
 	}
+
 	authorization := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authorization, "Bearer ") {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	device, err := h.Auth.Authenticate(r.Context(), strings.TrimPrefix(authorization, "Bearer "))
+
+	device, err := h.authenticate(r.Context(), strings.TrimPrefix(authorization, "Bearer "))
 	if err != nil || device.ID == "" || device.Status != devices.StatusActive {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+
 	provider := h.History
 	if provider == nil {
 		http.Error(w, "snapshot history unavailable", http.StatusServiceUnavailable)
 		return
 	}
+
 	after := uint64(0)
 	if raw := r.URL.Query().Get("after_revision"); raw != "" {
 		after, err = strconv.ParseUint(raw, 10, 64)
@@ -60,6 +64,7 @@ func (h *Handler) ServeHistory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
 	limit := snapshots.MaxHistoryPageSize
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		limit, err = strconv.Atoi(raw)
@@ -68,12 +73,14 @@ func (h *Handler) ServeHistory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
 	if after > 0 {
 		hash, err := base64.RawURLEncoding.DecodeString(r.URL.Query().Get("after_hash"))
 		if err != nil || len(hash) != 32 {
 			http.Error(w, "history cursor hash required", http.StatusBadRequest)
 			return
 		}
+
 		predecessor, err := provider.History(r.Context(), after-1, 1)
 		if err != nil || len(predecessor) != 1 || !bytes.Equal(predecessor[0].Hash, hash) {
 			http.Error(w, "history cursor conflict", http.StatusConflict)
@@ -83,12 +90,14 @@ func (h *Handler) ServeHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "genesis cursor has no hash", http.StatusBadRequest)
 		return
 	}
+
 	page, err := provider.History(r.Context(), after, limit)
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		if errors.Is(err, snapshots.ErrHistoryCursor) || errors.Is(err, snapshot.ErrRevisionGap) {
 			status = http.StatusConflict
 		}
+
 		http.Error(w, "snapshot history unavailable", status)
 		return
 	}
@@ -96,6 +105,7 @@ func (h *Handler) ServeHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "snapshot history exceeds page limit", http.StatusServiceUnavailable)
 		return
 	}
+
 	for _, envelope := range page {
 		data, err := json.Marshal(envelope)
 		if err != nil || len(data) > maxSnapshotEnvelopeBytes {
@@ -103,14 +113,17 @@ func (h *Handler) ServeHistory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
 	if page == nil {
 		page = []snapshot.Envelope{}
 	}
+
 	data, err := json.Marshal(page)
 	if err != nil || len(data) > snapshots.MaxHistoryPageSize*(maxSnapshotEnvelopeBytes+1)+2 {
 		http.Error(w, "snapshot history exceeds body limit", http.StatusServiceUnavailable)
 		return
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(data)

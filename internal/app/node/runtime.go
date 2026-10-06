@@ -10,6 +10,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/agent/dns"
 	"github.com/StasOkhrym/homeharbor/internal/node"
+	"github.com/StasOkhrym/homeharbor/internal/node/credentials"
 	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
@@ -62,6 +63,17 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error)
 	if err != nil {
 		return nil, err
 	}
+	var leases *credentials.Owner
+	if cfg.Identity.ControlURL != "" {
+		leases = prepareCredentials(cfg, state, store)
+		if _, err := leases.Current(ctx); err != nil {
+			return nil, err
+		}
+	}
+	var source credentials.LeaseSource
+	if leases != nil {
+		source = leases
+	}
 	var peers *node.SnapshotWireGuardReconciler
 	var paths *protocol.PathSelector
 	if kernel {
@@ -81,8 +93,11 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error)
 		return nil, err
 	}
 	var workers []lifecycle.Worker
+	if leases != nil {
+		workers = append(workers, lifecycle.Worker{Name: "credentials", Component: leases})
+	}
 	if cfg.Relay.WebSocketURL != "" || cfg.Relay.UDPAddress != "" || cfg.Relay.Ticket != "" {
-		relay, err := prepareRelay(ctx, cfg, state, peers, paths, candidates.set)
+		relay, err := prepareRelay(ctx, cfg, state, source, peers, paths, candidates.set)
 		if err != nil {
 			return nil, err
 		}
@@ -90,7 +105,15 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (*App, error)
 	}
 	var bootstrap lifecycle.Component
 	if kernel {
-		coordination, guard, err := prepareCoordination(role, cfg, state, root, peers, candidates)
+		coordination, guard, err := prepareCoordination(
+			role,
+			cfg,
+			state,
+			source,
+			root,
+			peers,
+			candidates,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -121,8 +144,6 @@ func prepareIdentity(
 			cfg.Identity.Name,
 			&state,
 		)
-	} else if cfg.Identity.ControlURL != "" && cfg.Identity.Refresh {
-		err = node.RefreshCredential(operation, nil, cfg.Identity.ControlURL, &state)
 	}
 	if err != nil {
 		return node.State{}, err
@@ -187,6 +208,7 @@ func prepareRelay(
 	ctx context.Context,
 	cfg config.Node,
 	state node.State,
+	leases credentials.LeaseSource,
 	peers *node.SnapshotWireGuardReconciler,
 	paths *protocol.PathSelector,
 	candidates *node.CandidateSet,
@@ -216,34 +238,19 @@ func prepareRelay(
 	var renew node.RelayTicketProvider
 	if cfg.Identity.ControlURL != "" {
 		renew = func(ctx context.Context) (string, error) {
-			session, err := node.IssueRelaySession(
-				ctx,
-				nil,
-				cfg.Identity.ControlURL,
-				state.DeviceCredential,
-				cfg.Relay.SessionID,
-				cfg.Relay.DestinationDevice,
-			)
+			session, err := issueRelaySession(ctx, cfg, state.DeviceID, leases)
 			return session.Ticket, err
 		}
 	}
 	if bridge.Ticket == "" {
-		operation, cancel := context.WithTimeout(ctx, cfg.Runtime.OperationTimeout)
-		defer cancel()
-		session, err := node.IssueRelaySession(
-			operation,
-			nil,
-			cfg.Identity.ControlURL,
-			state.DeviceCredential,
-			cfg.Relay.SessionID,
-			cfg.Relay.DestinationDevice,
-		)
+		session, err := issueRelaySession(ctx, cfg, state.DeviceID, leases)
 		if err != nil {
 			return nil, err
 		}
 		bridge.RelayURL, bridge.RelayUDPAddress, bridge.Ticket = session.RelayURL, session.RelayUDPAddress, session.Ticket
 		bridge.TicketLifetime = time.Duration(session.ExpiresInSeconds) * time.Second
 	}
+
 	if cfg.WireGuard.InterfaceName == "" {
 		return lifecycle.Func(
 			func(ctx context.Context) error { return node.RunRelayBridgeLoop(ctx, bridge, renew) },
@@ -278,13 +285,17 @@ func prepareCoordination(
 	role Role,
 	cfg config.Node,
 	state node.State,
+	leases credentials.LeaseSource,
 	root ed25519.PublicKey,
 	peers *node.SnapshotWireGuardReconciler,
 	candidates candidateBindings,
 ) (lifecycle.Component, lifecycle.Component, error) {
+	if leases == nil {
+		return nil, nil, errors.New("coordination requires a control credential owner")
+	}
 	connection := node.CoordinationConfig{
 		URL:               cfg.Coordination.URL,
-		Credential:        state.DeviceCredential,
+		Leases:            leases,
 		DeviceID:          state.DeviceID,
 		NetworkID:         cfg.Coordination.NetworkID,
 		RootPublicKey:     root,
@@ -343,4 +354,81 @@ func RunCommand(ctx context.Context, role Role, cfg config.Node) error {
 	}
 
 	return app.Run(ctx)
+}
+
+// Callbacks copy immutable identity data and change only lease fields. The owner
+// serializes all saves through the store retained by App until workers join.
+func prepareCredentials(
+	cfg config.Node,
+	state node.State,
+	store *localstate.Store,
+) *credentials.Owner {
+	asLease := func(s node.State) protocol.CredentialLease {
+		return protocol.CredentialLease{
+			DeviceID:   s.DeviceID,
+			Credential: s.DeviceCredential,
+			ExpiresAt:  s.CredentialExpiresAt,
+		}
+	}
+	return credentials.New(credentials.Config{
+		Initial:          asLease(state),
+		OperationTimeout: cfg.Runtime.OperationTimeout,
+		Rotate: func(ctx context.Context, previous protocol.CredentialLease) (protocol.CredentialLease, error) {
+			copy := state
+			copy.DeviceCredential = previous.Credential
+			copy.CredentialExpiresAt = previous.ExpiresAt
+			err := node.RefreshCredential(ctx, nil, cfg.Identity.ControlURL, &copy)
+			return asLease(copy), err
+		},
+		Recover: func(ctx context.Context) (protocol.CredentialLease, error) {
+			copy := state
+			err := node.RecoverCredential(
+				ctx,
+				nil,
+				cfg.Identity.ControlURL,
+				cfg.Coordination.NetworkID,
+				&copy,
+			)
+			return asLease(copy), err
+		},
+		Save: func(ctx context.Context, lease protocol.CredentialLease) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			copy := state
+			copy.DeviceCredential = lease.Credential
+			copy.CredentialExpiresAt = lease.ExpiresAt
+			return copy.SaveTo(store)
+		},
+	})
+}
+
+func issueRelaySession(
+	ctx context.Context,
+	cfg config.Node,
+	deviceID string,
+	leases credentials.LeaseSource,
+) (node.RelaySession, error) {
+	if leases == nil {
+		return node.RelaySession{}, errors.New("control credential source required")
+	}
+	operation, cancel := context.WithTimeout(ctx, cfg.Runtime.OperationTimeout)
+	defer cancel()
+	lease, err := leases.Current(operation)
+	if err != nil {
+		return node.RelaySession{}, err
+	}
+	if lease.DeviceID != deviceID || lease.Credential == "" || !lease.ExpiresAt.After(time.Now()) {
+		return node.RelaySession{}, errors.New("invalid relay credential lease")
+	}
+	operation, expire := context.WithDeadline(operation, lease.ExpiresAt)
+	defer expire()
+	return node.IssueRelaySession(
+		operation,
+		nil,
+		cfg.Identity.ControlURL,
+		lease.Credential,
+		cfg.Relay.SessionID,
+		cfg.Relay.DestinationDevice,
+	)
 }

@@ -3,6 +3,7 @@ package coordination
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -100,13 +101,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer finish()
+	done := make(chan struct{})
+	defer close(done)
 	r = r.WithContext(ctx)
 	credential := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	device, err := h.Auth.Authenticate(r.Context(), credential)
+	device, err := h.authenticate(r.Context(), credential)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	ctx, cancelLease := context.WithDeadline(r.Context(), device.CredentialExpiresAt)
+	defer cancelLease()
+	r = r.WithContext(ctx)
 	options := &websocket.AcceptOptions{OriginPatterns: h.AllowedOrigins}
 	connection, err := websocket.Accept(w, r, options)
 	if err != nil {
@@ -138,14 +144,44 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = connection.Close(websocket.StatusPolicyViolation, protocolErr.Code)
 		return
 	}
-	peer := &peer{id: device.ID, connection: connection, negotiated: negotiated}
+	peer := &peer{
+		id:         device.ID,
+		connection: connection,
+		negotiated: negotiated,
+		done:       done,
+		cancel:     cancelLease,
+		validate:   func(ctx context.Context) error { _, err := h.authenticate(ctx, credential); return err },
+	}
+	monitorDone := make(chan struct{})
+	go func() {
+		defer close(monitorDone)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				_ = connection.CloseNow()
+				return
+			case <-ticker.C:
+				if peer.validate(ctx) != nil {
+					cancelLease()
+					_ = connection.CloseNow()
+					return
+				}
+			}
+		}
+	}()
+	defer func() { cancelLease(); <-monitorDone }()
 	// One live connection per device makes candidate ownership unambiguous and
 	// prevents an old connection from continuing to publish endpoint changes.
-	if err = h.hub.add(peer); err != nil {
+	if err = h.hub.replace(r.Context(), peer); err != nil {
 		_ = connection.Close(websocket.StatusPolicyViolation, err.Error())
 		return
 	}
 	defer h.hub.remove(peer.id)
+	if err := peer.validate(r.Context()); err != nil {
+		return
+	}
 	if err = writeJSONWithTimeout(
 		r.Context(),
 		connection,
@@ -175,6 +211,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		readContext, readCancel := context.WithTimeout(r.Context(), 2*time.Minute)
 		err = wsjson.Read(readContext, connection, &message)
 		readCancel()
+		if err != nil {
+			return
+		}
+		device, err = h.authenticate(r.Context(), credential)
 		if err != nil {
 			return
 		}
@@ -265,17 +305,29 @@ type peer struct {
 	connection *websocket.Conn
 	negotiated controlprotocol.Negotiated
 	mu         sync.Mutex
+	done       <-chan struct{}
+	cancel     context.CancelFunc
+	validate   func(context.Context) error
 }
 
 func (p *peer) write(ctx context.Context, message controlprotocol.Message) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	if p.validate != nil {
+		if err := p.validate(ctx); err != nil {
+			_ = p.connection.CloseNow()
+			return err
+		}
+	}
+
 	return writeJSONWithTimeout(ctx, p.connection, message)
 }
 
 type hub struct {
-	mu    sync.RWMutex
-	peers map[string]*peer
+	replacement sync.Mutex
+	mu          sync.RWMutex
+	peers       map[string]*peer
 }
 
 func newHub() *hub { return &hub{peers: make(map[string]*peer)} }
@@ -332,3 +384,70 @@ func (h *hub) broadcastPeers(ctx context.Context, peers []*peer, message control
 type duplicatePeerError struct{}
 
 func (*duplicatePeerError) Error() string { return "device already connected" }
+
+// authenticate rechecks the actual bearer and current source state. Each lookup
+// is bounded; a failed authoritative read is denial, never cached permission.
+func (h *Handler) authenticate(ctx context.Context, credential string) (devices.Device, error) {
+	if h.Auth == nil {
+		return devices.Device{}, errors.New("authentication unavailable")
+	}
+
+	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	d, err := h.Auth.Authenticate(operation, credential)
+	if err != nil || d.ID == "" || d.Status != devices.StatusActive ||
+		!d.CredentialExpiresAt.After(time.Now()) {
+		return devices.Device{}, errors.New("invalid credential lease")
+	}
+
+	if h.devices != nil {
+		current, err := h.devices.Device(operation, d.ID)
+		if err != nil || current.ID != d.ID || current.Status != devices.StatusActive {
+			return devices.Device{}, errors.New("inactive source")
+		}
+
+		current.CredentialExpiresAt = d.CredentialExpiresAt
+		d = current
+	}
+
+	return d, nil
+}
+
+// InvalidateDevice is an optional local latency hint; periodic authoritative
+// authentication remains mandatory for revocations committed on other replicas.
+func (h *Handler) InvalidateDevice(id string) {
+	h.hub.mu.RLock()
+	p := h.hub.peers[id]
+	h.hub.mu.RUnlock()
+	if p != nil {
+		p.cancel()
+		_ = p.connection.CloseNow()
+	}
+}
+
+// replace joins the old handler before publishing a new owner. The separate
+// lock allows the old handler to remove itself while replacement waits.
+func (h *hub) replace(ctx context.Context, p *peer) error {
+	h.replacement.Lock()
+	defer h.replacement.Unlock()
+
+	h.mu.RLock()
+	old := h.peers[p.id]
+	h.mu.RUnlock()
+	if old != nil {
+		old.cancel()
+		_ = old.connection.CloseNow()
+		select {
+		case <-old.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return h.add(p)
+}

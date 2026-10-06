@@ -22,7 +22,11 @@ import (
 type coordinationAuthStub struct{}
 
 func (coordinationAuthStub) Authenticate(context.Context, string) (devices.Device, error) {
-	return devices.Device{ID: "device-1", Status: devices.StatusActive}, nil
+	return devices.Device{
+		ID:                  "device-1",
+		Status:              devices.StatusActive,
+		CredentialExpiresAt: time.Now().Add(time.Minute),
+	}, nil
 }
 
 type coordinationSnapshotStub struct{ envelope snapshot.Envelope }
@@ -51,9 +55,11 @@ func (s peerCoordinationAuthStub) Authenticate(
 ) (devices.Device, error) {
 	for id, device := range s.devices {
 		if credential == "credential-"+id {
+			device.CredentialExpiresAt = time.Now().Add(time.Minute)
 			return device, nil
 		}
 	}
+
 	return devices.Device{}, fmt.Errorf("unknown credential")
 }
 
