@@ -5,20 +5,20 @@ All endpoints use JSON under `/api/v1`. Plaintext credential responses carry
 at most 15 minutes; clients persist the returned expiry and never infer it from
 startup or device creation. Zero expiry in old local state means unknown.
 
-* `POST /devices/credentials/challenge`: `{ "device_id": "..." }`; returns
+- `POST /devices/credentials/challenge`: `{ "device_id": "..." }`; returns
   `CredentialChallenge` with `version` (1), `network_id`, `device_id`, `nonce`
   (32 random bytes, unpadded canonical base64url), `expires_at` (Unix seconds).
   Lifetime is 60 seconds. Plausible IDs receive the same response without a
   device lookup. Shared, fail-closed onboarding limits apply.
-* `POST /devices/credentials/recovery`: `CredentialProof` contains `challenge`
+- `POST /devices/credentials/recovery`: `CredentialProof` contains `challenge`
   and `signature` (64 Ed25519 bytes, canonical unpadded base64url).
   The signed bytes are ASCII `homeharbor/credential-recovery/v1` followed by
   one NUL byte followed by canonical CBOR of the five challenge fields with
   their JSON names as CBOR text keys. No JSON serialization is signed.
-* Recovery returns `CredentialLease`: `device_id`, `credential`, `expires_at`
+- Recovery returns `CredentialLease`: `device_id`, `credential`, `expires_at`
   (RFC3339 UTC). Rotation at `POST /devices/credentials/rotate` returns the same
   lease, authenticating the current bearer credential.
-* Enrollment preserves its device fields and includes `credential_expires_at`.
+- Enrollment preserves its device fields and includes `credential_expires_at`.
   Invite claim preserves its `device` envelope and includes that same field.
 
 Recovery checks network, version, nonce and expiry, verifies against the

@@ -16,6 +16,7 @@ func openTestStore(t *testing.T) *Store {
 	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
+
 func TestSecondOwnerRejected(t *testing.T) {
 	s := openTestStore(t)
 
@@ -26,6 +27,7 @@ func TestSecondOwnerRejected(t *testing.T) {
 		t.Fatal("second owner acquired state")
 	}
 }
+
 func TestReplaceSyncFailurePreservesOldState(t *testing.T) {
 	s := openTestStore(t)
 
@@ -46,6 +48,7 @@ func TestReplaceSyncFailurePreservesOldState(t *testing.T) {
 		t.Fatalf("state = %q, %v", b, e)
 	}
 }
+
 func TestDirectorySyncFailureReportsUncertainDurability(t *testing.T) {
 	s := openTestStore(t)
 
@@ -68,25 +71,30 @@ func TestDirectorySyncFailureReportsUncertainDurability(t *testing.T) {
 		t.Fatalf("rename did not publish bytes: %q, %v", b, e)
 	}
 }
+
 func TestPrivateMode(t *testing.T) {
 	s := openTestStore(t)
+
 	if e := s.Replace([]byte("secret")); e != nil {
 		t.Fatal(e)
 	}
+
 	for _, p := range []string{s.path, s.path + ".lock"} {
 		i, e := os.Stat(p)
 		if e != nil {
 			t.Fatal(e)
 		}
-		if i.Mode().Perm() != 0600 || !i.Mode().IsRegular() {
+
+		if i.Mode().Perm() != 0o600 || !i.Mode().IsRegular() {
 			t.Fatalf("unsafe mode %v", i.Mode())
 		}
 	}
 }
+
 func TestRejectSymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")
-	if e := os.WriteFile(target, []byte("secret"), 0600); e != nil {
+	if e := os.WriteFile(target, []byte("secret"), 0o600); e != nil {
 		t.Fatal(e)
 	}
 	path := filepath.Join(dir, "state")
@@ -113,24 +121,24 @@ func TestRejectUnsafePaths(t *testing.T) {
 				}
 				path = filepath.Join(link, "state.json")
 			case "writable parent":
-				if err := os.Chmod(dir, 0777); err != nil {
+				if err := os.Chmod(dir, 0o777); err != nil {
 					t.Fatal(err)
 				}
 			case "lock symlink":
 				target := filepath.Join(dir, "other")
-				if err := os.WriteFile(target, nil, 0600); err != nil {
+				if err := os.WriteFile(target, nil, 0o600); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Symlink(target, path+".lock"); err != nil {
 					t.Fatal(err)
 				}
 			case "public state":
-				if err := os.WriteFile(path, nil, 0644); err != nil {
+				if err := os.WriteFile(path, nil, 0o644); err != nil {
 					t.Fatal(err)
 				}
 			case "hardlinked state":
 				target := filepath.Join(dir, "other")
-				if err := os.WriteFile(target, nil, 0600); err != nil {
+				if err := os.WriteFile(target, nil, 0o600); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Link(target, path); err != nil {
@@ -154,12 +162,16 @@ func TestReplaceUsesOwnedDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() {
+		if err := s.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	moved := filepath.Join(root, "moved")
 	if err := os.Rename(dir, moved); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(dir, 0700); err != nil {
+	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Replace([]byte("owned bytes")); err != nil {
@@ -176,18 +188,26 @@ func TestReplaceUsesOwnedDirectory(t *testing.T) {
 
 func TestCloseReleasesOwnerAndRejectsFurtherIO(t *testing.T) {
 	s := openTestStore(t)
+
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := s.Read(); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("Read after close: %v", err)
 	}
+
 	if err := s.Replace(nil); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("Replace after close: %v", err)
 	}
+
 	other, err := Open(s.path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer other.Close()
+	defer func() {
+		if err := other.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 }
