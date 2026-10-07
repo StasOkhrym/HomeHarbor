@@ -11,7 +11,7 @@ import (
 )
 
 func TestNodeAndCompanionHaveNoControlImports(t *testing.T) {
-	for _, pkg := range []string{"internal/node", "internal/app/node", "internal/companion", "cmd/admin"} {
+	for _, pkg := range []string{"internal/node", "internal/app/node", "internal/companion", "cmd/admin", "cmd/client", "cmd/agent"} {
 		checkSharedImports(t, pkg, map[string]bool{}, false)
 	}
 }
