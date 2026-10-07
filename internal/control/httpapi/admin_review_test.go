@@ -68,29 +68,39 @@ func TestRouteActionPreservesExactRecordID(t *testing.T) {
 	routes := controlroutes.NewService(memoryroutes.NewRepository(), time.Now)
 	for _, id := range []string{"a/../b", "b"} {
 		if _, err := routes.Advertise(context.Background(), controlroutes.AdvertisementRequest{
-			ID: id, GatewayDeviceID: "gateway", Prefix: netip.MustParsePrefix("192.168.50.0/24"),
-			Resolver: netip.MustParseAddr("192.168.50.1"), DomainSuffix: "home.arpa",
+			ID:              id,
+			GatewayDeviceID: id + "-gateway",
+			Prefix:          netip.MustParsePrefix("192.168.50.0/24"),
+			Resolver:        netip.MustParseAddr("192.168.50.1"),
+			DomainSuffix:    "home.arpa",
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	handler := newTestServer(devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Routes: routes}}).Handler()
 	page := httptest.NewRecorder()
+
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/admin/network", nil))
+
 	if strings.Contains(page.Body.String(), `/admin/routes/a/../b/`) {
 		t.Fatal("route ID entered a browser-normalized action path")
 	}
+
 	response := postAdminForm(handler, "/admin/routes/approve", url.Values{"route_id": {"a/../b"}})
+
 	if response.Code != http.StatusSeeOther {
 		t.Fatalf("exact-ID approval status=%d", response.Code)
 	}
+
 	items, _ := routes.List(context.Background())
 	for _, item := range items {
 		want := controlroutes.StatusPending
 		if item.ID == "a/../b" {
 			want = controlroutes.StatusApproved
 		}
+
 		if item.Status != want {
 			t.Errorf("route %q: got %s want %s", item.ID, item.Status, want)
 		}

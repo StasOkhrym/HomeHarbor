@@ -3,6 +3,7 @@ package snapshots
 import (
 	"bytes"
 	"context"
+	"math"
 	"sync"
 
 	domainpkg "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
@@ -115,17 +116,21 @@ func (s *Repository) History(
 		var zero []snapshot.Envelope
 		return zero, err
 	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if limit < 1 || limit > domainpkg.MaxHistoryPageSize+1 {
+
+	if limit < 1 || limit > domainpkg.MaxHistoryPageSize+1 || afterRevision > math.MaxInt64 {
 		return nil, domainpkg.ErrHistoryCursor
 	}
+
 	result := []snapshot.Envelope{}
 	for _, envelope := range s.history[networkID] {
 		value, err := snapshot.Decode(envelope)
 		if err != nil {
 			return nil, err
 		}
+
 		if value.Revision > afterRevision {
 			result = append(result, cloneEnvelope(envelope))
 			if len(result) == limit {
@@ -133,6 +138,7 @@ func (s *Repository) History(
 			}
 		}
 	}
+
 	return result, nil
 }
 

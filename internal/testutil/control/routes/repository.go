@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -21,9 +22,23 @@ func (s *Repository) Save(ctx context.Context, item domainpkg.Advertisement) err
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if _, exists := s.items[item.ID]; exists {
+		return errors.New("network advertisement ID already exists")
+	}
+
+	for _, current := range s.items {
+		if current.GatewayDeviceID == item.GatewayDeviceID &&
+			(current.Prefix.Masked() == item.Prefix.Masked() || current.DomainSuffix == item.DomainSuffix) {
+			return errors.New("network advertisement route already exists")
+		}
+	}
+
 	s.items[item.ID] = item
+
 	return nil
 }
 

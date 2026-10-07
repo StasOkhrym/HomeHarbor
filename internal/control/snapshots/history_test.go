@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,6 +14,14 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 	memorystore "github.com/StasOkhrym/homeharbor/internal/testutil/control/snapshots"
 )
+
+func TestMemoryHistoryRejectsCursorBeyondSQLBigint(t *testing.T) {
+	_, err := memorystore.NewRepository().History(context.Background(), "home", math.MaxUint64, 1)
+
+	if !errors.Is(err, domainpkg.ErrHistoryCursor) {
+		t.Fatalf("oversized history cursor = %v", err)
+	}
+}
 
 type racingRepository struct {
 	*memorystore.Repository

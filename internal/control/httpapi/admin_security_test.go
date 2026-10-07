@@ -78,7 +78,7 @@ func TestAdminCredentialRevokeRequiresDeviceScopedProof(t *testing.T) {
 	store := memorydevices.NewRepository()
 	service := devices.NewService(store, time.Now, nil)
 	// Persist a registered identity using the real repository fixture API.
-	for _, id := range []string{"device-a", "device-b"} {
+	for index, id := range []string{"device-a", "device-b"} {
 		if err := store.SeedDevice(
 			context.Background(),
 			devices.Device{
@@ -89,6 +89,7 @@ func TestAdminCredentialRevokeRequiresDeviceScopedProof(t *testing.T) {
 				CreatedAt:          time.Now(),
 				IdentityPublicKey:  id + "-identity",
 				WireGuardPublicKey: id + "-wg",
+				CredentialHash:     [32]byte{byte(index + 1)},
 			},
 		); err != nil {
 			t.Fatal(err)

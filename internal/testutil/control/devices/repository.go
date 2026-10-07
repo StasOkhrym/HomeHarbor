@@ -2,6 +2,7 @@ package devices
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ type Repository struct {
 	tokens            map[[32]byte]domainpkg.EnrollmentToken
 	devices           map[string]domainpkg.Device
 	credentialExpires map[string]time.Time
+	credentialOwners  map[[32]byte]string
 }
 
 func NewRepository() *Repository {
@@ -21,6 +23,7 @@ func NewRepository() *Repository {
 		tokens:            make(map[[32]byte]domainpkg.EnrollmentToken),
 		devices:           make(map[string]domainpkg.Device),
 		credentialExpires: make(map[string]time.Time),
+		credentialOwners:  make(map[[32]byte]string),
 	}
 }
 
@@ -31,9 +34,16 @@ func (s *Repository) SaveEnrollmentToken(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if _, exists := s.tokens[token.Hash]; exists {
+		return errors.New("enrollment token hash already exists")
+	}
+
 	s.tokens[token.Hash] = cloneToken(token)
+
 	return nil
 }
 
@@ -42,14 +52,19 @@ func (s *Repository) SeedDevice(ctx context.Context, device domainpkg.Device) er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if err := s.checkUnique(device); err != nil {
 		return err
 	}
+
 	device.Credential = ""
 	s.devices[device.ID] = cloneDevice(device)
 	s.credentialExpires[device.ID] = device.CredentialExpiration()
+	s.credentialOwners[device.CredentialHash] = device.ID
+
 	return nil
 }
 
@@ -63,32 +78,43 @@ func (s *Repository) Enroll(
 		var zero domainpkg.Role
 		return zero, err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	token, ok := s.tokens[hash]
 	if !ok || token.UsedAt != nil || !now.Before(token.ExpiresAt) {
 		return "", domainpkg.ErrInvalidEnrollmentToken
 	}
+
 	if err := s.checkUnique(device); err != nil {
 		return "", err
 	}
+
 	token.UsedAt = &now
 	s.tokens[hash] = token
 	device.Role = token.Role
 	device.Credential = ""
 	s.devices[device.ID] = cloneDevice(device)
 	s.credentialExpires[device.ID] = device.CredentialExpiration()
+	s.credentialOwners[device.CredentialHash] = device.ID
+
 	return token.Role, nil
 }
 
 // checkUnique is called with mu held, before consuming a one-time token.
 func (s *Repository) checkUnique(device domainpkg.Device) error {
+	if _, exists := s.credentialOwners[device.CredentialHash]; exists {
+		return domainpkg.ErrDeviceConflict
+	}
+
 	for _, current := range s.devices {
 		if current.ID == device.ID || current.IdentityPublicKey == device.IdentityPublicKey ||
 			current.WireGuardPublicKey == device.WireGuardPublicKey {
 			return domainpkg.ErrDeviceConflict
 		}
 	}
+
 	return nil
 }
 
@@ -215,15 +241,24 @@ func (s *Repository) RotateCredential(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	device, ok := s.devices[id]
 	if !ok || device.Status != domainpkg.StatusActive || device.CredentialHash != oldHash ||
 		!now.Before(s.credentialExpires[id]) {
 		return domainpkg.ErrDeviceNotFound
 	}
+
+	if _, exists := s.credentialOwners[newHash]; exists {
+		return domainpkg.ErrDeviceConflict
+	}
+
 	device.CredentialHash = newHash
 	s.devices[id] = device
 	s.credentialExpires[id] = expiresAt
+	s.credentialOwners[newHash] = id
+
 	return nil
 }
