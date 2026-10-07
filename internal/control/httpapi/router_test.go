@@ -11,15 +11,18 @@ import (
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
 )
 
 func TestRouterAddsRequestID(t *testing.T) {
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{},
 	).Handler()
 	response := httptest.NewRecorder()
+
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
 	if response.Header().Get("X-Request-ID") == "" {
 		t.Fatal("X-Request-ID is empty")
 	}
@@ -27,13 +30,15 @@ func TestRouterAddsRequestID(t *testing.T) {
 
 func TestRouterPreservesIncomingRequestID(t *testing.T) {
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{},
 	).Handler()
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	request.Header.Set("X-Request-ID", "external-request-id")
 	response := httptest.NewRecorder()
+
 	handler.ServeHTTP(response, request)
+
 	if got := response.Header().Get("X-Request-ID"); got != "external-request-id" {
 		t.Fatalf("request ID = %q", got)
 	}
@@ -41,13 +46,15 @@ func TestRouterPreservesIncomingRequestID(t *testing.T) {
 
 func TestRouterReplacesUnsafeRequestID(t *testing.T) {
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{},
 	).Handler()
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	request.Header.Set("X-Request-ID", "request\nwith-secret")
 	response := httptest.NewRecorder()
+
 	handler.ServeHTTP(response, request)
+
 	if got := response.Header().Get("X-Request-ID"); got == "request\nwith-secret" || got == "" {
 		t.Fatalf("unsafe request ID was retained: %q", got)
 	}
@@ -55,7 +62,7 @@ func TestRouterReplacesUnsafeRequestID(t *testing.T) {
 
 func TestRouterRejectsOversizedAPIBody(t *testing.T) {
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{},
 	).Handler()
 	request := httptest.NewRequest(
@@ -64,7 +71,9 @@ func TestRouterRejectsOversizedAPIBody(t *testing.T) {
 		bytes.NewBufferString(`{"padding":"`+strings.Repeat("x", int(maxRequestBodyBytes)+1)+`"}`),
 	)
 	response := httptest.NewRecorder()
+
 	handler.ServeHTTP(response, request)
+
 	if response.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d", response.Code)
 	}
@@ -97,12 +106,14 @@ func (readOnlyAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) 
 
 func TestAdminMutationRequiresExplicitMutationAuthorization(t *testing.T) {
 	server := mustTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		readOnlyAuthorizer{}, Dependencies{},
 	)
 	response := httptest.NewRecorder()
+
 	server.Handler().
 		ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/admin/enrollment-tokens", strings.NewReader(`{"role":"client","ttl_seconds":60}`)))
+
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("mutation status=%d", response.Code)
 	}

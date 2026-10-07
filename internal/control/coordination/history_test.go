@@ -16,6 +16,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/snapshots"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
+	memorysnapshots "github.com/StasOkhrym/homeharbor/internal/testutil/control/snapshots"
 )
 
 type historyAuthenticator struct{}
@@ -40,14 +41,17 @@ func TestHistoryRequiresExplicitDependency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := snapshots.NewService(snapshots.NewMemoryStore(), public, "home")
+
+	service := snapshots.NewService(memorysnapshots.NewRepository(), public, "home")
 	// A Latest-only constructor must not discover extra capabilities merely
 	// because its concrete provider happens to implement History too.
 	handler := NewHandler(historyAuthenticator{}, nil, service, nil, nil)
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/coordination/snapshots", nil)
 	request.Header.Set("Authorization", "Bearer credential")
 	response := httptest.NewRecorder()
+
 	handler.ServeHistory(response, request)
+
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("implicit history status=%d", response.Code)
 	}
@@ -58,7 +62,9 @@ func TestHistoryRequiresDeviceAuthAndValidCursorHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := snapshots.NewService(snapshots.NewMemoryStore(), public, "home")
+
+	service := snapshots.NewService(memorysnapshots.NewRepository(), public, "home")
+
 	first, err := snapshot.Sign(
 		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
 		private,
@@ -67,6 +73,7 @@ func TestHistoryRequiresDeviceAuthAndValidCursorHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	second, err := snapshot.Sign(
 		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 2, PreviousHash: first.Hash},
 		private,
@@ -75,11 +82,13 @@ func TestHistoryRequiresDeviceAuthAndValidCursorHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, envelope := range []snapshot.Envelope{first, second} {
 		if err := service.Publish(context.Background(), envelope); err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	handler := NewHandlerWithHistory(historyAuthenticator{}, nil, service, nil, nil)
 	for _, test := range []struct {
 		name, path, credential string
@@ -103,21 +112,29 @@ func TestHistoryRequiresDeviceAuthAndValidCursorHash(t *testing.T) {
 			if test.credential != "" {
 				r.Header.Set("Authorization", "Bearer "+test.credential)
 			}
+
 			w := httptest.NewRecorder()
+
 			handler.ServeHistory(w, r)
+
 			if w.Code != test.status {
 				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 			}
+
 			if w.Code == 200 {
 				var page []snapshot.Envelope
+
 				if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil || len(page) != 1 {
 					t.Fatalf("page len=%d err=%v", len(page), err)
 				}
+
 				value, _ := snapshot.Decode(page[0])
+
 				want := uint64(1)
 				if strings.Contains(test.path, "after_revision=1") {
 					want = 2
 				}
+
 				if value.Revision != want {
 					t.Fatalf("revision=%d want=%d", value.Revision, want)
 				}

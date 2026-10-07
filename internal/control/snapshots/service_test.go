@@ -1,4 +1,4 @@
-package snapshots
+package snapshots_test
 
 import (
 	"context"
@@ -7,7 +7,9 @@ import (
 	"errors"
 	"testing"
 
+	domainpkg "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
+	memorystore "github.com/StasOkhrym/homeharbor/internal/testutil/control/snapshots"
 )
 
 func TestPublishEnforcesSequentialSignedSnapshots(t *testing.T) {
@@ -15,7 +17,9 @@ func TestPublishEnforcesSequentialSignedSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := NewService(NewMemoryStore(), publicKey, "home")
+
+	service := domainpkg.NewService(memorystore.NewRepository(), publicKey, "home")
+
 	first, err := snapshot.Sign(
 		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
 		privateKey,
@@ -24,12 +28,15 @@ func TestPublishEnforcesSequentialSignedSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := service.Publish(context.Background(), first); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := service.Latest(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+
 	gap, err := snapshot.Sign(
 		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 3},
 		privateKey,
@@ -38,6 +45,7 @@ func TestPublishEnforcesSequentialSignedSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := service.Publish(context.Background(), gap); !errors.Is(err, snapshot.ErrRevisionGap) {
 		t.Fatalf("gap publish error = %v", err)
 	}

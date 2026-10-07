@@ -15,16 +15,20 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
+	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
+	memorypolicy "github.com/StasOkhrym/homeharbor/internal/testutil/control/policy"
+	memoryroutes "github.com/StasOkhrym/homeharbor/internal/testutil/control/routes"
+	memoryservices "github.com/StasOkhrym/homeharbor/internal/testutil/control/services"
 )
 
 func TestAdminSectionsHaveAuthenticatedNavigation(t *testing.T) {
-	deviceService := devices.NewService(devices.NewMemoryStore(), time.Now, nil)
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	deviceService := devices.NewService(memorydevices.NewRepository(), time.Now, nil)
+	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
 	deps := Dependencies{
 		Resources: ResourceDependencies{
 			Services: catalog,
-			Routes:   controlroutes.NewService(controlroutes.NewMemoryStore(), time.Now),
-			Policy:   policy.NewService(policy.NewMemoryStore(), acl.Compiler{}),
+			Routes:   controlroutes.NewService(memoryroutes.NewRepository(), time.Now),
+			Policy:   policy.NewService(memorypolicy.NewRepository(), acl.Compiler{}),
 		},
 	}
 	for _, path := range []string{"setup", "devices", "services", "access", "network", "invites", "security"} {
@@ -32,13 +36,17 @@ func TestAdminSectionsHaveAuthenticatedNavigation(t *testing.T) {
 			handler := newTestServer(deviceService, headerAuthorizer{}, deps).Handler()
 			response := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodGet, "/admin/"+path, nil)
+
 			handler.ServeHTTP(response, request)
+
 			if response.Code == http.StatusOK {
 				t.Fatal("section allowed an unauthenticated browser")
 			}
+
 			response = httptest.NewRecorder()
 			request.Header.Set("X-Test-Admin", "true")
 			handler.ServeHTTP(response, request)
+
 			if response.Code != http.StatusOK {
 				t.Fatalf("section status=%d body=%s", response.Code, response.Body.String())
 			}
@@ -58,19 +66,21 @@ func (failingCatalog) List(context.Context) ([]controlservices.Service, error) {
 
 func TestAdminOverviewPreservesPartialFailure(t *testing.T) {
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{
 				Services: failingCatalog{
-					controlservices.NewService(controlservices.NewMemoryStore(), time.Now),
+					controlservices.NewService(memoryservices.NewRepository(), time.Now),
 				},
 			},
 		},
 	).Handler()
 	response := httptest.NewRecorder()
+
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/", nil))
 	body := response.Body.String()
+
 	if response.Code != http.StatusOK || !strings.Contains(body, "Services could not be loaded") {
 		t.Fatalf("partial failure hidden: status=%d body=%s", response.Code, body)
 	}
@@ -85,11 +95,13 @@ func TestAdminOverviewPreservesPartialFailure(t *testing.T) {
 
 func TestAdminMissingModuleDisablesMutation(t *testing.T) {
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{},
 	).Handler()
 	response := httptest.NewRecorder()
+
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/network", nil))
+
 	if response.Code != http.StatusServiceUnavailable ||
 		strings.Contains(response.Body.String(), `action="/admin/routes"`) {
 		t.Fatalf("missing network capability exposed an action: status=%d", response.Code)
@@ -134,15 +146,18 @@ func TestAdminActivityUsesReadableActions(t *testing.T) {
 	reader := &auditReaderStub{
 		events: []audit.Event{{Action: "device.revoked", OccurredAt: time.Now()}},
 	}
+
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Audit: reader}},
 	).Handler()
 	response := httptest.NewRecorder()
+
 	handler.ServeHTTP(
 		response,
 		httptest.NewRequest(http.MethodGet, "/admin/activity?limit=999", nil),
 	)
+
 	if response.Code != http.StatusOK ||
 		!strings.Contains(response.Body.String(), "Device credentials revoked") ||
 		reader.limit != maxAuditLimit {

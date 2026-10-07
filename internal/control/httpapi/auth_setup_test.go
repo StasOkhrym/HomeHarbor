@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	"github.com/StasOkhrym/homeharbor/internal/control/identity"
+	memoryidentity "github.com/StasOkhrym/homeharbor/internal/testutil/control/identity"
 )
 
 func TestLoginPageSelectsSetupState(t *testing.T) {
@@ -19,7 +19,7 @@ func TestLoginPageSelectsSetupState(t *testing.T) {
 			map[bool]string{false: "first run", true: "registered"}[registered],
 			func(t *testing.T) {
 				auth, _ := newBrowserAuthTest(t)
-				store := identity.NewMemoryStore()
+				store := memoryidentity.NewRepository()
 				if registered {
 					if err := store.SaveCredential(
 						context.Background(),

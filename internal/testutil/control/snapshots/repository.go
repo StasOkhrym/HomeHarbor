@@ -5,17 +5,18 @@ import (
 	"context"
 	"sync"
 
+	domainpkg "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
-// MemoryStore is an in-process test double for Repository.
-type MemoryStore struct {
+// Repository is an in-process test double for Repository.
+type Repository struct {
 	mu      sync.RWMutex
 	history map[string][]snapshot.Envelope
 }
 
-func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{history: make(map[string][]snapshot.Envelope)}
+func NewRepository() *Repository {
+	return &Repository{history: make(map[string][]snapshot.Envelope)}
 }
 
 func cloneEnvelope(value snapshot.Envelope) snapshot.Envelope {
@@ -26,15 +27,35 @@ func cloneEnvelope(value snapshot.Envelope) snapshot.Envelope {
 	return value
 }
 
-func (s *MemoryStore) Append(
-	_ context.Context,
+// RemoveRevision simulates a corrupted persisted history in service tests.
+func (s *Repository) RemoveRevision(networkID string, revision uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	page := s.history[networkID]
+	for index, envelope := range page {
+		value, err := snapshot.Decode(envelope)
+		if err == nil && value.Revision == revision {
+			s.history[networkID] = append(page[:index:index], page[index+1:]...)
+			return
+		}
+	}
+}
+
+func (s *Repository) Append(
+	ctx context.Context,
 	networkID string,
 	expectedRevision uint64,
 	expectedHash []byte,
 	envelope snapshot.Envelope,
 ) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	page := s.history[networkID]
 	var revision uint64
 	var hash []byte
@@ -43,11 +64,14 @@ func (s *MemoryStore) Append(
 		if err != nil {
 			return err
 		}
+
 		revision, hash = value.Revision, page[len(page)-1].Hash
 	}
+
 	if revision != expectedRevision || !bytes.Equal(hash, expectedHash) {
-		return ErrSnapshotConflict
+		return domainpkg.ErrSnapshotConflict
 	}
+
 	value, err := snapshot.Decode(envelope)
 	if err != nil {
 		return err
@@ -58,30 +82,43 @@ func (s *MemoryStore) Append(
 	if !bytes.Equal(value.PreviousHash, hash) {
 		return snapshot.ErrPreviousHash
 	}
+
 	s.history[networkID] = append(page, cloneEnvelope(envelope))
+
 	return nil
 }
 
-func (s *MemoryStore) Latest(_ context.Context, networkID string) (snapshot.Envelope, error) {
+func (s *Repository) Latest(ctx context.Context, networkID string) (snapshot.Envelope, error) {
+	if err := ctx.Err(); err != nil {
+		var zero snapshot.Envelope
+		return zero, err
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	page := s.history[networkID]
 	if len(page) == 0 {
-		return snapshot.Envelope{}, ErrSnapshotUnavailable
+		return snapshot.Envelope{}, domainpkg.ErrSnapshotUnavailable
 	}
+
 	return cloneEnvelope(page[len(page)-1]), nil
 }
 
-func (s *MemoryStore) History(
-	_ context.Context,
+func (s *Repository) History(
+	ctx context.Context,
 	networkID string,
 	afterRevision uint64,
 	limit int,
 ) ([]snapshot.Envelope, error) {
+	if err := ctx.Err(); err != nil {
+		var zero []snapshot.Envelope
+		return zero, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if limit < 1 || limit > MaxHistoryPageSize+1 {
-		return nil, ErrHistoryCursor
+	if limit < 1 || limit > domainpkg.MaxHistoryPageSize+1 {
+		return nil, domainpkg.ErrHistoryCursor
 	}
 	result := []snapshot.Envelope{}
 	for _, envelope := range s.history[networkID] {
@@ -99,4 +136,4 @@ func (s *MemoryStore) History(
 	return result, nil
 }
 
-var _ Repository = (*MemoryStore)(nil)
+var _ domainpkg.Repository = (*Repository)(nil)

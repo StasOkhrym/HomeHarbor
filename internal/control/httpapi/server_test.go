@@ -28,13 +28,20 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/relay"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
+	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
+	memoryinvites "github.com/StasOkhrym/homeharbor/internal/testutil/control/invites"
+	memoryroutes "github.com/StasOkhrym/homeharbor/internal/testutil/control/routes"
+	memoryservices "github.com/StasOkhrym/homeharbor/internal/testutil/control/services"
+	memorysnapshots "github.com/StasOkhrym/homeharbor/internal/testutil/control/snapshots"
 )
 
 func TestEnrollmentAPIRequiresAdminAndEnrollsDevice(t *testing.T) {
-	deviceService := devices.NewService(devices.NewMemoryStore(), time.Now, nil)
+	deviceService := devices.NewService(memorydevices.NewRepository(), time.Now, nil)
+
 	handler := newTestServer(deviceService, headerAuthorizer{}, Dependencies{}).Handler()
 
 	unauthorized := httptest.NewRecorder()
+
 	handler.ServeHTTP(
 		unauthorized,
 		httptest.NewRequest(
@@ -43,6 +50,7 @@ func TestEnrollmentAPIRequiresAdminAndEnrollsDevice(t *testing.T) {
 			bytes.NewBufferString(`{"role":"client","ttl_seconds":3600}`),
 		),
 	)
+
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized status = %d", unauthorized.Code)
 	}
@@ -54,32 +62,43 @@ func TestEnrollmentAPIRequiresAdminAndEnrollsDevice(t *testing.T) {
 	)
 	issueRequest.Header.Set("X-Test-Admin", "true")
 	issued := httptest.NewRecorder()
+
 	handler.ServeHTTP(issued, issueRequest)
+
 	if issued.Code != http.StatusCreated {
 		t.Fatalf("issue status = %d body=%s", issued.Code, issued.Body.String())
 	}
+
 	var token devices.IssuedToken
+
 	if err := json.NewDecoder(issued.Body).Decode(&token); err != nil {
 		t.Fatal(err)
 	}
 
 	body, _ := json.Marshal(validEnrollmentRequest(t, token.Token, "laptop"))
 	enrolled := httptest.NewRecorder()
+
 	handler.ServeHTTP(
 		enrolled,
 		httptest.NewRequest(http.MethodPost, "/api/v1/enroll", bytes.NewReader(body)),
 	)
+
 	if enrolled.Code != http.StatusCreated {
 		t.Fatalf("enroll status = %d body=%s", enrolled.Code, enrolled.Body.String())
 	}
+
 	var enrolledDevice devices.Device
+
 	if err := json.NewDecoder(enrolled.Body).Decode(&enrolledDevice); err != nil {
 		t.Fatal(err)
 	}
+
 	rotateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/devices/credentials/rotate", nil)
 	rotateRequest.Header.Set("Authorization", "Bearer "+enrolledDevice.Credential)
 	rotated := httptest.NewRecorder()
+
 	handler.ServeHTTP(rotated, rotateRequest)
+
 	if rotated.Code != http.StatusOK {
 		t.Fatalf("rotate status = %d body=%s", rotated.Code, rotated.Body.String())
 	}
@@ -87,14 +106,16 @@ func TestEnrollmentAPIRequiresAdminAndEnrollsDevice(t *testing.T) {
 	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/devices", nil)
 	listRequest.Header.Set("X-Test-Admin", "true")
 	listed := httptest.NewRecorder()
+
 	handler.ServeHTTP(listed, listRequest)
+
 	if listed.Code != http.StatusOK {
 		t.Fatalf("list status = %d", listed.Code)
 	}
 }
 
 func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) {
-	deviceService := devices.NewService(devices.NewMemoryStore(), time.Now, nil)
+	deviceService := devices.NewService(memorydevices.NewRepository(), time.Now, nil)
 	tokenA, err := deviceService.IssueEnrollmentToken(
 		context.Background(),
 		devices.RoleClient,
@@ -197,7 +218,7 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 }
 
 func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
-	deviceService := devices.NewService(devices.NewMemoryStore(), time.Now, nil)
+	deviceService := devices.NewService(memorydevices.NewRepository(), time.Now, nil)
 	firstToken, err := deviceService.IssueEnrollmentToken(
 		context.Background(),
 		devices.RoleClient,
@@ -254,7 +275,7 @@ func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
 }
 
 func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
-	deviceService := devices.NewService(devices.NewMemoryStore(), time.Now, nil)
+	deviceService := devices.NewService(memorydevices.NewRepository(), time.Now, nil)
 	clientToken, err := deviceService.IssueEnrollmentToken(
 		context.Background(),
 		devices.RoleClient,
@@ -313,12 +334,14 @@ func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
 
 func TestHealthEndpoints(t *testing.T) {
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{},
 	).Handler()
 	for _, path := range []string{"/healthz", "/readyz"} {
 		recorder := httptest.NewRecorder()
+
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("%s status = %d", path, recorder.Code)
 		}
@@ -327,14 +350,16 @@ func TestHealthEndpoints(t *testing.T) {
 
 func TestReadinessAndSecurityHeaders(t *testing.T) {
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{Observability: ObservabilityDependencies{Ready: func(context.Context) error {
 			return errors.New("database unavailable")
 		}}},
 	).Handler()
 	recorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("ready status = %d", recorder.Code)
 	}
@@ -365,7 +390,7 @@ func TestDecodeJSONRejectsTrailingValues(t *testing.T) {
 
 func TestAdminPageUsesLocalAssets(t *testing.T) {
 	catalog := controlservices.NewService(
-		controlservices.NewMemoryStore(),
+		memoryservices.NewRepository(),
 		time.Now,
 		controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
 			return true, nil
@@ -390,7 +415,7 @@ func TestAdminPageUsesLocalAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 	recorder := httptest.NewRecorder()
@@ -420,14 +445,14 @@ func TestAdminPageUsesLocalAssets(t *testing.T) {
 
 func TestAdminFormCreatesServiceThroughDomainCatalog(t *testing.T) {
 	catalog := controlservices.NewService(
-		controlservices.NewMemoryStore(),
+		memoryservices.NewRepository(),
 		time.Now,
 		controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
 			return true, nil
 		}),
 	)
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 	form := url.Values{
@@ -461,9 +486,10 @@ func TestAdminFormCreatesServiceThroughDomainCatalog(t *testing.T) {
 }
 
 func TestAdminFormCreatesRouteThroughNetworkService(t *testing.T) {
-	routeService := controlroutes.NewService(controlroutes.NewMemoryStore(), time.Now)
+	routeService := controlroutes.NewService(memoryroutes.NewRepository(), time.Now)
+
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Routes: routeService}},
 	).Handler()
 	form := url.Values{
@@ -480,7 +506,9 @@ func TestAdminFormCreatesRouteThroughNetworkService(t *testing.T) {
 	)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(recorder, request)
+
 	if recorder.Code != http.StatusSeeOther ||
 		recorder.Header().Get("Location") != "/admin/?notice=route-created" {
 		t.Fatalf(
@@ -490,7 +518,9 @@ func TestAdminFormCreatesRouteThroughNetworkService(t *testing.T) {
 			recorder.Body.String(),
 		)
 	}
+
 	items, err := routeService.List(context.Background())
+
 	if err != nil || len(items) != 1 || items[0].ID != "home-lan" ||
 		items[0].Status != controlroutes.StatusPending {
 		t.Fatalf("routes=%#v error=%v", items, err)
@@ -498,7 +528,7 @@ func TestAdminFormCreatesRouteThroughNetworkService(t *testing.T) {
 }
 
 func TestAvailableServicesRequireDeviceCredentialAndProfileMembership(t *testing.T) {
-	deviceService := devices.NewService(devices.NewMemoryStore(), time.Now, nil)
+	deviceService := devices.NewService(memorydevices.NewRepository(), time.Now, nil)
 	token, err := deviceService.IssueEnrollmentToken(
 		context.Background(),
 		devices.RoleClient,
@@ -515,7 +545,7 @@ func TestAvailableServicesRequireDeviceCredentialAndProfileMembership(t *testing
 		t.Fatal(err)
 	}
 	catalog := controlservices.NewService(
-		controlservices.NewMemoryStore(),
+		memoryservices.NewRepository(),
 		time.Now,
 		controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
 			return true, nil
@@ -568,17 +598,20 @@ func TestAvailableServicesRequireDeviceCredentialAndProfileMembership(t *testing
 }
 
 func TestGroupedResourceRoutesKeepAdminBoundary(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
+
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		headerAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 
 	unauthorized := httptest.NewRecorder()
+
 	handler.ServeHTTP(
 		unauthorized,
 		httptest.NewRequest(http.MethodGet, "/api/v1/admin/devices", nil),
 	)
+
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("grouped admin route status = %d", unauthorized.Code)
 	}
@@ -586,7 +619,9 @@ func TestGroupedResourceRoutesKeepAdminBoundary(t *testing.T) {
 	authorized := httptest.NewRequest(http.MethodGet, "/api/v1/admin/devices", nil)
 	authorized.Header.Set("X-Test-Admin", "true")
 	recorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(recorder, authorized)
+
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "devices") {
 		t.Fatalf("grouped device route status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -600,7 +635,9 @@ func TestGroupedResourceRoutesKeepAdminBoundary(t *testing.T) {
 	)
 	create.Header.Set("X-Test-Admin", "true")
 	recorder = httptest.NewRecorder()
+
 	handler.ServeHTTP(recorder, create)
+
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("grouped service route status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -616,13 +653,16 @@ func TestAuditAPIRequiresAdminAndBoundsResults(t *testing.T) {
 		TargetID:   "device-1",
 		Metadata:   map[string]any{"reason": "test"},
 	}}}
+
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		headerAuthorizer{}, Dependencies{Resources: ResourceDependencies{Audit: reader}},
 	).Handler()
 
 	unauthorized := httptest.NewRecorder()
+
 	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit", nil))
+
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized audit status = %d", unauthorized.Code)
 	}
@@ -630,7 +670,9 @@ func TestAuditAPIRequiresAdminAndBoundsResults(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit?limit=999", nil)
 	request.Header.Set("X-Test-Admin", "true")
 	recorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(recorder, request)
+
 	if recorder.Code != http.StatusOK ||
 		!strings.Contains(recorder.Body.String(), "device.revoked") {
 		t.Fatalf("audit status=%d body=%s", recorder.Code, recorder.Body.String())
@@ -641,9 +683,10 @@ func TestAuditAPIRequiresAdminAndBoundsResults(t *testing.T) {
 }
 
 func TestServiceCatalogAPIUsesAdminBoundary(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
+
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		headerAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 	request := httptest.NewRequest(
@@ -655,14 +698,19 @@ func TestServiceCatalogAPIUsesAdminBoundary(t *testing.T) {
 	)
 	request.Header.Set("X-Test-Admin", "true")
 	recorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(recorder, request)
+
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("create service status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
+
 	request = httptest.NewRequest(http.MethodGet, "/api/v1/services", nil)
 	request.Header.Set("X-Test-Admin", "true")
 	recorder = httptest.NewRecorder()
+
 	handler.ServeHTTP(recorder, request)
+
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "cloud") {
 		t.Fatalf("list service status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -673,40 +721,50 @@ func TestInviteProofAPIDoesNotRequireAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 	item, err := invite.New("home", "family", time.Minute, now, rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	permit, err := invite.SignPermit(item.Permit, rootPrivate, "root-1")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	devicePublic, devicePrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	_ = devicePublic
+
 	proof, err := item.Proof("device-1", devicePrivate, item.Code, bytes.Repeat([]byte{1}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	service := controlinvites.NewService(
-		controlinvites.NewMemoryStore(),
+		memoryinvites.NewRepository(),
 		rootPublic,
 		"home",
 		func() time.Time { return now },
 	)
+
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		headerAuthorizer{}, Dependencies{Resources: ResourceDependencies{Invites: service}},
 	).Handler()
+
 	body, _ := json.Marshal(map[string]any{"permit": permit, "proof": proof})
 	recorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(
 		recorder,
 		httptest.NewRequest(http.MethodPost, "/api/v1/invites/proof", bytes.NewReader(body)),
 	)
+
 	if recorder.Code != http.StatusAccepted {
 		t.Fatalf("submit invite proof status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -714,7 +772,7 @@ func TestInviteProofAPIDoesNotRequireAdmin(t *testing.T) {
 
 func TestClientKeyUsesForwardedAddressOnlyFromTrustedProxy(t *testing.T) {
 	server := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Security: SecurityDependencies{
@@ -725,18 +783,23 @@ func TestClientKeyUsesForwardedAddressOnlyFromTrustedProxy(t *testing.T) {
 	trusted := httptest.NewRequest(http.MethodGet, "/", nil)
 	trusted.RemoteAddr = "10.1.2.3:443"
 	trusted.Header.Set("X-Forwarded-For", "192.0.2.10, 10.1.2.3")
+
 	if got := server.clientKey(trusted); got != "192.0.2.10" {
 		t.Fatalf("trusted client key = %q", got)
 	}
+
 	spoofed := httptest.NewRequest(http.MethodGet, "/", nil)
 	spoofed.RemoteAddr = "10.1.2.3:443"
 	spoofed.Header.Set("X-Forwarded-For", "198.51.100.99, 192.0.2.10, 10.1.2.3")
+
 	if got := server.clientKey(spoofed); got != "192.0.2.10" {
 		t.Fatalf("trusted client key with prepended value = %q", got)
 	}
+
 	untrusted := httptest.NewRequest(http.MethodGet, "/", nil)
 	untrusted.RemoteAddr = "198.51.100.7:443"
 	untrusted.Header.Set("X-Forwarded-For", "192.0.2.10")
+
 	if got := server.clientKey(untrusted); got != "198.51.100.7" {
 		t.Fatalf("untrusted client key = %q", got)
 	}
@@ -747,6 +810,7 @@ func TestSignedSnapshotPublishDoesNotRequireAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	envelope, err := snapshot.Sign(
 		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
 		rootPrivate,
@@ -755,13 +819,17 @@ func TestSignedSnapshotPublishDoesNotRequireAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := controlsnapshots.NewService(controlsnapshots.NewMemoryStore(), rootPublic, "home")
+
+	service := controlsnapshots.NewService(memorysnapshots.NewRepository(), rootPublic, "home")
+
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		headerAuthorizer{}, Dependencies{Resources: ResourceDependencies{Snapshots: service}},
 	).Handler()
+
 	body, _ := json.Marshal(envelope)
 	recorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(
 		recorder,
 		httptest.NewRequest(
@@ -770,6 +838,7 @@ func TestSignedSnapshotPublishDoesNotRequireAdmin(t *testing.T) {
 			bytes.NewReader(body),
 		),
 	)
+
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("publish snapshot status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -780,6 +849,7 @@ func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	envelope, err := snapshot.Sign(
 		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
 		rootPrivate,
@@ -788,16 +858,19 @@ func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	snapshotService := controlsnapshots.NewService(
-		controlsnapshots.NewMemoryStore(),
+		memorysnapshots.NewRepository(),
 		rootPublic,
 		"home",
 	)
+
 	if err := snapshotService.Publish(context.Background(), envelope); err != nil {
 		t.Fatal(err)
 	}
+
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		headerAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{Snapshots: snapshotService},
@@ -805,6 +878,7 @@ func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
 		},
 	).Handler()
 	challengeRecorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(
 		challengeRecorder,
 		httptest.NewRequest(
@@ -813,6 +887,7 @@ func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
 			nil,
 		),
 	)
+
 	if challengeRecorder.Code != http.StatusOK {
 		t.Fatalf(
 			"challenge status=%d body=%s",
@@ -820,9 +895,11 @@ func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
 			challengeRecorder.Body.String(),
 		)
 	}
+
 	var challenge struct {
 		Nonce string `json:"nonce"`
 	}
+
 	if err := json.Unmarshal(
 		challengeRecorder.Body.Bytes(),
 		&challenge,
@@ -830,6 +907,7 @@ func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
 		challenge.Nonce == "" {
 		t.Fatalf("challenge=%s error=%v", challengeRecorder.Body.String(), err)
 	}
+
 	signature, err := protocol.SignCompanionRequest(
 		http.MethodGet,
 		companionSnapshotPath,
@@ -840,6 +918,7 @@ func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	request := httptest.NewRequest(http.MethodGet, companionSnapshotPath, nil)
 	request.Header.Set("X-Go-Tunnels-Companion-Nonce", challenge.Nonce)
 	request.Header.Set("X-Go-Tunnels-Companion-Key-ID", "root-1")
@@ -848,7 +927,9 @@ func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
 		base64.RawURLEncoding.EncodeToString(signature),
 	)
 	first := httptest.NewRecorder()
+
 	handler.ServeHTTP(first, request)
+
 	if first.Code != http.StatusOK ||
 		!bytes.Contains(
 			first.Body.Bytes(),
@@ -856,8 +937,11 @@ func TestCompanionSnapshotReadRequiresSingleUseSignedChallenge(t *testing.T) {
 		) {
 		t.Fatalf("companion snapshot status=%d body=%s", first.Code, first.Body.String())
 	}
+
 	replay := httptest.NewRecorder()
+
 	handler.ServeHTTP(replay, request)
+
 	if replay.Code != http.StatusUnauthorized {
 		t.Fatalf("replayed companion request status=%d body=%s", replay.Code, replay.Body.String())
 	}

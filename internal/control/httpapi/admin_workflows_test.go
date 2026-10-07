@@ -18,6 +18,10 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
+	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
+	memorypolicy "github.com/StasOkhrym/homeharbor/internal/testutil/control/policy"
+	memoryroutes "github.com/StasOkhrym/homeharbor/internal/testutil/control/routes"
+	memoryservices "github.com/StasOkhrym/homeharbor/internal/testutil/control/services"
 )
 
 func postAdminForm(
@@ -34,27 +38,32 @@ func postAdminForm(
 }
 
 func TestAdminServiceFormGeneratesID(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
+
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
+
 	response := postAdminForm(handler, "/admin/services", url.Values{
 		"name": {"Photos"}, "kind": {"web"}, "url": {"https://photos.home.arpa"},
 	})
+
 	if response.Code != http.StatusSeeOther {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
+
 	items, _ := catalog.List(context.Background())
+
 	if len(items) != 1 || items[0].ID == "" || items[0].Name != "Photos" {
 		t.Fatalf("saved service=%v", items)
 	}
 }
 
 func TestAdminServiceErrorPreservesEscapedValues(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 	response := postAdminForm(handler, "/admin/services", url.Values{
@@ -80,20 +89,22 @@ func TestAdminServiceErrorPreservesEscapedValues(t *testing.T) {
 
 func TestAdminMissingServiceRejectsPostWithoutPanic(t *testing.T) {
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{},
 	).Handler()
+
 	response := postAdminForm(handler, "/admin/services", url.Values{"name": {"Photos"}})
+
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("missing service status=%d", response.Code)
 	}
 }
 
 func TestAdminPolicyPreviewDoesNotPersist(t *testing.T) {
-	service := policy.NewService(policy.NewMemoryStore(), acl.Compiler{})
+	service := policy.NewService(memorypolicy.NewRepository(), acl.Compiler{})
 	auth, _ := newBrowserAuthTest(t)
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{Policy: service},
@@ -116,9 +127,9 @@ func TestAdminPolicyPreviewDoesNotPersist(t *testing.T) {
 }
 
 func TestAdminPolicyRequiresConfirmation(t *testing.T) {
-	service := policy.NewService(policy.NewMemoryStore(), acl.Compiler{})
+	service := policy.NewService(memorypolicy.NewRepository(), acl.Compiler{})
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Policy: service}},
 	).Handler()
 	response := postAdminForm(handler, "/admin/policy", url.Values{"rules": {"[]"}})
@@ -144,12 +155,14 @@ func htmlInput(t *testing.T, body, name string) string {
 }
 
 func TestAdminFormIDSurvivesRetry(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
+
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 	page := httptest.NewRecorder()
+
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/admin/services", nil))
 	id := htmlInput(t, page.Body.String(), "id")
 	values := url.Values{
@@ -161,19 +174,22 @@ func TestAdminFormIDSurvivesRetry(t *testing.T) {
 	if got := postAdminForm(handler, "/admin/services", values).Code; got != http.StatusSeeOther {
 		t.Fatalf("first status=%d", got)
 	}
+
 	if got := postAdminForm(handler, "/admin/services", values).Code; got != http.StatusConflict {
 		t.Fatalf("retry status=%d", got)
 	}
+
 	items, _ := catalog.List(context.Background())
+
 	if len(items) != 1 {
 		t.Fatalf("retry duplicated service: %v", items)
 	}
 }
 
 func TestAdminServiceInvalidURLIsFieldError(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 	for _, value := range []string{"https://user:secret@example.com", "https://example.com/#fragment", "javascript://example.com"} {
@@ -187,10 +203,10 @@ func TestAdminServiceInvalidURLIsFieldError(t *testing.T) {
 }
 
 func TestAdminPolicyPreviewRoundTripAndReplay(t *testing.T) {
-	service := policy.NewService(policy.NewMemoryStore(), acl.Compiler{})
+	service := policy.NewService(memorypolicy.NewRepository(), acl.Compiler{})
 	auth, _ := newBrowserAuthTest(t)
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{Policy: service},
@@ -233,10 +249,10 @@ func TestAdminPolicyPreviewRoundTripAndReplay(t *testing.T) {
 }
 
 func TestAdminPolicyRejectsTamperedConfirmation(t *testing.T) {
-	service := policy.NewService(policy.NewMemoryStore(), acl.Compiler{})
+	service := policy.NewService(memorypolicy.NewRepository(), acl.Compiler{})
 	auth, _ := newBrowserAuthTest(t)
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{Policy: service},
@@ -275,10 +291,10 @@ func TestBrowserConfirmationBindsSessionAndAction(t *testing.T) {
 }
 
 func TestAdminStructuredPolicyPreservesInvalidRow(t *testing.T) {
-	service := policy.NewService(policy.NewMemoryStore(), acl.Compiler{})
+	service := policy.NewService(memorypolicy.NewRepository(), acl.Compiler{})
 	auth, _ := newBrowserAuthTest(t)
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{Policy: service},
@@ -296,7 +312,7 @@ func TestAdminStructuredPolicyPreservesInvalidRow(t *testing.T) {
 }
 
 func TestAdminPolicyDiffIncludesRemovalAndModification(t *testing.T) {
-	service := policy.NewService(policy.NewMemoryStore(), acl.Compiler{})
+	service := policy.NewService(memorypolicy.NewRepository(), acl.Compiler{})
 	var rules []acl.Rule
 	if err := json.Unmarshal(
 		[]byte(
@@ -311,7 +327,7 @@ func TestAdminPolicyDiffIncludesRemovalAndModification(t *testing.T) {
 	}
 	auth, _ := newBrowserAuthTest(t)
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{Policy: service},
@@ -334,7 +350,7 @@ func TestAdminPolicyDiffIncludesRemovalAndModification(t *testing.T) {
 }
 
 func TestAdminProfileSelectionsPersistAfterError(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
 	for _, id := range []string{"photos", "cloud"} {
 		if _, err := catalog.Create(
 			context.Background(),
@@ -349,7 +365,7 @@ func TestAdminProfileSelectionsPersistAfterError(t *testing.T) {
 		}
 	}
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 	response := postAdminForm(
@@ -370,7 +386,7 @@ func TestAdminProfileSelectionsPersistAfterError(t *testing.T) {
 
 func TestAdminTokenValidationRetainsRole(t *testing.T) {
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{},
 	).Handler()
 	response := postAdminForm(
@@ -386,14 +402,16 @@ func TestAdminTokenValidationRetainsRole(t *testing.T) {
 
 func TestAdminTokenPageIsOneTimeAndNoStore(t *testing.T) {
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{},
 	).Handler()
+
 	response := postAdminForm(
 		handler,
 		"/admin/enrollment-tokens",
 		url.Values{"role": {"client"}, "ttl_seconds": {"600"}},
 	)
+
 	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" ||
 		!strings.Contains(
 			response.Body.String(),
@@ -404,9 +422,9 @@ func TestAdminTokenPageIsOneTimeAndNoStore(t *testing.T) {
 }
 
 func TestAdminRejectsUnsafeBrowserID(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 	response := postAdminForm(
@@ -425,7 +443,8 @@ func TestAdminRejectsUnsafeBrowserID(t *testing.T) {
 }
 
 func TestAdminNetworkSupportsBothApprovalTransitions(t *testing.T) {
-	service := controlroutes.NewService(controlroutes.NewMemoryStore(), time.Now)
+	service := controlroutes.NewService(memoryroutes.NewRepository(), time.Now)
+
 	_, err := service.Advertise(context.Background(), controlroutes.AdvertisementRequest{
 		ID: "home", GatewayDeviceID: "gateway", Prefix: netip.MustParsePrefix("192.168.50.0/24"),
 		Resolver: netip.MustParseAddr("192.168.50.1"), DomainSuffix: "home.arpa",
@@ -433,17 +452,21 @@ func TestAdminNetworkSupportsBothApprovalTransitions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Routes: service}},
 	).Handler()
 	for _, action := range []string{"approve", "reject", "approve"} {
 		page := httptest.NewRecorder()
+
 		handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/admin/network", nil))
+
 		if !strings.Contains(page.Body.String(), `action="/admin/routes/`+action+`"`) ||
 			!strings.Contains(page.Body.String(), `name="route_id" value="home"`) {
 			t.Fatalf("missing %s action", action)
 		}
+
 		if got := postAdminForm(
 			handler,
 			"/admin/routes/home/"+action,
@@ -455,9 +478,9 @@ func TestAdminNetworkSupportsBothApprovalTransitions(t *testing.T) {
 }
 
 func TestAdminErrorDoesNotRetainURLCredentials(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
 	response := postAdminForm(

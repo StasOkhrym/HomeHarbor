@@ -14,17 +14,20 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
+	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
+	memorypolicy "github.com/StasOkhrym/homeharbor/internal/testutil/control/policy"
+	memoryservices "github.com/StasOkhrym/homeharbor/internal/testutil/control/services"
 )
 
 func TestAdminMutationsShareBrowserSecurityBoundary(t *testing.T) {
 	auth, sessions := newBrowserAuthTest(t)
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		auth,
 		Dependencies{
 			Resources: ResourceDependencies{
-				Policy:   policy.NewService(policy.NewMemoryStore(), acl.Compiler{}),
-				Services: controlservices.NewService(controlservices.NewMemoryStore(), time.Now),
+				Policy:   policy.NewService(memorypolicy.NewRepository(), acl.Compiler{}),
+				Services: controlservices.NewService(memoryservices.NewRepository(), time.Now),
 			},
 			Browser: BrowserDependencies{
 				API:                auth.Handler(),
@@ -72,11 +75,11 @@ func TestAdminMutationsShareBrowserSecurityBoundary(t *testing.T) {
 }
 
 func TestAdminCredentialRevokeRequiresDeviceScopedProof(t *testing.T) {
-	store := devices.NewMemoryStore()
+	store := memorydevices.NewRepository()
 	service := devices.NewService(store, time.Now, nil)
 	// Persist a registered identity using the real repository fixture API.
 	for _, id := range []string{"device-a", "device-b"} {
-		if err := store.SaveDevice(
+		if err := store.SeedDevice(
 			context.Background(),
 			devices.Device{
 				ID:                 id,
@@ -133,11 +136,11 @@ func TestAdminCredentialRevokeRequiresDeviceScopedProof(t *testing.T) {
 func TestAdminPolicyPreviewRequiresArray(t *testing.T) {
 	auth, _ := newBrowserAuthTest(t)
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{
-				Policy: policy.NewService(policy.NewMemoryStore(), acl.Compiler{}),
+				Policy: policy.NewService(memorypolicy.NewRepository(), acl.Compiler{}),
 			},
 			Browser: BrowserDependencies{ActionConfirmation: auth},
 		},
@@ -155,7 +158,7 @@ func TestAdminPolicyJSONEmptyIsArray(t *testing.T) {
 		nil,
 		Dependencies{
 			Resources: ResourceDependencies{
-				Policy: policy.NewService(policy.NewMemoryStore(), acl.Compiler{}),
+				Policy: policy.NewService(memorypolicy.NewRepository(), acl.Compiler{}),
 			},
 		},
 	)

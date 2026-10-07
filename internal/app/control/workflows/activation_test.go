@@ -13,6 +13,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/invites"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
+	memoryinvites "github.com/StasOkhrym/homeharbor/internal/testutil/control/invites"
 )
 
 type latest struct{ envelope snapshot.Envelope }
@@ -34,8 +35,11 @@ func (c *challenges) ConsumeChallenge(_ context.Context, p, k string) ([]byte, e
 
 func TestClaimProofBindsInviteDeviceNetworkAndOneTimeChallenge(t *testing.T) {
 	ctx := context.Background()
+
 	root, private, _ := ed25519.GenerateKey(rand.Reader)
+
 	device, devicePrivate, _ := ed25519.GenerateKey(rand.Reader)
+
 	now := time.Now().UTC()
 	r := invites.Record{
 		InviteID:           "invite",
@@ -45,11 +49,14 @@ func TestClaimProofBindsInviteDeviceNetworkAndOneTimeChallenge(t *testing.T) {
 		WireGuardPublicKey: bytes.Repeat([]byte{7}, 32),
 		Status:             invites.StatusApproved,
 	}
-	store := invites.NewMemoryStore()
+	store := memoryinvites.NewRepository()
+
 	if err := store.Save(ctx, r); err != nil {
 		t.Fatal(err)
 	}
+
 	snap := &latest{}
+
 	snap.envelope, _ = snapshot.Sign(
 		snapshot.NetworkSnapshot{
 			NetworkID: "home",
@@ -82,19 +89,23 @@ func TestClaimProofBindsInviteDeviceNetworkAndOneTimeChallenge(t *testing.T) {
 		rand.Reader,
 		workflows.WithLifetimes(30*time.Second, 2*time.Minute),
 	)
+
 	issuedChallenge, err := s.Challenge(ctx, "invite")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if issuedChallenge.ExpiresAt != now.Add(30*time.Second).Unix() {
 		t.Fatal("configured activation challenge TTL ignored")
 	}
+
 	for _, kind := range []string{"wrong-key", "wrong-invite", "wrong-network", "noncanonical", "expired"} {
 		t.Run(kind, func(t *testing.T) {
 			challenge, err := s.Challenge(ctx, "invite")
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			key := devicePrivate
 			switch kind {
 			case "wrong-key":
@@ -108,27 +119,33 @@ func TestClaimProofBindsInviteDeviceNetworkAndOneTimeChallenge(t *testing.T) {
 			case "expired":
 				now = now.Add(3 * time.Minute)
 			}
+
 			proof, err := protocol.SignClaim(challenge, key)
 			if err == nil {
 				_, err = s.Claim(ctx, "invite", proof)
 			}
+
 			if err == nil {
 				t.Fatal("invalid claim accepted")
 			}
 		})
 	}
+
 	challenge, err := s.Challenge(ctx, "invite")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	proof, err := protocol.SignClaim(challenge, devicePrivate)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	// Nil UoW causes the first valid request to fail after consuming the nonce.
 	if _, err := s.Claim(ctx, "invite", proof); err == nil {
 		t.Fatal("missing UoW accepted")
 	}
+
 	if _, err := s.Claim(ctx, "invite", proof); err != protocol.ErrInvalidClaim {
 		t.Fatalf("replay error=%v", err)
 	}
@@ -136,9 +153,12 @@ func TestClaimProofBindsInviteDeviceNetworkAndOneTimeChallenge(t *testing.T) {
 
 func TestChallengeRequiresExactRootSignedSnapshot(t *testing.T) {
 	ctx := context.Background()
+
 	root, private, _ := ed25519.GenerateKey(rand.Reader)
+
 	otherRoot, otherPrivate, _ := ed25519.GenerateKey(rand.Reader)
 	_ = otherRoot
+
 	device, _, _ := ed25519.GenerateKey(rand.Reader)
 	r := invites.Record{
 		InviteID:           "i",
@@ -148,7 +168,8 @@ func TestChallengeRequiresExactRootSignedSnapshot(t *testing.T) {
 		WireGuardPublicKey: bytes.Repeat([]byte{4}, 32),
 		Status:             invites.StatusApproved,
 	}
-	store := invites.NewMemoryStore()
+	store := memoryinvites.NewRepository()
+
 	_ = store.Save(ctx, r)
 	for _, kind := range []string{"unsigned", "wrong-root", "wrong-network", "wrong-wg", "wrong-identity", "wrong-profile", "missing-device", "pending"} {
 		t.Run(kind, func(t *testing.T) {
@@ -188,17 +209,21 @@ func TestChallengeRequiresExactRootSignedSnapshot(t *testing.T) {
 				value.Profiles[0].DeviceIDs = nil
 			case "pending":
 				r.Status = invites.StatusPending
-				pending := invites.NewMemoryStore()
+				pending := memoryinvites.NewRepository()
+
 				_ = pending.Save(ctx, r)
 				store = pending
 			}
+
 			envelope, err := snapshot.Sign(value, key, "root-1")
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			if kind == "unsigned" {
 				envelope.Signature = nil
 			}
+
 			s := workflows.NewActivation(
 				nil,
 				store,
@@ -209,6 +234,7 @@ func TestChallengeRequiresExactRootSignedSnapshot(t *testing.T) {
 				nil,
 				nil,
 			)
+
 			if _, err := s.Challenge(ctx, "i"); err == nil {
 				t.Fatal("unapproved snapshot accepted")
 			}

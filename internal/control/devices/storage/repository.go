@@ -51,58 +51,6 @@ func (s *Repository) SaveEnrollmentToken(ctx context.Context, token devices.Enro
 	return err
 }
 
-func (s *Repository) ConsumeEnrollmentToken(
-	ctx context.Context,
-	hash [32]byte,
-	now time.Time,
-) (devices.Role, error) {
-	var role devices.Role
-	err := s.db.QueryRow(ctx, `UPDATE enrollment_tokens SET used_at=$2 WHERE token_hash=$1 AND used_at IS NULL AND expires_at>$2 RETURNING role`, hash[:], now).
-		Scan(&role)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", devices.ErrInvalidEnrollmentToken
-	}
-	return role, err
-}
-
-func (s *Repository) SaveDevice(ctx context.Context, d devices.Device) error {
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err = tx.Exec(
-		ctx,
-		`INSERT INTO devices(id,name,role,status,identity_public_key,wireguard_public_key,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`,
-		d.ID,
-		d.Name,
-		d.Role,
-		d.Status,
-		d.IdentityPublicKey,
-		d.WireGuardPublicKey,
-		d.CreatedAt,
-	); err != nil {
-		return err
-	}
-	if _, err = tx.Exec(
-		ctx,
-		`INSERT INTO device_credentials(device_id,credential_hash,expires_at) VALUES($1,$2,$3)`,
-		d.ID,
-		d.CredentialHash[:],
-		d.CredentialExpiration(),
-	); err != nil {
-		return err
-	}
-	if err = s.appendEvent(
-		ctx,
-		tx,
-		devices.Event{Type: "device.enrolled", AggregateID: d.ID, OccurredAt: d.CreatedAt},
-	); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
 func (s *Repository) Enroll(
 	ctx context.Context,
 	hash [32]byte,

@@ -16,6 +16,10 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
+	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
+	memorypolicy "github.com/StasOkhrym/homeharbor/internal/testutil/control/policy"
+	memoryroutes "github.com/StasOkhrym/homeharbor/internal/testutil/control/routes"
+	memoryservices "github.com/StasOkhrym/homeharbor/internal/testutil/control/services"
 )
 
 func TestRecoveryFormCannotSubmitSecretsInURL(t *testing.T) {
@@ -35,7 +39,7 @@ func TestRecoveryFormCannotSubmitSecretsInURL(t *testing.T) {
 }
 
 func TestProfileCheckboxIDsAreOpaque(t *testing.T) {
-	catalog := controlservices.NewService(controlservices.NewMemoryStore(), time.Now)
+	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
 	for _, id := range []string{"photos,admin", "photos", "admin"} {
 		if _, err := catalog.Create(context.Background(), controlservices.Service{
 			ID: id, Name: id, Kind: controlservices.KindWeb, URL: "https://photos.home.arpa",
@@ -44,7 +48,7 @@ func TestProfileCheckboxIDsAreOpaque(t *testing.T) {
 		}
 	}
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
@@ -61,7 +65,7 @@ func TestProfileCheckboxIDsAreOpaque(t *testing.T) {
 }
 
 func TestRouteActionPreservesExactRecordID(t *testing.T) {
-	routes := controlroutes.NewService(controlroutes.NewMemoryStore(), time.Now)
+	routes := controlroutes.NewService(memoryroutes.NewRepository(), time.Now)
 	for _, id := range []string{"a/../b", "b"} {
 		if _, err := routes.Advertise(context.Background(), controlroutes.AdvertisementRequest{
 			ID: id, GatewayDeviceID: "gateway", Prefix: netip.MustParsePrefix("192.168.50.0/24"),
@@ -70,7 +74,7 @@ func TestRouteActionPreservesExactRecordID(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	handler := newTestServer(devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+	handler := newTestServer(devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Routes: routes}}).Handler()
 	page := httptest.NewRecorder()
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/admin/network", nil))
@@ -95,11 +99,11 @@ func TestRouteActionPreservesExactRecordID(t *testing.T) {
 
 func TestMalformedURLNeverRetainsCredentials(t *testing.T) {
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{
-				Services: controlservices.NewService(controlservices.NewMemoryStore(), time.Now),
+				Services: controlservices.NewService(memoryservices.NewRepository(), time.Now),
 			},
 		},
 	).Handler()
@@ -118,12 +122,12 @@ func TestMalformedURLNeverRetainsCredentials(t *testing.T) {
 
 func TestPolicyErrorKeepsUnrelatedProfileID(t *testing.T) {
 	handler := newTestServer(
-		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{
-				Services: controlservices.NewService(controlservices.NewMemoryStore(), time.Now),
-				Policy:   policy.NewService(policy.NewMemoryStore(), acl.Compiler{}),
+				Services: controlservices.NewService(memoryservices.NewRepository(), time.Now),
+				Policy:   policy.NewService(memorypolicy.NewRepository(), acl.Compiler{}),
 			},
 		},
 	).Handler()

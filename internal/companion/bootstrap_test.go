@@ -16,6 +16,8 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/httpapi"
 	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
+	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
+	memorysnapshots "github.com/StasOkhrym/homeharbor/internal/testutil/control/snapshots"
 )
 
 type bootstrapAuthorizer struct{}
@@ -170,6 +172,7 @@ func TestInitialSnapshotPublishesOnlyIntoEmptyControlStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	envelope, err := (SnapshotManifest{
 		NetworkID: "home",
 		Devices:   []ManifestDevice{{ID: "gateway", Role: "gateway", IdentityPublicKey: "identity", WireGuardPublicKey: "wireguard", OverlayAddress: "10.200.0.1/32"}},
@@ -178,17 +181,22 @@ func TestInitialSnapshotPublishesOnlyIntoEmptyControlStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := controlsnapshots.NewService(controlsnapshots.NewMemoryStore(), rootPublic, "home")
+
+	service := controlsnapshots.NewService(memorysnapshots.NewRepository(), rootPublic, "home")
+
 	handler := companionHTTPFixture(t, httpapi.ResourceDependencies{
-		Devices:   devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		Devices:   devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		Snapshots: service,
 	}, rootPublic, bootstrapAuthorizer{})
 	server := httptest.NewServer(handler)
 	defer server.Close()
+
 	approver := RemoteApprover{Client: server.Client(), Endpoint: server.URL}
+
 	if err := approver.PublishInitialSnapshot(t.Context(), envelope); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := approver.PublishInitialSnapshot(t.Context(), envelope); err == nil {
 		t.Fatal("initial snapshot was allowed to reset an existing store")
 	}

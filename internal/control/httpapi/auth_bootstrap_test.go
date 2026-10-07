@@ -13,6 +13,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
+	memoryidentity "github.com/StasOkhrym/homeharbor/internal/testutil/control/identity"
 )
 
 // Only authenticator verification is doubled here. Registration exclusivity,
@@ -20,7 +21,7 @@ import (
 // WebAuthn parsing/cryptography remain covered by the identity suite.
 type persistedPasskeys struct {
 	*identity.PasskeyService
-	store *identity.MemoryStore
+	store *memoryidentity.Repository
 }
 
 var bootstrapTestHandle = []byte("homeharbor-admin-v1")
@@ -72,7 +73,7 @@ func (s *bootstrapSessions) CreateSession(
 
 func bootstrapFixture(t *testing.T) (*BrowserAuth, *persistedPasskeys, *bootstrapSessions) {
 	t.Helper()
-	store := identity.NewMemoryStore()
+	store := memoryidentity.NewRepository()
 	service, err := identity.NewPasskeyService(identity.PasskeyConfig{
 		RPID:          "tunnel.example.com",
 		RPOrigin:      "https://tunnel.example.com",

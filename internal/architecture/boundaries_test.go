@@ -15,6 +15,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/routes"
+	memoryroutes "github.com/StasOkhrym/homeharbor/internal/testutil/control/routes"
 )
 
 // The import graph is the module boundary: a domain must not acquire storage
@@ -102,6 +103,55 @@ func forbiddenDomainImport(path string) bool {
 		strings.Contains(path, "/storage") || strings.Contains(path, "/httpapi")
 }
 
+// Test helpers may depend on domains; runtime packages may not depend on test helpers.
+func TestProductionPackagesDoNotImportTestutil(t *testing.T) {
+	root := filepath.Join("..", "..")
+	for _, top := range []string{"cmd", "internal", "migrations"} {
+		err := filepath.WalkDir(
+			filepath.Join(root, top),
+			func(path string, entry os.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if entry.IsDir() {
+					if path == filepath.Join(root, "internal", "testutil") {
+						return filepath.SkipDir
+					}
+
+					return nil
+				}
+				if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+					return nil
+				}
+
+				file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+				if err != nil {
+					return err
+				}
+
+				for _, spec := range file.Imports {
+					importPath, err := strconv.Unquote(spec.Path.Value)
+					if err != nil {
+						return err
+					}
+
+					if strings.HasPrefix(
+						importPath,
+						"github.com/StasOkhrym/homeharbor/internal/testutil",
+					) {
+						t.Errorf("production file %s imports %s", path, importPath)
+					}
+				}
+
+				return nil
+			},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestDomainBoundaryRejectsNeutralStorageAdapters(t *testing.T) {
 	for _, path := range []string{
 		"github.com/StasOkhrym/homeharbor/internal/control/devices/storage",
@@ -146,7 +196,8 @@ func TestControlModulesDoNotUseDotImports(t *testing.T) {
 // Keep literal expectations so renamed packages cannot silently alter the wire.
 func TestMovedDomainWireJSON(t *testing.T) {
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
-	service := routes.NewService(routes.NewMemoryStore(), func() time.Time { return now })
+	service := routes.NewService(memoryroutes.NewRepository(), func() time.Time { return now })
+
 	advertisement, err := service.Advertise(context.Background(), routes.AdvertisementRequest{
 		ID: "route-1", GatewayDeviceID: "gateway-1", Prefix: netip.MustParsePrefix("10.20.1.0/16"),
 		Resolver: netip.MustParseAddr("10.20.0.53"), DomainSuffix: " HOME.ARPA. ",
@@ -154,6 +205,7 @@ func TestMovedDomainWireJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, test := range []struct {
 		name  string
 		value any
@@ -167,6 +219,7 @@ func TestMovedDomainWireJSON(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			if string(got) != test.want {
 				t.Fatalf("wire JSON = %s, want %s", got, test.want)
 			}

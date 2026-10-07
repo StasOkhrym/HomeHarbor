@@ -95,8 +95,6 @@ type EnrollRequest struct {
 type Repository interface {
 	EnrollmentPort
 	SaveEnrollmentToken(context.Context, EnrollmentToken) error
-	ConsumeEnrollmentToken(context.Context, [32]byte, time.Time) (Role, error)
-	SaveDevice(context.Context, Device) error
 	Device(context.Context, string) (Device, error)
 	ListDevices(context.Context) ([]Device, error)
 	RevokeDevice(context.Context, string, time.Time) error

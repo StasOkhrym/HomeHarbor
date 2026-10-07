@@ -1,4 +1,4 @@
-package policy
+package policy_test
 
 import (
 	"context"
@@ -6,11 +6,14 @@ import (
 	"testing"
 
 	"github.com/StasOkhrym/homeharbor/internal/acl"
+	domainpkg "github.com/StasOkhrym/homeharbor/internal/control/policy"
+	memorystore "github.com/StasOkhrym/homeharbor/internal/testutil/control/policy"
 )
 
 func TestServiceCreatesMonotonicSnapshots(t *testing.T) {
-	store := NewMemoryStore()
-	service := NewService(store, acl.Compiler{})
+	store := memorystore.NewRepository()
+	service := domainpkg.NewService(store, acl.Compiler{})
+
 	first, err := service.Replace(
 		context.Background(),
 		[]acl.Rule{
@@ -27,6 +30,7 @@ func TestServiceCreatesMonotonicSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	second, err := service.Replace(
 		context.Background(),
 		[]acl.Rule{
@@ -43,6 +47,7 @@ func TestServiceCreatesMonotonicSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if first.Revision != 1 || second.Revision != 2 || second.DefaultAction != acl.ActionDeny {
 		t.Fatalf("snapshots=%#v %#v", first, second)
 	}

@@ -1,4 +1,4 @@
-package identity
+package identity_test
 
 import (
 	"context"
@@ -7,11 +7,14 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	domainpkg "github.com/StasOkhrym/homeharbor/internal/control/identity"
+	memorystore "github.com/StasOkhrym/homeharbor/internal/testutil/control/identity"
 )
 
 func TestGenerateRecoveryCodesStoresOnlyHashes(t *testing.T) {
-	store := NewMemoryStore()
-	service := NewService(
+	store := memorystore.NewRepository()
+	service := domainpkg.NewService(
 		store,
 		store,
 		func() time.Time { return time.Unix(100, 0) },
@@ -36,8 +39,8 @@ func TestGenerateRecoveryCodesStoresOnlyHashes(t *testing.T) {
 }
 
 func TestRecoveryCodeCanBeConsumedOnlyOnceConcurrently(t *testing.T) {
-	store := NewMemoryStore()
-	service := NewService(
+	store := memorystore.NewRepository()
+	service := domainpkg.NewService(
 		store,
 		store,
 		func() time.Time { return time.Unix(100, 0) },
@@ -66,9 +69,14 @@ func TestRecoveryCodeCanBeConsumedOnlyOnceConcurrently(t *testing.T) {
 }
 
 func TestSessionExpiresAndCanBeRevoked(t *testing.T) {
-	store := NewMemoryStore()
+	store := memorystore.NewRepository()
 	now := time.Unix(100, 0)
-	service := NewService(store, store, func() time.Time { return now }, &sequenceReader{next: 's'})
+	service := domainpkg.NewService(
+		store,
+		store,
+		func() time.Time { return now },
+		&sequenceReader{next: 's'},
+	)
 
 	issued, err := service.CreateSession(context.Background(), time.Hour)
 	if err != nil {
@@ -83,7 +91,7 @@ func TestSessionExpiresAndCanBeRevoked(t *testing.T) {
 		issued.Token,
 	); !errors.Is(
 		err,
-		ErrInvalidCredential,
+		domainpkg.ErrInvalidCredential,
 	) {
 		t.Fatalf("expired error = %v", err)
 	}
@@ -101,44 +109,49 @@ func TestSessionExpiresAndCanBeRevoked(t *testing.T) {
 		issued.Token,
 	); !errors.Is(
 		err,
-		ErrInvalidCredential,
+		domainpkg.ErrInvalidCredential,
 	) {
 		t.Fatalf("revoked error = %v", err)
 	}
 }
 
 func TestInvalidSessionTokenUsesGenericError(t *testing.T) {
-	service := NewService(NewMemoryStore(), NewMemoryStore(), time.Now, &sequenceReader{next: 'x'})
+	service := domainpkg.NewService(
+		memorystore.NewRepository(),
+		memorystore.NewRepository(),
+		time.Now,
+		&sequenceReader{next: 'x'},
+	)
 	if _, err := service.ValidateSession(
 		context.Background(),
 		"unknown",
 	); !errors.Is(
 		err,
-		ErrInvalidCredential,
+		domainpkg.ErrInvalidCredential,
 	) {
 		t.Fatalf("error = %v", err)
 	}
 }
 
-type unavailableSessions struct{ *MemoryStore }
+type unavailableSessions struct{ *memorystore.Repository }
 
-func (unavailableSessions) Session(context.Context, [32]byte) (Session, error) {
-	return Session{}, ErrSecurityStateUnavailable
+func (unavailableSessions) Session(context.Context, [32]byte) (domainpkg.Session, error) {
+	return domainpkg.Session{}, domainpkg.ErrSecurityStateUnavailable
 }
 
 func (unavailableSessions) RevokeSession(context.Context, [32]byte, time.Time) error {
-	return ErrSecurityStateUnavailable
+	return domainpkg.ErrSecurityStateUnavailable
 }
 
 func TestSessionStoreOutageIsNotAnInvalidCredential(t *testing.T) {
-	store := unavailableSessions{NewMemoryStore()}
-	service := NewService(store, store, time.Now, nil)
+	store := unavailableSessions{memorystore.NewRepository()}
+	service := domainpkg.NewService(store, store, time.Now, nil)
 	if _, err := service.ValidateSession(
 		context.Background(),
 		"opaque",
 	); !errors.Is(
 		err,
-		ErrSecurityStateUnavailable,
+		domainpkg.ErrSecurityStateUnavailable,
 	) {
 		t.Fatalf("lookup outage was hidden: %v", err)
 	}
@@ -147,7 +160,7 @@ func TestSessionStoreOutageIsNotAnInvalidCredential(t *testing.T) {
 		"opaque",
 	); !errors.Is(
 		err,
-		ErrSecurityStateUnavailable,
+		domainpkg.ErrSecurityStateUnavailable,
 	) {
 		t.Fatalf("revoke outage was hidden: %v", err)
 	}

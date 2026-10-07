@@ -16,12 +16,13 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/control/invites"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
+	memoryinvites "github.com/StasOkhrym/homeharbor/internal/testutil/control/invites"
 )
 
 // This boundary fixture exercises companion validation; transactional module
 // writes and idempotency are tested against actual PostgreSQL separately.
 type approvalFixture struct {
-	store *invites.MemoryStore
+	store *memoryinvites.Repository
 	root  ed25519.PublicKey
 }
 

@@ -17,6 +17,9 @@ import (
 	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
+	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
+	memoryinvites "github.com/StasOkhrym/homeharbor/internal/testutil/control/invites"
+	memorysnapshots "github.com/StasOkhrym/homeharbor/internal/testutil/control/snapshots"
 )
 
 func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
@@ -24,19 +27,23 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	now := time.Now().UTC()
 	local, err := invite.New("home", "family", time.Hour, now, rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	permit, err := invite.SignPermit(local.Permit, rootPrivate, "root-1")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	_, devicePrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	proof, err := local.Proof(
 		"phone",
 		devicePrivate,
@@ -46,7 +53,8 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := controlinvites.NewMemoryStore()
+
+	store := memoryinvites.NewRepository()
 	inviteService := controlinvites.NewService(
 		store,
 		rootPublic,
@@ -54,14 +62,17 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 		func() time.Time { return now },
 		controlinvites.WithApprovalWorkflow(approvalFixture{store: store, root: rootPublic}),
 	)
+
 	if err := inviteService.SubmitProof(context.Background(), permit, proof); err != nil {
 		t.Fatal(err)
 	}
+
 	snapshotService := controlsnapshots.NewService(
-		controlsnapshots.NewMemoryStore(),
+		memorysnapshots.NewRepository(),
 		rootPublic,
 		"home",
 	)
+
 	initial, err := snapshot.Sign(
 		snapshot.NetworkSnapshot{
 			NetworkID: "home",
@@ -74,21 +85,25 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := snapshotService.Publish(context.Background(), initial); err != nil {
 		t.Fatal(err)
 	}
+
 	handler := companionHTTPFixture(t, httpapi.ResourceDependencies{
-		Devices:   devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		Devices:   devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		Invites:   inviteService,
 		Snapshots: snapshotService,
 	}, rootPublic, allowAllAuthorizer{})
 	server := httptest.NewServer(handler)
 	defer server.Close()
+
 	approver := RemoteApprover{
 		Endpoint:    server.URL,
 		KeyID:       "root-1",
 		OverlayPool: netip.MustParsePrefix("10.200.0.0/29"),
 	}
+
 	if err := approver.Approve(
 		context.Background(),
 		local.Permit.InviteID,
@@ -97,6 +112,7 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := approver.PublishSnapshot(
 		context.Background(),
 		local.Permit.InviteID,
@@ -104,14 +120,17 @@ func TestRemoteApproverRetriesSnapshotPublicationAfterActivation(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	latest, err := snapshotService.Latest(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	value, err := snapshot.Decode(latest)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(value.Devices) != 1 || value.Devices[0].ID != "phone" ||
 		value.Devices[0].OverlayAddress != "10.200.0.1/32" {
 		t.Fatalf("published device=%#v", value.Devices)
@@ -128,11 +147,13 @@ func TestRemoteApproverPublishesSignedDeviceRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	snapshotService := controlsnapshots.NewService(
-		controlsnapshots.NewMemoryStore(),
+		memorysnapshots.NewRepository(),
 		rootPublic,
 		"home",
 	)
+
 	initial, err := snapshot.Sign(snapshot.NetworkSnapshot{
 		NetworkID: "home",
 		Revision:  1,
@@ -152,17 +173,20 @@ func TestRemoteApproverPublishesSignedDeviceRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := snapshotService.Publish(context.Background(), initial); err != nil {
 		t.Fatal(err)
 	}
+
 	handler := companionHTTPFixture(t, httpapi.ResourceDependencies{
-		Devices:   devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		Devices:   devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		Snapshots: snapshotService,
 	}, rootPublic, allowAllAuthorizer{})
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
 	approver := RemoteApprover{Endpoint: server.URL, KeyID: "root-1"}
+
 	if err := approver.PublishDeviceRemoval(
 		context.Background(),
 		"phone",
@@ -170,14 +194,17 @@ func TestRemoteApproverPublishesSignedDeviceRemoval(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	latest, err := snapshotService.Latest(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	value, err := snapshot.Decode(latest)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(value.Devices) != 0 || len(value.Profiles) != 1 ||
 		len(value.Profiles[0].DeviceIDs) != 0 {
 		t.Fatalf("device removal was not published: %#v", value)
@@ -212,7 +239,7 @@ func TestRemoteApproverBlocksInviteAfterFiveInvalidCodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := controlinvites.NewService(
-		controlinvites.NewMemoryStore(),
+		memoryinvites.NewRepository(),
 		rootPublic,
 		"home",
 		func() time.Time { return now },
@@ -221,7 +248,7 @@ func TestRemoteApproverBlocksInviteAfterFiveInvalidCodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(companionHTTPFixture(t, httpapi.ResourceDependencies{
-		Devices: devices.NewService(devices.NewMemoryStore(), time.Now, nil),
+		Devices: devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		Invites: service,
 	}, nil, allowAllAuthorizer{}))
 	defer server.Close()

@@ -1,4 +1,4 @@
-package devices
+package devices_test
 
 import (
 	"context"
@@ -10,24 +10,30 @@ import (
 	"time"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+
+	domainpkg "github.com/StasOkhrym/homeharbor/internal/control/devices"
+	memorystore "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
 )
 
 func TestConfiguredCredentialTTLControlsEnrollmentAndRotation(t *testing.T) {
 	now := time.Now().UTC()
-	s := NewService(
-		NewMemoryStore(),
+	s := domainpkg.NewService(
+		memorystore.NewRepository(),
 		func() time.Time { return now },
 		nil,
-		WithCredentialTTL(2*time.Minute),
+		domainpkg.WithCredentialTTL(2*time.Minute),
 	)
-	token, err := s.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+
+	token, err := s.IssueEnrollmentToken(context.Background(), domainpkg.RoleClient, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	id, wg := validPublicKeys(t)
+
 	d, err := s.Enroll(
 		context.Background(),
-		EnrollRequest{
+		domainpkg.EnrollRequest{
 			Token:              token.Token,
 			Name:               "ttl-test",
 			IdentityPublicKey:  id,
@@ -37,15 +43,20 @@ func TestConfiguredCredentialTTLControlsEnrollmentAndRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	now = now.Add(time.Minute)
+
 	rotated, err := s.RotateCredential(context.Background(), d.ID, d.Credential)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err = s.Authenticate(context.Background(), d.Credential); err == nil {
 		t.Fatal("old credential remains valid")
 	}
+
 	now = now.Add(2*time.Minute + time.Second)
+
 	if _, err = s.Authenticate(context.Background(), rotated.Credential); err == nil {
 		t.Fatal("rotation ignored configured credential expiry")
 	}
@@ -53,20 +64,23 @@ func TestConfiguredCredentialTTLControlsEnrollmentAndRotation(t *testing.T) {
 
 func TestConfiguredCredentialTTLEnrollmentExpires(t *testing.T) {
 	now := time.Now().UTC()
-	s := NewService(
-		NewMemoryStore(),
+	s := domainpkg.NewService(
+		memorystore.NewRepository(),
 		func() time.Time { return now },
 		nil,
-		WithCredentialTTL(time.Minute),
+		domainpkg.WithCredentialTTL(time.Minute),
 	)
-	token, err := s.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+
+	token, err := s.IssueEnrollmentToken(context.Background(), domainpkg.RoleClient, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	id, wg := validPublicKeys(t)
+
 	d, err := s.Enroll(
 		context.Background(),
-		EnrollRequest{
+		domainpkg.EnrollRequest{
 			Token:              token.Token,
 			Name:               "ttl-test",
 			IdentityPublicKey:  id,
@@ -76,23 +90,31 @@ func TestConfiguredCredentialTTLEnrollmentExpires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	now = now.Add(time.Minute + time.Second)
+
 	if _, err = s.Authenticate(context.Background(), d.Credential); err == nil {
 		t.Fatal("enrollment ignored configured credential expiry")
 	}
 }
 
 func TestEnrollmentTokenIsSingleUse(t *testing.T) {
-	store := NewMemoryStore()
+	store := memorystore.NewRepository()
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
-	service := NewService(store, func() time.Time { return now }, fixedRandom{'x'})
+	service := domainpkg.NewService(store, func() time.Time { return now }, fixedRandom{'x'})
 
-	issued, err := service.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+	issued, err := service.IssueEnrollmentToken(
+		context.Background(),
+		domainpkg.RoleClient,
+		time.Hour,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	identityPublicKey, wireGuardPublicKey := validPublicKeys(t)
-	device, err := service.Enroll(context.Background(), EnrollRequest{
+
+	device, err := service.Enroll(context.Background(), domainpkg.EnrollRequest{
 		Token:              issued.Token,
 		Name:               "laptop",
 		IdentityPublicKey:  identityPublicKey,
@@ -101,15 +123,17 @@ func TestEnrollmentTokenIsSingleUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Enroll() error = %v", err)
 	}
-	if device.Role != RoleClient || device.Status != StatusActive {
+
+	if device.Role != domainpkg.RoleClient || device.Status != domainpkg.StatusActive {
 		t.Fatalf("device = %#v", device)
 	}
 	if device.Credential == "" {
 		t.Fatal("enrollment credential is empty")
 	}
+
 	if _, err := service.Enroll(
 		context.Background(),
-		EnrollRequest{
+		domainpkg.EnrollRequest{
 			Token:              issued.Token,
 			Name:               "second",
 			IdentityPublicKey:  identityPublicKey,
@@ -117,71 +141,95 @@ func TestEnrollmentTokenIsSingleUse(t *testing.T) {
 		},
 	); !errors.Is(
 		err,
-		ErrInvalidEnrollmentToken,
+		domainpkg.ErrInvalidEnrollmentToken,
 	) {
 		t.Fatalf("second Enroll() error = %v", err)
 	}
 }
 
 func TestEnrollmentTokenExpires(t *testing.T) {
-	store := NewMemoryStore()
+	store := memorystore.NewRepository()
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
-	service := NewService(store, func() time.Time { return now }, fixedRandom{'y'})
-	issued, err := service.IssueEnrollmentToken(context.Background(), RoleGateway, time.Minute)
+	service := domainpkg.NewService(store, func() time.Time { return now }, fixedRandom{'y'})
+
+	issued, err := service.IssueEnrollmentToken(
+		context.Background(),
+		domainpkg.RoleGateway,
+		time.Minute,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	now = now.Add(2 * time.Minute)
+
 	identityPublicKey, wireGuardPublicKey := validPublicKeys(t)
+
 	_, err = service.Enroll(
 		context.Background(),
-		EnrollRequest{
+		domainpkg.EnrollRequest{
 			Token:              issued.Token,
 			Name:               "gateway",
 			IdentityPublicKey:  identityPublicKey,
 			WireGuardPublicKey: wireGuardPublicKey,
 		},
 	)
-	if !errors.Is(err, ErrInvalidEnrollmentToken) {
+
+	if !errors.Is(err, domainpkg.ErrInvalidEnrollmentToken) {
 		t.Fatalf("Enroll() error = %v", err)
 	}
 }
 
 func TestRevokeDeviceIsIdempotent(t *testing.T) {
-	store := NewMemoryStore()
-	service := NewService(store, time.Now, fixedRandom{'z'})
-	issued, _ := service.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+	store := memorystore.NewRepository()
+	service := domainpkg.NewService(store, time.Now, fixedRandom{'z'})
+
+	issued, _ := service.IssueEnrollmentToken(context.Background(), domainpkg.RoleClient, time.Hour)
+
 	identityPublicKey, wireGuardPublicKey := validPublicKeys(t)
+
 	device, _ := service.Enroll(
 		context.Background(),
-		EnrollRequest{
+		domainpkg.EnrollRequest{
 			Token:              issued.Token,
 			Name:               "phone",
 			IdentityPublicKey:  identityPublicKey,
 			WireGuardPublicKey: wireGuardPublicKey,
 		},
 	)
+
 	if err := service.Revoke(context.Background(), device.ID); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := service.Revoke(context.Background(), device.ID); err != nil {
 		t.Fatal(err)
 	}
+
 	got, _ := store.Device(context.Background(), device.ID)
-	if got.Status != StatusRevoked {
+
+	if got.Status != domainpkg.StatusRevoked {
 		t.Fatalf("status = %q", got.Status)
 	}
 }
 
 func TestEnrollPublishesDomainEvent(t *testing.T) {
-	store := NewMemoryStore()
+	store := memorystore.NewRepository()
 	publisher := &recordPublisher{}
-	service := NewService(store, time.Now, fixedRandom{'e'}, WithPublisher(publisher))
-	issued, _ := service.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+	service := domainpkg.NewService(
+		store,
+		time.Now,
+		fixedRandom{'e'},
+		domainpkg.WithPublisher(publisher),
+	)
+
+	issued, _ := service.IssueEnrollmentToken(context.Background(), domainpkg.RoleClient, time.Hour)
+
 	identityPublicKey, wireGuardPublicKey := validPublicKeys(t)
+
 	device, err := service.Enroll(
 		context.Background(),
-		EnrollRequest{
+		domainpkg.EnrollRequest{
 			Token:              issued.Token,
 			Name:               "laptop",
 			IdentityPublicKey:  identityPublicKey,
@@ -191,6 +239,7 @@ func TestEnrollPublishesDomainEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(publisher.events) != 1 || publisher.events[0].Type != "device.enrolled" ||
 		publisher.events[0].AggregateID != device.ID {
 		t.Fatalf("events=%#v", publisher.events)
@@ -198,37 +247,52 @@ func TestEnrollPublishesDomainEvent(t *testing.T) {
 }
 
 func TestEnrollUsesAtomicStoreOperation(t *testing.T) {
-	store := &atomicEnrollmentStore{MemoryStore: NewMemoryStore()}
-	service := NewService(store, time.Now, fixedRandom{'a'})
-	issued, err := service.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+	store := &atomicEnrollmentStore{Repository: memorystore.NewRepository()}
+	service := domainpkg.NewService(store, time.Now, fixedRandom{'a'})
+
+	issued, err := service.IssueEnrollmentToken(
+		context.Background(),
+		domainpkg.RoleClient,
+		time.Hour,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	identityPublicKey, wireGuardPublicKey := validPublicKeys(t)
+
 	_, err = service.Enroll(
 		context.Background(),
-		EnrollRequest{
+		domainpkg.EnrollRequest{
 			Token:              issued.Token,
 			Name:               "phone",
 			IdentityPublicKey:  identityPublicKey,
 			WireGuardPublicKey: wireGuardPublicKey,
 		},
 	)
+
 	if !errors.Is(err, errAtomicEnrollment) {
 		t.Fatalf("Enroll() error = %v, want atomic store error", err)
 	}
 }
 
 func TestRotateCredentialRevokesPreviousCredential(t *testing.T) {
-	store := NewMemoryStore()
+	store := memorystore.NewRepository()
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
-	service := NewService(store, func() time.Time { return now }, &sequenceRandom{})
-	issued, err := service.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+	service := domainpkg.NewService(store, func() time.Time { return now }, &sequenceRandom{})
+
+	issued, err := service.IssueEnrollmentToken(
+		context.Background(),
+		domainpkg.RoleClient,
+		time.Hour,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	identityPublicKey, wireGuardPublicKey := validPublicKeys(t)
-	device, err := service.Enroll(context.Background(), EnrollRequest{
+
+	device, err := service.Enroll(context.Background(), domainpkg.EnrollRequest{
 		Token:              issued.Token,
 		Name:               "phone",
 		IdentityPublicKey:  identityPublicKey,
@@ -237,22 +301,26 @@ func TestRotateCredentialRevokesPreviousCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	rotated, err := service.RotateCredential(context.Background(), device.ID, device.Credential)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if rotated.Credential == device.Credential {
 		t.Fatal("rotation returned the previous credential")
 	}
+
 	if _, err := service.Authenticate(
 		context.Background(),
 		device.Credential,
 	); !errors.Is(
 		err,
-		ErrDeviceNotFound,
+		domainpkg.ErrDeviceNotFound,
 	) {
 		t.Fatalf("old credential authentication error = %v", err)
 	}
+
 	if got, err := service.Authenticate(
 		context.Background(),
 		rotated.Credential,
@@ -263,54 +331,62 @@ func TestRotateCredentialRevokesPreviousCredential(t *testing.T) {
 }
 
 func TestEnrollRejectsMalformedPublicKeysAndOversizedName(t *testing.T) {
-	store := NewMemoryStore()
-	service := NewService(store, time.Now, &sequenceRandom{})
+	store := memorystore.NewRepository()
+	service := domainpkg.NewService(store, time.Now, &sequenceRandom{})
 	tests := []struct {
 		name   string
-		mutate func(*EnrollRequest)
+		mutate func(*domainpkg.EnrollRequest)
 	}{
 		{
 			name:   "identity key",
-			mutate: func(request *EnrollRequest) { request.IdentityPublicKey = "not-a-public-key" },
+			mutate: func(request *domainpkg.EnrollRequest) { request.IdentityPublicKey = "not-a-public-key" },
 		},
 		{
 			name:   "WireGuard key",
-			mutate: func(request *EnrollRequest) { request.WireGuardPublicKey = "not-a-wireguard-key" },
+			mutate: func(request *domainpkg.EnrollRequest) { request.WireGuardPublicKey = "not-a-wireguard-key" },
 		},
-		{name: "empty name", mutate: func(request *EnrollRequest) { request.Name = "" }},
+		{name: "empty name", mutate: func(request *domainpkg.EnrollRequest) { request.Name = "" }},
 		{
 			name:   "oversized name",
-			mutate: func(request *EnrollRequest) { request.Name = string(make([]byte, 257)) },
+			mutate: func(request *domainpkg.EnrollRequest) { request.Name = string(make([]byte, 257)) },
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			issued, err := service.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+			issued, err := service.IssueEnrollmentToken(
+				context.Background(),
+				domainpkg.RoleClient,
+				time.Hour,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			identityPublicKey, wireGuardPublicKey := validPublicKeys(t)
-			request := EnrollRequest{
+			request := domainpkg.EnrollRequest{
 				Token:              issued.Token,
 				Name:               "valid-name",
 				IdentityPublicKey:  identityPublicKey,
 				WireGuardPublicKey: wireGuardPublicKey,
 			}
+
 			test.mutate(&request)
+
 			if _, err := service.Enroll(
 				context.Background(),
 				request,
 			); !errors.Is(
 				err,
-				ErrInvalidEnrollment,
+				domainpkg.ErrInvalidEnrollment,
 			) {
 				t.Fatalf("Enroll() error = %v, want ErrInvalidEnrollment", err)
 			}
+
 			// Validation happens before token consumption. The operator can retry
 			// the same one-time token after fixing a malformed client request.
 			if _, err := service.Enroll(
 				context.Background(),
-				EnrollRequest{
+				domainpkg.EnrollRequest{
 					Token:              issued.Token,
 					Name:               "retry",
 					IdentityPublicKey:  identityPublicKey,
@@ -344,15 +420,20 @@ func validPublicKeys(t *testing.T) (identity, wireGuard string) {
 
 var errAtomicEnrollment = errors.New("atomic enrollment failed")
 
-type atomicEnrollmentStore struct{ *MemoryStore }
+type atomicEnrollmentStore struct{ *memorystore.Repository }
 
-func (s *atomicEnrollmentStore) Enroll(context.Context, [32]byte, time.Time, Device) (Role, error) {
+func (s *atomicEnrollmentStore) Enroll(
+	context.Context,
+	[32]byte,
+	time.Time,
+	domainpkg.Device,
+) (domainpkg.Role, error) {
 	return "", errAtomicEnrollment
 }
 
-type recordPublisher struct{ events []Event }
+type recordPublisher struct{ events []domainpkg.Event }
 
-func (r *recordPublisher) Publish(_ context.Context, event Event) error {
+func (r *recordPublisher) Publish(_ context.Context, event domainpkg.Event) error {
 	r.events = append(r.events, event)
 	return nil
 }
@@ -380,31 +461,46 @@ func (r *sequenceRandom) Read(p []byte) (int, error) {
 
 func TestRotatedCredentialAuthenticatesWithItsIssuanceExpiry(t *testing.T) {
 	now := time.Now().UTC()
-	service := NewService(NewMemoryStore(), func() time.Time { return now }, nil)
-	token, err := service.IssueEnrollmentToken(context.Background(), RoleClient, time.Hour)
+	service := domainpkg.NewService(
+		memorystore.NewRepository(),
+		func() time.Time { return now },
+		nil,
+	)
+
+	token, err := service.IssueEnrollmentToken(
+		context.Background(),
+		domainpkg.RoleClient,
+		time.Hour,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	identity, wg := validPublicKeys(t)
-	request := EnrollRequest{
+	request := domainpkg.EnrollRequest{
 		Token:              token.Token,
 		Name:               "expiry",
 		IdentityPublicKey:  identity,
 		WireGuardPublicKey: wg,
 	}
+
 	d, err := service.Enroll(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	now = now.Add(5 * time.Minute)
+
 	lease, err := service.RotateCredential(context.Background(), d.ID, d.Credential)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	admitted, err := service.Authenticate(context.Background(), lease.Credential)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !admitted.CredentialExpiresAt.Equal(lease.ExpiresAt) {
 		t.Fatalf(
 			"admitted expiry=%v, lease expiry=%v",
