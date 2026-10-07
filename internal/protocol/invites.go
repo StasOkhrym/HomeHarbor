@@ -27,3 +27,12 @@ type InviteApprovalResult struct {
 	ProfileID string `json:"profile_id"`
 	Status    string `json:"status"`
 }
+
+type InviteApprovalRequest struct {
+	Approval invite.SignedApproval `json:"approval"`
+}
+
+type InviteProofSubmission struct {
+	Permit invite.SignedPermit `json:"permit"`
+	Proof  invite.Proof        `json:"proof"`
+}

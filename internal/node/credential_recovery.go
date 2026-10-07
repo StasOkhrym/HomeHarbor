@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/StasOkhrym/homeharbor/internal/controlclient"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
@@ -28,20 +29,12 @@ func RecoverCredential(
 	if err != nil || len(key) != ed25519.PrivateKeySize {
 		return errors.New("invalid node identity")
 	}
-	if client == nil {
-		client = http.DefaultClient
-	}
-	bounded := *client
-	bounded.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	endpoint := strings.TrimRight(controlURL, "/") + "/api/v1/devices/credentials"
-	var challenge protocol.CredentialChallenge
-	status, err := activationRequest(ctx, &bounded, endpoint+"/challenge", struct {
-		DeviceID string `json:"device_id"`
-	}{state.DeviceID}, &challenge)
+	remote, err := controlclient.ForEndpoint(strings.TrimRight(controlURL, "/"), client)
 	if err != nil {
 		return err
 	}
-	if status != http.StatusOK {
+	challenge, err := remote.CredentialChallenge(ctx, state.DeviceID)
+	if err != nil {
 		return errors.New("credential challenge unavailable")
 	}
 	now := time.Now()
@@ -54,12 +47,8 @@ func RecoverCredential(
 	if err != nil {
 		return err
 	}
-	var lease protocol.CredentialLease
-	status, err = activationRequest(ctx, &bounded, endpoint+"/recovery", proof, &lease)
+	lease, err := remote.RecoverCredential(ctx, proof)
 	if err != nil {
-		return err
-	}
-	if status != http.StatusOK {
 		return errors.New("credential recovery failed")
 	}
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(lease.Credential)

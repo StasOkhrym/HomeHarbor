@@ -6,10 +6,8 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -18,6 +16,7 @@ import (
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
+	"github.com/StasOkhrym/homeharbor/internal/controlclient"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
@@ -107,55 +106,56 @@ func (a RemoteApprover) Approve(
 	if a.Client == nil {
 		a.Client = http.DefaultClient
 	}
+
 	if a.Now == nil {
 		a.Now = time.Now
 	}
+
 	base := strings.TrimRight(a.Endpoint, "/")
 	if err := validateControlEndpoint(base); err != nil {
 		return err
 	}
+
 	if base == "" || inviteID == "" || code == "" || len(root) != ed25519.PrivateKeySize {
 		return errors.New("invalid companion approval request")
 	}
+
 	if a.Attempts != nil {
 		if err := a.Attempts.Check(inviteID); err != nil {
 			return err
 		}
 	}
-	getURL := fmt.Sprintf("%s/api/v1/invites/%s", base, url.PathEscape(inviteID))
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, getURL, nil)
+
+	remote, err := controlclient.ForEndpoint(base, a.Client)
 	if err != nil {
 		return err
 	}
-	response, err := a.Client.Do(request)
+
+	pending, err := remote.Invite(ctx, inviteID)
 	if err != nil {
-		return err
-	}
-	defer func(body io.ReadCloser) { _ = body.Close() }(response.Body)
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("load pending invite: status %d", response.StatusCode)
-	}
-	var pending protocol.InviteRecord
-	if err := json.NewDecoder(response.Body).Decode(&pending); err != nil {
-		return err
+		return fmt.Errorf("load pending invite: %w", err)
 	}
 	if pending.InviteID != inviteID || pending.DeviceID != pending.Proof.DeviceID ||
 		!bytes.Equal(pending.DevicePublic, pending.Proof.DevicePublicKey) ||
 		!bytes.Equal(pending.WireGuardPublicKey, pending.Proof.WireGuardPublicKey) {
 		return invite.ErrInvalidProof
 	}
+
 	checkAt := a.Now().UTC()
 	if pending.Status == "approved" && pending.ApprovedAt != nil {
 		checkAt = pending.ApprovedAt.UTC()
 	}
+
 	if pending.Status != "pending" &&
 		pending.Status != "approved" {
 		return ErrInviteConsumed
 	}
+
 	network, err := invite.PermitNetworkID(pending.Permit)
 	if err != nil {
 		return err
 	}
+
 	if err := invite.VerifyPermit(
 		pending.Permit,
 		root.Public().(ed25519.PublicKey),
@@ -164,6 +164,7 @@ func (a RemoteApprover) Approve(
 	); err != nil {
 		return err
 	}
+
 	if err := invite.VerifyProofWithCode(
 		pending.Permit,
 		pending.Proof,
@@ -181,14 +182,18 @@ func (a RemoteApprover) Approve(
 		); proofErr != nil {
 			return proofErr
 		}
+
 		if a.Attempts == nil {
 			return ErrInviteAttemptsUnavailable
 		}
+
 		if attemptErr := a.Attempts.RecordFailure(inviteID); attemptErr != nil {
 			return attemptErr
 		}
+
 		return err
 	}
+
 	signed, err := invite.SignApproval(
 		invite.Approval{
 			Version:            invite.Version,
@@ -203,43 +208,17 @@ func (a RemoteApprover) Approve(
 	if err != nil {
 		return err
 	}
-	body, err := json.Marshal(map[string]invite.SignedApproval{"approval": signed})
+
+	result, err := remote.ApproveInvite(ctx, inviteID, signed)
 	if err != nil {
-		return err
-	}
-	approvalURL := fmt.Sprintf("%s/api/v1/invites/%s/approval", base, url.PathEscape(inviteID))
-	request, err = http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		approvalURL,
-		bytes.NewReader(body),
-	)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err = a.Client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer func(body io.ReadCloser) { _ = body.Close() }(response.Body)
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("approve invite: status %d", response.StatusCode)
-	}
-	var result protocol.InviteApprovalResult
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 16<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&result); err != nil {
-		return errors.New("invalid public approval response")
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		return errors.New("invalid public approval response")
+		return fmt.Errorf("approve invite: %w", err)
 	}
 	if result.InviteID != pending.InviteID || result.DeviceID != pending.DeviceID ||
 		result.ProfileID != pending.ProfileID ||
 		result.Status != "approved" {
 		return errors.New("approval response differs from signed public diff")
 	}
+
 	return nil
 }
 
@@ -255,43 +234,39 @@ func (a RemoteApprover) PublishSnapshot(
 	if a.Client == nil {
 		a.Client = http.DefaultClient
 	}
+
 	if a.Now == nil {
 		a.Now = time.Now
 	}
+
 	if a.KeyID == "" {
 		a.KeyID = "root-1"
 	}
+
 	if strings.TrimSpace(a.Endpoint) == "" || inviteID == "" ||
 		len(root) != ed25519.PrivateKeySize ||
 		!a.OverlayPool.IsValid() {
 		return errors.New("invalid companion snapshot publication request")
 	}
+
 	base := strings.TrimRight(a.Endpoint, "/")
 	if err := validateControlEndpoint(base); err != nil {
 		return err
 	}
-	getURL := fmt.Sprintf("%s/api/v1/invites/%s", base, url.PathEscape(inviteID))
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, getURL, nil)
+
+	remote, err := controlclient.ForEndpoint(base, a.Client)
 	if err != nil {
 		return err
 	}
-	response, err := a.Client.Do(request)
+
+	record, err := remote.Invite(ctx, inviteID)
 	if err != nil {
-		return err
+		return fmt.Errorf("load approved invite: %w", err)
 	}
-	if response.StatusCode != http.StatusOK {
-		_ = response.Body.Close()
-		return fmt.Errorf("load approved invite: status %d", response.StatusCode)
-	}
-	var record protocol.InviteRecord
-	if err := json.NewDecoder(response.Body).Decode(&record); err != nil {
-		_ = response.Body.Close()
-		return err
-	}
-	_ = response.Body.Close()
 	if record.Status != "approved" {
 		return errors.New("invite is not approved")
 	}
+
 	permitNetworkID, err := invite.PermitNetworkID(record.Permit)
 	if err != nil {
 		return err
@@ -304,15 +279,18 @@ func (a RemoteApprover) PublishSnapshot(
 	if snapshotNetwork != permitNetworkID {
 		return errors.New("invite and signed snapshot belong to different networks")
 	}
+
 	var wireGuard wgtypes.Key
 	if len(record.WireGuardPublicKey) != len(wireGuard) {
 		return invite.ErrInvalidProof
 	}
+
 	copy(wireGuard[:], record.WireGuardPublicKey)
 	session := NewSession(a.Now)
 	if err := session.Unlock(root); err != nil {
 		return err
 	}
+
 	next, err := NewSnapshotSigner(
 		session,
 		snapshotNetwork,
@@ -327,6 +305,7 @@ func (a RemoteApprover) PublishSnapshot(
 	if err != nil {
 		return fmt.Errorf("sign snapshot for invite %s: %w", inviteID, err)
 	}
+
 	return a.publishSignedSnapshot(ctx, base, next)
 }
 
@@ -420,74 +399,49 @@ func (a RemoteApprover) loadSignedSnapshot(
 ) (snapshot.Envelope, string, error) {
 	base := strings.TrimRight(a.Endpoint, "/")
 	const snapshotPath = "/api/v1/coordination/snapshot/companion"
-	challengeURL := base + "/api/v1/coordination/snapshot/companion-challenge"
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, challengeURL, nil)
+
+	remote, err := controlclient.ForEndpoint(base, a.Client)
 	if err != nil {
 		return snapshot.Envelope{}, "", err
 	}
-	response, err := a.Client.Do(request)
+
+	nonce, err := remote.CompanionChallenge(ctx)
 	if err != nil {
-		return snapshot.Envelope{}, "", err
+		return snapshot.Envelope{}, "", fmt.Errorf("load companion challenge: %w", err)
 	}
-	if response.StatusCode != http.StatusOK {
-		_ = response.Body.Close()
-		return snapshot.Envelope{}, "", fmt.Errorf(
-			"load companion challenge: status %d",
-			response.StatusCode,
-		)
-	}
-	var challenge struct {
-		Nonce string `json:"nonce"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&challenge); err != nil {
-		_ = response.Body.Close()
-		return snapshot.Envelope{}, "", err
-	}
-	_ = response.Body.Close()
-	if challenge.Nonce == "" {
+	if nonce == "" {
 		return snapshot.Envelope{}, "", errors.New("companion challenge is empty")
 	}
+
 	signature, err := protocol.SignCompanionRequest(
 		http.MethodGet,
 		snapshotPath,
-		challenge.Nonce,
+		nonce,
 		a.KeyID,
 		root,
 	)
 	if err != nil {
 		return snapshot.Envelope{}, "", err
 	}
-	request, err = http.NewRequestWithContext(ctx, http.MethodGet, base+snapshotPath, nil)
-	if err != nil {
-		return snapshot.Envelope{}, "", err
-	}
-	request.Header.Set("X-Go-Tunnels-Companion-Nonce", challenge.Nonce)
-	request.Header.Set("X-Go-Tunnels-Companion-Key-ID", a.KeyID)
-	request.Header.Set(
+
+	headers := make(http.Header)
+	headers.Set("X-Go-Tunnels-Companion-Nonce", nonce)
+	headers.Set("X-Go-Tunnels-Companion-Key-ID", a.KeyID)
+	headers.Set(
 		"X-Go-Tunnels-Companion-Signature",
 		base64.RawURLEncoding.EncodeToString(signature),
 	)
-	response, err = a.Client.Do(request)
+
+	previous, err := remote.CompanionSnapshot(ctx, headers)
 	if err != nil {
-		return snapshot.Envelope{}, "", err
+		return snapshot.Envelope{}, "", fmt.Errorf("load signed snapshot: %w", err)
 	}
-	if response.StatusCode != http.StatusOK {
-		_ = response.Body.Close()
-		return snapshot.Envelope{}, "", fmt.Errorf(
-			"load signed snapshot: status %d",
-			response.StatusCode,
-		)
-	}
-	var previous snapshot.Envelope
-	if err := json.NewDecoder(response.Body).Decode(&previous); err != nil {
-		_ = response.Body.Close()
-		return snapshot.Envelope{}, "", err
-	}
-	_ = response.Body.Close()
+
 	networkID, err := snapshotNetworkID(previous)
 	if err != nil {
 		return snapshot.Envelope{}, "", err
 	}
+
 	return previous, networkID, nil
 }
 
@@ -505,28 +459,15 @@ func (a RemoteApprover) publishSignedSnapshot(
 	base string,
 	next snapshot.Envelope,
 ) error {
-	body, err := json.Marshal(next)
+	remote, err := controlclient.ForEndpoint(base, a.Client)
 	if err != nil {
 		return err
 	}
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		base+"/api/v1/coordination/snapshots",
-		bytes.NewReader(body),
-	)
-	if err != nil {
-		return err
+
+	if err := remote.PublishSnapshot(ctx, next); err != nil {
+		return fmt.Errorf("publish signed snapshot: %w", err)
 	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := a.Client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer func(body io.ReadCloser) { _ = body.Close() }(response.Body)
-	if response.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("publish signed snapshot: status %d", response.StatusCode)
-	}
+
 	return nil
 }
 

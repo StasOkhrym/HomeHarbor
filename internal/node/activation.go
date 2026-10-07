@@ -6,10 +6,8 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,6 +16,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
+	"github.com/StasOkhrym/homeharbor/internal/controlclient"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
@@ -187,44 +186,6 @@ func activationOrigin(raw string) (string, error) {
 	return "", errors.New("control URL must use HTTPS or local HTTP")
 }
 
-func activationRequest(
-	ctx context.Context,
-	client *http.Client,
-	target string,
-	body any,
-	result any,
-) (int, error) {
-	var reader io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return 0, err
-		}
-		reader = bytes.NewReader(b)
-	}
-	r, err := http.NewRequestWithContext(ctx, http.MethodPost, target, reader)
-	if err != nil {
-		return 0, err
-	}
-	r.Header.Set("Content-Type", "application/json")
-	response, err := client.Do(r)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode >= 200 && response.StatusCode < 300 && result != nil {
-		decoder := json.NewDecoder(io.LimitReader(response.Body, 64<<10))
-		decoder.DisallowUnknownFields()
-		if err = decoder.Decode(result); err != nil {
-			return response.StatusCode, err
-		}
-		if err = decoder.Decode(new(any)); err != io.EOF {
-			return response.StatusCode, errors.New("invalid activation response")
-		}
-	}
-	return response.StatusCode, nil
-}
-
 // EnrollByInvite submits the proof, polls until approval appears in signed
 // topology, then claims and atomically saves a credential using existing State
 // keys. Lost claim responses are recovered with a fresh challenge/credential.
@@ -249,34 +210,24 @@ func EnrollByInvite(
 	if err := state.Save(p.StatePath); err != nil {
 		return err
 	}
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-	client := *httpClient
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	status, err := activationRequest(ctx, &client, base+"/api/v1/invites/proof", struct {
-		Permit invite.SignedPermit `json:"permit"`
-		Proof  invite.Proof        `json:"proof"`
-	}{permit, proof}, nil)
+	client, err := controlclient.ForEndpoint(base, httpClient)
 	if err != nil {
 		return err
 	}
-	if status != http.StatusAccepted {
-		return fmt.Errorf("submit invite proof: status %d", status)
+	if err := client.SubmitInviteProof(ctx, permit, proof); err != nil {
+		return fmt.Errorf("submit invite proof: %w", err)
 	}
 	interval := p.PollInterval
 	if interval <= 0 {
 		interval = time.Second
 	}
-	endpoint := base + "/api/v1/invites/" + url.PathEscape(proof.InviteID)
 	private, err := strictInviteBytes(state.IdentityPrivateKey, ed25519.PrivateKeySize)
 	if err != nil {
 		return err
 	}
 	for {
-		var challenge protocol.ClaimChallenge
-		status, err = activationRequest(ctx, &client, endpoint+"/challenge", nil, &challenge)
-		if err == nil && status == http.StatusOK {
+		challenge, err := client.Challenge(ctx, proof.InviteID)
+		if err == nil {
 			if challenge.InviteID != proof.InviteID || challenge.DeviceID != p.DeviceID ||
 				challenge.NetworkID != p.NetworkID ||
 				challenge.ExpiresAt <= time.Now().Unix() ||
@@ -287,12 +238,8 @@ func EnrollByInvite(
 			if signErr != nil {
 				return signErr
 			}
-			var result struct {
-				Device protocol.EnrolledDevice `json:"device"`
-			}
-			status, err = activationRequest(ctx, &client, endpoint+"/claim", signed, &result)
-			if err == nil && status == http.StatusOK {
-				d := result.Device
+			d, claimErr := client.Claim(ctx, proof.InviteID, signed)
+			if claimErr == nil {
 				if d.CredentialExpiresAt.IsZero() || d.ID != p.DeviceID || d.Status != "active" ||
 					d.Role != "client" ||
 					d.IdentityPublicKey != state.IdentityPublicKey ||
@@ -312,10 +259,12 @@ func EnrollByInvite(
 				*state = updated
 				return nil
 			}
+			err = claimErr
 		}
-		if err == nil && status != http.StatusConflict && status != http.StatusServiceUnavailable &&
-			status != http.StatusTooManyRequests {
-			return fmt.Errorf("activate invite: status %d", status)
+		var status *controlclient.StatusError
+		if errors.As(err, &status) && status.StatusCode != http.StatusConflict &&
+			status.StatusCode != http.StatusServiceUnavailable && status.StatusCode != http.StatusTooManyRequests {
+			return fmt.Errorf("activate invite: %w", err)
 		}
 		select {
 		case <-ctx.Done():
