@@ -1,9 +1,11 @@
 package node
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -96,5 +98,74 @@ func TestRecoverCredentialPreservesIdentityAndPersistsLeaseWithOwner(t *testing.
 
 	if !loaded.CredentialExpiresAt.Equal(expiry) {
 		t.Fatal("lease expiry not durable")
+	}
+}
+
+func TestRecoverCredentialPreservesCancellationAtEachPhase(t *testing.T) {
+	for _, phase := range []string{"challenge", "recovery"} {
+		for _, mode := range []string{"cancel", "deadline"} {
+			t.Run(phase+"/"+mode, func(t *testing.T) {
+				state, err := NewState()
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				state.DeviceID = "device"
+				state.DeviceCredential = "old-credential"
+				original := state
+				started := make(chan struct{})
+				release := make(chan struct{})
+				server := httptest.NewServer(
+					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if phase == "recovery" &&
+							r.URL.Path == "/api/v1/devices/credentials/challenge" {
+							_ = json.NewEncoder(w).Encode(protocol.CredentialChallenge{
+								Version: 1, NetworkID: "network", DeviceID: "device",
+								Nonce:     base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+								ExpiresAt: time.Now().Add(time.Minute).Unix(),
+							})
+							return
+						}
+
+						close(started)
+						<-release
+					}),
+				)
+				defer func() { close(release); server.Close() }()
+
+				var ctx context.Context
+				var cancel context.CancelFunc
+				if mode == "deadline" {
+					ctx, cancel = context.WithTimeout(t.Context(), 750*time.Millisecond)
+				} else {
+					ctx, cancel = context.WithCancel(t.Context())
+				}
+				defer cancel()
+
+				done := make(chan error, 1)
+				go func() { done <- RecoverCredential(ctx, server.Client(), server.URL, "network", &state) }()
+				select {
+				case <-started:
+					if mode == "cancel" {
+						cancel()
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatal("recovery phase did not begin")
+				}
+
+				select {
+				case err := <-done:
+					if !errors.Is(err, ctx.Err()) {
+						t.Fatalf("context error hidden by recovery: %v, want %v", err, ctx.Err())
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatal("recovery did not stop after cancellation")
+				}
+
+				if state != original {
+					t.Fatal("cancelled recovery mutated identity or lease")
+				}
+			})
+		}
 	}
 }

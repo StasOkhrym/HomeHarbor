@@ -124,6 +124,12 @@ func (c *Client) request(
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return context.DeadlineExceeded
+		}
+		if errors.Is(err, context.Canceled) {
+			return context.Canceled
+		}
 		return errors.New("control request transport failed")
 	}
 	defer func() { _ = response.Body.Close() }()
@@ -144,6 +150,12 @@ func (c *Client) request(
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return context.DeadlineExceeded
+		}
+		if errors.Is(err, context.Canceled) {
+			return context.Canceled
 		}
 		return errors.New("control response read failed")
 	}

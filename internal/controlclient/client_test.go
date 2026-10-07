@@ -59,6 +59,36 @@ func TestCancellationBoundsRequest(t *testing.T) {
 	}
 }
 
+func TestClientTimeoutPreservesDeadlineWithoutURL(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	defer func() { close(release); server.Close() }()
+
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	transport := server.Client()
+	transport.Timeout = 100 * time.Millisecond
+
+	client, err := controlclient.New(base, transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.Enroll(context.Background(), protocol.EnrollmentRequest{Token: "secret-token"})
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("client timeout: %v", err)
+	}
+	if strings.Contains(err.Error(), server.URL) || strings.Contains(err.Error(), "secret") {
+		t.Fatal("timeout exposed request details")
+	}
+}
+
 func TestOversizedResponseRejected(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
