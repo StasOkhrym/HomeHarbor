@@ -11,6 +11,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
@@ -107,7 +108,7 @@ func TestClaimProofBindsInviteDeviceNetworkAndOneTimeChallenge(t *testing.T) {
 			case "expired":
 				now = now.Add(3 * time.Minute)
 			}
-			proof, err := workflows.SignClaim(challenge, key)
+			proof, err := protocol.SignClaim(challenge, key)
 			if err == nil {
 				_, err = s.Claim(ctx, "invite", proof)
 			}
@@ -120,7 +121,7 @@ func TestClaimProofBindsInviteDeviceNetworkAndOneTimeChallenge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, err := workflows.SignClaim(challenge, devicePrivate)
+	proof, err := protocol.SignClaim(challenge, devicePrivate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func TestClaimProofBindsInviteDeviceNetworkAndOneTimeChallenge(t *testing.T) {
 	if _, err := s.Claim(ctx, "invite", proof); err == nil {
 		t.Fatal("missing UoW accepted")
 	}
-	if _, err := s.Claim(ctx, "invite", proof); err != workflows.ErrInvalidClaim {
+	if _, err := s.Claim(ctx, "invite", proof); err != protocol.ErrInvalidClaim {
 		t.Fatalf("replay error=%v", err)
 	}
 }

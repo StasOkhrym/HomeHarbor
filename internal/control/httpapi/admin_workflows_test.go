@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
@@ -89,7 +90,7 @@ func TestAdminMissingServiceRejectsPostWithoutPanic(t *testing.T) {
 }
 
 func TestAdminPolicyPreviewDoesNotPersist(t *testing.T) {
-	service := policy.NewService(policy.NewMemoryStore(), policy.Compiler{})
+	service := policy.NewService(policy.NewMemoryStore(), acl.Compiler{})
 	auth, _ := newBrowserAuthTest(t)
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
@@ -115,7 +116,7 @@ func TestAdminPolicyPreviewDoesNotPersist(t *testing.T) {
 }
 
 func TestAdminPolicyRequiresConfirmation(t *testing.T) {
-	service := policy.NewService(policy.NewMemoryStore(), policy.Compiler{})
+	service := policy.NewService(policy.NewMemoryStore(), acl.Compiler{})
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Policy: service}},
@@ -186,7 +187,7 @@ func TestAdminServiceInvalidURLIsFieldError(t *testing.T) {
 }
 
 func TestAdminPolicyPreviewRoundTripAndReplay(t *testing.T) {
-	service := policy.NewService(policy.NewMemoryStore(), policy.Compiler{})
+	service := policy.NewService(policy.NewMemoryStore(), acl.Compiler{})
 	auth, _ := newBrowserAuthTest(t)
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
@@ -232,7 +233,7 @@ func TestAdminPolicyPreviewRoundTripAndReplay(t *testing.T) {
 }
 
 func TestAdminPolicyRejectsTamperedConfirmation(t *testing.T) {
-	service := policy.NewService(policy.NewMemoryStore(), policy.Compiler{})
+	service := policy.NewService(policy.NewMemoryStore(), acl.Compiler{})
 	auth, _ := newBrowserAuthTest(t)
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
@@ -274,7 +275,7 @@ func TestBrowserConfirmationBindsSessionAndAction(t *testing.T) {
 }
 
 func TestAdminStructuredPolicyPreservesInvalidRow(t *testing.T) {
-	service := policy.NewService(policy.NewMemoryStore(), policy.Compiler{})
+	service := policy.NewService(policy.NewMemoryStore(), acl.Compiler{})
 	auth, _ := newBrowserAuthTest(t)
 	handler := newTestServer(
 		devices.NewService(devices.NewMemoryStore(), time.Now, nil),
@@ -295,8 +296,8 @@ func TestAdminStructuredPolicyPreservesInvalidRow(t *testing.T) {
 }
 
 func TestAdminPolicyDiffIncludesRemovalAndModification(t *testing.T) {
-	service := policy.NewService(policy.NewMemoryStore(), policy.Compiler{})
-	var rules []policy.Rule
+	service := policy.NewService(policy.NewMemoryStore(), acl.Compiler{})
+	var rules []acl.Rule
 	if err := json.Unmarshal(
 		[]byte(
 			`[{"id":"ssh","source_device_id":"client-a","destination":"192.168.50.0/24","protocol":"tcp","port_from":22,"port_to":22}]`,

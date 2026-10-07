@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	nodepath "github.com/StasOkhrym/homeharbor/internal/node/path"
 	controlprotocol "github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/relay"
 	"github.com/StasOkhrym/homeharbor/internal/tunnel"
@@ -190,7 +191,7 @@ type KernelRelayConfig struct {
 	// PathSelector lets a direct WireGuard handshake supersede the relay
 	// endpoint without stopping the already-prepared relay bridge. A later
 	// DirectFailed transition installs the bridge endpoint again.
-	PathSelector *controlprotocol.PathSelector
+	PathSelector *nodepath.PathSelector
 }
 
 // ParsePrefixList parses the comma-separated route form used by the thin CLI

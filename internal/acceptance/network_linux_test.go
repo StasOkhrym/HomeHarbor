@@ -22,9 +22,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/agent/nft"
 	appnode "github.com/StasOkhrym/homeharbor/internal/app/node"
-	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
@@ -45,6 +45,7 @@ func TestLinuxNamespaceDefaultDenyLANAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+
 	t.Cleanup(func() {
 		for _, namespace := range []string{clientNS, gatewayNS, lanNS} {
 			_ = run("ip", "netns", "del", namespace)
@@ -57,6 +58,7 @@ func TestLinuxNamespaceDefaultDenyLANAccess(t *testing.T) {
 	t.Cleanup(func() {
 		for _, server := range servers {
 			_ = server.Process.Kill()
+
 			_ = server.Wait()
 		}
 	})
@@ -64,34 +66,39 @@ func TestLinuxNamespaceDefaultDenyLANAccess(t *testing.T) {
 	waitForHTTP(t, clientNS, "http://192.168.50.2:8080")
 	waitForHTTP(t, clientNS, "http://192.168.50.2:8081")
 	servers = append(servers, startTCPBannerServers(t, lanNS, 2222, 2223)...)
+
 	waitForTCPBanner(t, clientNS, "192.168.50.2", 2222)
 	waitForTCPBanner(t, clientNS, "192.168.50.2", 2223)
 
 	peers := map[string]netip.Prefix{"client": netip.MustParsePrefix("100.64.0.2/32")}
-	rules := policy.Snapshot{Revision: 1, DefaultAction: policy.ActionDeny, Rules: []policy.Rule{{
+	rules := acl.Snapshot{Revision: 1, DefaultAction: acl.ActionDeny, Rules: []acl.Rule{{
 		ID:             "allow-http",
 		SourceDeviceID: "client",
 		Destination:    netip.MustParsePrefix("192.168.50.2/32"),
-		Protocol:       policy.ProtocolTCP,
+		Protocol:       acl.ProtocolTCP,
 		PortFrom:       8080,
 		PortTo:         8080,
 	}, {
 		ID:             "allow-ssh",
 		SourceDeviceID: "client",
 		Destination:    netip.MustParsePrefix("192.168.50.2/32"),
-		Protocol:       policy.ProtocolTCP,
+		Protocol:       acl.ProtocolTCP,
 		PortFrom:       2222,
 		PortTo:         2222,
 	}}}
+
 	applyDefaultDenyPolicy(t, gatewayNS, "gt0", peers, rules)
 
 	waitForHTTP(t, clientNS, "http://192.168.50.2:8080")
+
 	if err := curl(clientNS, "http://192.168.50.2:8081"); err == nil {
 		t.Fatal("default-deny policy allowed a forbidden port")
 	}
+
 	if err := tcpBanner(clientNS, "192.168.50.2", 2223); err == nil {
 		t.Fatal("default-deny policy allowed a forbidden SSH port")
 	}
+
 	verifyGatewayInputDenied(t, clientNS, gatewayNS)
 	verifyUnrelatedForwarding(t, clientNS, gatewayNS, lanNS)
 	verifyEstablishedRevoke(t, clientNS, gatewayNS, lanNS, "gt0", peers)
@@ -113,6 +120,7 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+
 	t.Cleanup(func() {
 		for _, namespace := range []string{clientNS, gatewayNS, lanNS} {
 			_ = run("ip", "netns", "del", namespace)
@@ -128,9 +136,10 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 		gatewayNS,
 		"wg0",
 		nil,
-		policy.Snapshot{DefaultAction: policy.ActionDeny},
+		acl.Snapshot{DefaultAction: acl.ActionDeny},
 	)
 	configureWireGuard(t, clientNS, gatewayNS)
+
 	if err := runInNamespace(
 		lanNS,
 		"ip",
@@ -142,11 +151,13 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	servers := startHTTPServers(t, lanNS)
 	servers = append(servers, startTCPBannerServers(t, lanNS, 2222, 2223)...)
 	t.Cleanup(func() {
 		for _, server := range servers {
 			_ = server.Process.Kill()
+
 			_ = server.Wait()
 		}
 	})
@@ -154,31 +165,36 @@ func TestLinuxNamespaceKernelWireGuardDefaultDenyLANAccess(t *testing.T) {
 	if err := curl(clientNS, "http://192.168.50.2:8080"); err == nil {
 		t.Fatal("boot guard allowed encrypted LAN access before policy")
 	}
+
 	peers := map[string]netip.Prefix{"client": netip.MustParsePrefix("10.200.0.2/32")}
-	rules := policy.Snapshot{Revision: 1, DefaultAction: policy.ActionDeny, Rules: []policy.Rule{{
+	rules := acl.Snapshot{Revision: 1, DefaultAction: acl.ActionDeny, Rules: []acl.Rule{{
 		ID:             "allow-http",
 		SourceDeviceID: "client",
 		Destination:    netip.MustParsePrefix("192.168.50.2/32"),
-		Protocol:       policy.ProtocolTCP,
+		Protocol:       acl.ProtocolTCP,
 		PortFrom:       8080,
 		PortTo:         8080,
 	}, {
 		ID:             "allow-ssh",
 		SourceDeviceID: "client",
 		Destination:    netip.MustParsePrefix("192.168.50.2/32"),
-		Protocol:       policy.ProtocolTCP,
+		Protocol:       acl.ProtocolTCP,
 		PortFrom:       2222,
 		PortTo:         2222,
 	}}}
+
 	applyDefaultDenyPolicy(t, gatewayNS, "wg0", peers, rules)
 
 	waitForHTTP(t, clientNS, "http://192.168.50.2:8080")
+
 	if err := curl(clientNS, "http://192.168.50.2:8081"); err == nil {
 		t.Fatal("default-deny policy allowed a forbidden WireGuard port")
 	}
+
 	if err := tcpBanner(clientNS, "192.168.50.2", 2223); err == nil {
 		t.Fatal("default-deny policy allowed a forbidden WireGuard SSH port")
 	}
+
 	verifyUnrelatedForwarding(t, clientNS, gatewayNS, lanNS)
 	verifyEstablishedRevoke(t, clientNS, gatewayNS, lanNS, "wg0", peers)
 }
@@ -206,16 +222,19 @@ func applyDefaultDenyPolicy(
 	t *testing.T,
 	namespace, interfaceName string,
 	peers map[string]netip.Prefix,
-	rules policy.Snapshot,
+	rules acl.Snapshot,
 ) {
 	t.Helper()
+
 	script, err := nft.Compile(interfaceName, peers, rules)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := runInNamespace(namespace, "nft", "list", "table", "inet", "homeharbor"); err == nil {
 		script = "flush table inet homeharbor\n" + script
 	}
+
 	if err := runWithInput(namespace, script, "nft", "-f", "-"); err != nil {
 		t.Fatal(err)
 	}
@@ -309,26 +328,30 @@ def echo(c):
    c.sendall(data)
 while True:
  c,_=s.accept();threading.Thread(target=echo,args=(c,),daemon=True).start()`
+
 	server := exec.Command("ip", "netns", "exec", lanNS, "python3", "-u", "-c", echo)
 	server.Stdout, server.Stderr = io.Discard, io.Discard
+
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() { _ = server.Process.Kill(); _ = server.Wait() })
-	allow := policy.Snapshot{
+	allow := acl.Snapshot{
 		Revision:      2,
-		DefaultAction: policy.ActionDeny,
-		Rules: []policy.Rule{
+		DefaultAction: acl.ActionDeny,
+		Rules: []acl.Rule{
 			{
 				ID:             "echo",
 				SourceDeviceID: "client",
 				Destination:    netip.MustParsePrefix("192.168.50.2/32"),
-				Protocol:       policy.ProtocolTCP,
+				Protocol:       acl.ProtocolTCP,
 				PortFrom:       9090,
 				PortTo:         9090,
 			},
 		},
 	}
+
 	applyDefaultDenyPolicy(t, gatewayNS, link, peers, allow)
 	const client = `import socket,sys,time
 deadline=time.monotonic()+5
@@ -346,32 +369,44 @@ with s:
   data=s.recv(128)
   print("BYPASS" if data else "BLOCKED",flush=True)
  except (TimeoutError,OSError): print("BLOCKED",flush=True)`
+
 	process := exec.Command("ip", "netns", "exec", clientNS, "python3", "-u", "-c", client)
+
 	input, err := process.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	output, err := process.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	process.Stderr = io.Discard
+
 	if err := process.Start(); err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() { _ = input.Close(); _ = process.Process.Kill(); _ = process.Wait() })
 	scanner := bufio.NewScanner(output)
+
 	if !scanner.Scan() || scanner.Text() != "ESTABLISHED" {
 		t.Fatal("could not establish authorized TCP flow")
 	}
+
 	allow.Revision, allow.Rules = 3, nil
+
 	applyDefaultDenyPolicy(t, gatewayNS, link, peers, allow)
+
 	if _, err := io.WriteString(input, "revoke\n"); err != nil {
 		t.Fatal(err)
 	}
+
 	if !scanner.Scan() || scanner.Text() != "BLOCKED" {
 		t.Fatalf("established TCP flow survived ACL revoke: %q", scanner.Text())
 	}
+
 	// Empty ACL and the staged guard must both preserve unrelated forwarding.
 	if err := runInNamespace(
 		clientNS,
@@ -835,14 +870,17 @@ func TestLinuxNamespaceGatewayRestartRetainedAllow(t *testing.T) {
 		if err := run("ip", "netns", "add", ns); err != nil {
 			t.Fatal(err)
 		}
+
 		t.Cleanup(func() { _ = run("ip", "netns", "del", ns) })
 	}
+
 	createVethTopology(t, clientNS, gatewayNS, lanNS)
 	configureTopology(t, clientNS, gatewayNS, lanNS, true)
 	servers := startHTTPServers(t, lanNS)
 	t.Cleanup(func() {
 		for _, server := range servers {
 			_ = server.Process.Kill()
+
 			_ = server.Wait()
 		}
 	})
@@ -850,9 +888,11 @@ func TestLinuxNamespaceGatewayRestartRetainedAllow(t *testing.T) {
 	verifyUnrelatedForwarding(t, clientNS, gatewayNS, lanNS)
 	// An independent firewall owner must survive both runtime restarts.
 	const foreign = "table inet fixture_owner {\n chain forward {\n type filter hook forward priority 10; policy accept;\n }\n}\n"
+
 	if err := runWithInput(gatewayNS, foreign, "nft", "-f", "-"); err != nil {
 		t.Fatal(err)
 	}
+
 	foreignBefore := commandOutput(
 		t,
 		"ip",
@@ -866,6 +906,7 @@ func TestLinuxNamespaceGatewayRestartRetainedAllow(t *testing.T) {
 		"fixture_owner",
 	)
 	dir := t.TempDir()
+
 	if err := os.WriteFile(
 		filepath.Join(dir, "root.pub"),
 		[]byte(base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))),
@@ -873,10 +914,12 @@ func TestLinuxNamespaceGatewayRestartRetainedAllow(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	binary, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	command := func(mode string) *exec.Cmd {
 		cmd := exec.Command(
 			"ip",
@@ -889,24 +932,31 @@ func TestLinuxNamespaceGatewayRestartRetainedAllow(t *testing.T) {
 			"-test.timeout=40s",
 		)
 		cmd.Env = append(os.Environ(), "HH_ACCEPTANCE_RUNTIME="+mode, "HH_ACCEPTANCE_DIR="+dir)
+
 		return cmd
 	}
 	start := func() *exec.Cmd {
 		_ = os.Remove(filepath.Join(dir, "ready"))
+
 		cmd := command("running")
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
+
 		t.Cleanup(func() { _ = cmd.Process.Kill() })
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
 			if _, err := os.Stat(filepath.Join(dir, "ready")); err == nil {
 				return cmd
 			}
+
 			time.Sleep(20 * time.Millisecond)
 		}
+
 		t.Fatal("gateway did not reach coordination worker")
+
 		return nil
 	}
 	allow := func() {
@@ -917,15 +967,15 @@ func TestLinuxNamespaceGatewayRestartRetainedAllow(t *testing.T) {
 			gatewayNS,
 			"gt0",
 			map[string]netip.Prefix{"client": netip.MustParsePrefix("100.64.0.2/32")},
-			policy.Snapshot{
+			acl.Snapshot{
 				Revision:      1,
-				DefaultAction: policy.ActionDeny,
-				Rules: []policy.Rule{
+				DefaultAction: acl.ActionDeny,
+				Rules: []acl.Rule{
 					{
 						ID:             "fixture",
 						SourceDeviceID: "client",
 						Destination:    netip.MustParsePrefix("192.168.50.2/32"),
-						Protocol:       policy.ProtocolTCP,
+						Protocol:       acl.ProtocolTCP,
 						PortFrom:       8080,
 						PortTo:         8080,
 					},
@@ -938,6 +988,7 @@ func TestLinuxNamespaceGatewayRestartRetainedAllow(t *testing.T) {
 		if err := curl(clientNS, "http://192.168.50.2:8080"); err == nil {
 			t.Fatal("owned private fixture remained reachable")
 		}
+
 		if err := runInNamespace(
 			clientNS,
 			"curl",
@@ -951,6 +1002,7 @@ func TestLinuxNamespaceGatewayRestartRetainedAllow(t *testing.T) {
 		); err != nil {
 			t.Fatalf("unrelated forwarding changed: %v", err)
 		}
+
 		if after := commandOutput(
 			t,
 			"ip",
@@ -966,31 +1018,42 @@ func TestLinuxNamespaceGatewayRestartRetainedAllow(t *testing.T) {
 			t.Fatal("unrelated firewall table changed")
 		}
 	}
+
 	process := start()
+
 	allow()
+
 	if err := process.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := process.Wait(); err == nil {
 		t.Fatal("SIGKILL unexpectedly clean")
 	}
+
 	waitForHTTP(t, clientNS, "http://192.168.50.2:8080")
 	t.Log("SIGKILL retains prior kernel allow until restart: private HTTP reachable")
+
 	if output, err := command("unavailable").CombinedOutput(); err != nil {
 		t.Fatalf("failed restart fixture: %v\n%s", err, output)
 	}
+
 	check()
 	t.Log(
 		"control-unavailable restart: private HTTP denied; unrelated forwarding and foreign table unchanged",
 	)
 	process = start()
+
 	allow()
+
 	if err := process.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := process.Wait(); err != nil {
 		t.Fatalf("orderly stop: %v", err)
 	}
+
 	check()
 	t.Log(
 		"orderly runtime stop: private HTTP denied; unrelated forwarding and foreign table unchanged",

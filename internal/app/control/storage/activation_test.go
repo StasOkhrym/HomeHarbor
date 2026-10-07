@@ -31,6 +31,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/invite"
 	"github.com/StasOkhrym/homeharbor/internal/node"
 	"github.com/StasOkhrym/homeharbor/internal/platform/redissecurity"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 	"github.com/StasOkhrym/homeharbor/internal/tunnel"
 	"github.com/StasOkhrym/homeharbor/migrations"
@@ -236,18 +237,22 @@ func (f *fixture) publish(t *testing.T) {
 func (f *fixture) claim(t *testing.T) workflows.ClaimResult {
 	t.Helper()
 	ctx := context.Background()
+
 	c, err := f.activation.Challenge(ctx, f.record.InviteID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := workflows.SignClaim(c, f.deviceKey)
+
+	p, err := protocol.SignClaim(c, f.deviceKey)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	result, err := f.activation.Claim(ctx, f.record.InviteID, p)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return result
 }
 
@@ -352,17 +357,23 @@ func TestPostgresClaimsRetryReplaceCredentialReplayAndConcurrentCredentials(t *t
 	if os.Getenv("TEST_REDIS_URL") == "" {
 		t.Skip("TEST_REDIS_URL is not set")
 	}
+
 	f := newFixture(t)
 	ctx := context.Background()
+
 	if _, err := f.activation.ApproveSigned(ctx, f.approval); err != nil {
 		t.Fatal(err)
 	}
+
 	f.publish(t)
 	first := f.claim(t)
+
 	second := f.claim(t)
+
 	if first.Device.Credential == second.Device.Credential {
 		t.Fatal("credential reused")
 	}
+
 	if _, err := f.devices.AuthenticateCredential(
 		ctx,
 		sha256.Sum256([]byte(first.Device.Credential)),
@@ -370,6 +381,7 @@ func TestPostgresClaimsRetryReplaceCredentialReplayAndConcurrentCredentials(t *t
 	); err == nil {
 		t.Fatal("old credential remains active")
 	}
+
 	if _, err := f.devices.AuthenticateCredential(
 		ctx,
 		sha256.Sum256([]byte(second.Device.Credential)),
@@ -377,17 +389,22 @@ func TestPostgresClaimsRetryReplaceCredentialReplayAndConcurrentCredentials(t *t
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	c, err := f.activation.Challenge(ctx, f.record.InviteID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, _ := workflows.SignClaim(c, f.deviceKey)
+
+	proof, _ := protocol.SignClaim(c, f.deviceKey)
+
 	if _, err = f.activation.Claim(ctx, f.record.InviteID, proof); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err = f.activation.Claim(ctx, f.record.InviteID, proof); err == nil {
 		t.Fatal("claim replay accepted")
 	}
+
 	var wg sync.WaitGroup
 	results := make(chan workflows.ClaimResult, 8)
 	failures := make(chan error, 8)
@@ -396,10 +413,12 @@ func TestPostgresClaimsRetryReplaceCredentialReplayAndConcurrentCredentials(t *t
 		if err != nil {
 			t.Fatal(err)
 		}
-		proof, _ := workflows.SignClaim(c, f.deviceKey)
+
+		proof, _ := protocol.SignClaim(c, f.deviceKey)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+
 			result, err := f.activation.Claim(ctx, f.record.InviteID, proof)
 			if err != nil {
 				failures <- err
@@ -408,12 +427,14 @@ func TestPostgresClaimsRetryReplaceCredentialReplayAndConcurrentCredentials(t *t
 			}
 		}()
 	}
+
 	wg.Wait()
 	close(results)
 	close(failures)
 	for err := range failures {
 		t.Error(err)
 	}
+
 	active := 0
 	for r := range results {
 		if _, err := f.devices.AuthenticateCredential(
@@ -424,17 +445,22 @@ func TestPostgresClaimsRetryReplaceCredentialReplayAndConcurrentCredentials(t *t
 			active++
 		}
 	}
+
 	if active != 1 {
 		t.Fatalf("active concurrent credentials=%d", active)
 	}
+
 	if err := f.devices.RevokeDevice(ctx, "linux", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+
 	c, err = f.activation.Challenge(ctx, f.record.InviteID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, _ = workflows.SignClaim(c, f.deviceKey)
+
+	proof, _ = protocol.SignClaim(c, f.deviceKey)
+
 	if _, err = f.activation.Claim(ctx, f.record.InviteID, proof); err == nil {
 		t.Fatal("revoked device claimed")
 	}
@@ -444,27 +470,35 @@ func TestPostgresClaimOutboxFailureRollsBackCredentialReplacement(t *testing.T) 
 	if os.Getenv("TEST_REDIS_URL") == "" {
 		t.Skip("TEST_REDIS_URL is not set")
 	}
+
 	f := newFixture(t)
 	ctx := context.Background()
+
 	if _, err := f.activation.ApproveSigned(ctx, f.approval); err != nil {
 		t.Fatal(err)
 	}
+
 	f.publish(t)
 	first := f.claim(t)
+
 	if _, err := f.pool.Exec(
 		ctx,
 		`CREATE FUNCTION reject_claim() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'outbox unavailable'; END $$; CREATE TRIGGER reject_claim BEFORE INSERT ON event_outbox FOR EACH ROW EXECUTE FUNCTION reject_claim()`,
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	c, err := f.activation.Challenge(ctx, f.record.InviteID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, _ := workflows.SignClaim(c, f.deviceKey)
+
+	proof, _ := protocol.SignClaim(c, f.deviceKey)
+
 	if _, err = f.activation.Claim(ctx, f.record.InviteID, proof); err == nil {
 		t.Fatal("outbox failure ignored")
 	}
+
 	if _, err := f.devices.AuthenticateCredential(
 		ctx,
 		sha256.Sum256([]byte(first.Device.Credential)),

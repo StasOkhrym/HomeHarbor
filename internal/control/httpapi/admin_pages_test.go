@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
@@ -23,7 +24,7 @@ func TestAdminSectionsHaveAuthenticatedNavigation(t *testing.T) {
 		Resources: ResourceDependencies{
 			Services: catalog,
 			Routes:   controlroutes.NewService(controlroutes.NewMemoryStore(), time.Now),
-			Policy:   policy.NewService(policy.NewMemoryStore(), policy.Compiler{}),
+			Policy:   policy.NewService(policy.NewMemoryStore(), acl.Compiler{}),
 		},
 	}
 	for _, path := range []string{"setup", "devices", "services", "access", "network", "invites", "security"} {

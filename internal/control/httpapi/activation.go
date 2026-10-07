@@ -19,10 +19,10 @@ import (
 // needed by these handlers. The parent mounts and rate-limits both callbacks.
 type (
 	ActivationChallenger interface {
-		Challenge(context.Context, string) (workflows.ClaimChallenge, error)
+		Challenge(context.Context, string) (protocol.ClaimChallenge, error)
 	}
 	ActivationClaimer interface {
-		Claim(context.Context, string, workflows.ClaimProof) (workflows.ClaimResult, error)
+		Claim(context.Context, string, protocol.ClaimProof) (workflows.ClaimResult, error)
 	}
 	ActivationHandler struct {
 		challenges ActivationChallenger
@@ -83,31 +83,38 @@ func (h *ActivationHandler) Claim(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
+
 	id := activationInviteID(r)
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "invite ID required")
 		return
 	}
-	var proof workflows.ClaimProof
+
+	var proof protocol.ClaimProof
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
 	decoder.DisallowUnknownFields()
+
 	if err := decoder.Decode(&proof); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid claim body")
 		return
 	}
+
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		writeError(w, http.StatusBadRequest, "invalid claim body")
 		return
 	}
+
 	if h.claims == nil {
 		writeError(w, http.StatusServiceUnavailable, "activation unavailable")
 		return
 	}
+
 	result, err := h.claims.Claim(r.Context(), id, proof)
 	if err != nil {
 		activationError(w, err)
 		return
 	}
+
 	writeJSON(w, http.StatusOK, struct {
 		Device protocol.EnrolledDevice `json:"device"`
 	}{enrolledDevice(result.Device)})
@@ -117,7 +124,7 @@ func activationError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, workflows.ErrNotReady):
 		writeError(w, http.StatusConflict, "activation not ready")
-	case errors.Is(err, workflows.ErrInvalidClaim):
+	case errors.Is(err, protocol.ErrInvalidClaim):
 		writeErrorCode(
 			w,
 			http.StatusBadRequest,

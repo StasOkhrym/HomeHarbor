@@ -11,6 +11,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 	workflowstorage "github.com/StasOkhrym/homeharbor/internal/app/control/storage"
 	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
 	auditstorage "github.com/StasOkhrym/homeharbor/internal/control/audit/storage"
@@ -56,7 +57,7 @@ func buildHTTP(
 		devices.WithCredentialTTL(cfg.Runtime.CredentialTTL),
 	)
 	routeService := controlroutes.NewService(routesstorage.New(pool), time.Now)
-	policyService := policy.NewService(policystorage.New(pool), policy.Compiler{})
+	policyService := policy.NewService(policystorage.New(pool), acl.Compiler{})
 	serviceCatalog := controlservices.NewService(
 		servicesstorage.New(pool),
 		time.Now,

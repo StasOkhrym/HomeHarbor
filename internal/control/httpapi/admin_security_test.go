@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
@@ -22,7 +23,7 @@ func TestAdminMutationsShareBrowserSecurityBoundary(t *testing.T) {
 		auth,
 		Dependencies{
 			Resources: ResourceDependencies{
-				Policy:   policy.NewService(policy.NewMemoryStore(), policy.Compiler{}),
+				Policy:   policy.NewService(policy.NewMemoryStore(), acl.Compiler{}),
 				Services: controlservices.NewService(controlservices.NewMemoryStore(), time.Now),
 			},
 			Browser: BrowserDependencies{
@@ -136,7 +137,7 @@ func TestAdminPolicyPreviewRequiresArray(t *testing.T) {
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{
-				Policy: policy.NewService(policy.NewMemoryStore(), policy.Compiler{}),
+				Policy: policy.NewService(policy.NewMemoryStore(), acl.Compiler{}),
 			},
 			Browser: BrowserDependencies{ActionConfirmation: auth},
 		},
@@ -154,7 +155,7 @@ func TestAdminPolicyJSONEmptyIsArray(t *testing.T) {
 		nil,
 		Dependencies{
 			Resources: ResourceDependencies{
-				Policy: policy.NewService(policy.NewMemoryStore(), policy.Compiler{}),
+				Policy: policy.NewService(policy.NewMemoryStore(), acl.Compiler{}),
 			},
 		},
 	)

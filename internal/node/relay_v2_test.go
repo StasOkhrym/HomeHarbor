@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	controlprotocol "github.com/StasOkhrym/homeharbor/internal/protocol"
+	nodepath "github.com/StasOkhrym/homeharbor/internal/node/path"
 	"github.com/StasOkhrym/homeharbor/internal/relay"
 )
 
@@ -50,9 +50,10 @@ func TestKernelRelayPathOwnerAwaitsCancelledBridge(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	done := make(chan error, 1)
 	go func() {
-		done <- runKernelRelayWithPathSelector(ctx, w, KernelRelayConfig{PeerPublicKey: validPeerKey, EndpointUpdater: &endpointRecorder{}, PathSelector: controlprotocol.NewPathSelector()}, netip.MustParseAddrPort("127.0.0.1:51821"))
+		done <- runKernelRelayWithPathSelector(ctx, w, KernelRelayConfig{PeerPublicKey: validPeerKey, EndpointUpdater: &endpointRecorder{}, PathSelector: nodepath.NewPathSelector()}, netip.MustParseAddrPort("127.0.0.1:51821"))
 	}()
 	<-w.started
 	cancel()
@@ -60,9 +61,11 @@ func TestKernelRelayPathOwnerAwaitsCancelledBridge(t *testing.T) {
 	select {
 	case <-done:
 		close(w.release)
+
 		t.Fatal("path owner returned while forwarding worker still owned resources")
 	case <-time.After(20 * time.Millisecond):
 	}
+
 	close(w.release)
 	select {
 	case err := <-done:
@@ -72,6 +75,7 @@ func TestKernelRelayPathOwnerAwaitsCancelledBridge(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("owner did not await bridge")
 	}
+
 	select {
 	case <-w.finished:
 	default:

@@ -3,7 +3,6 @@ package protocol
 import (
 	"net/netip"
 	"testing"
-	"time"
 )
 
 func TestNegotiateSelectsCurrentVersion(t *testing.T) {
@@ -23,42 +22,6 @@ func TestNegotiateRequiresRelayCapability(t *testing.T) {
 
 	if err == nil || err.Code != ErrorUpgradeRequired {
 		t.Fatalf("error = %#v", err)
-	}
-}
-
-func TestPathSelectorFallsBackAndRecovers(t *testing.T) {
-	selector := NewPathSelector()
-	if got := selector.Current(); got != PathRelay {
-		t.Fatalf("initial path = %q", got)
-	}
-	selector.DirectHandshakeSucceeded()
-	if got := selector.Current(); got != PathDirect {
-		t.Fatalf("direct path = %q", got)
-	}
-	selector.DirectFailed()
-	if got := selector.Current(); got != PathRelay {
-		t.Fatalf("fallback path = %q", got)
-	}
-}
-
-func TestPathSelectorNotifiesTransportWatchersOnChange(t *testing.T) {
-	selector := NewPathSelector()
-	changes := selector.Changes()
-	selector.DirectHandshakeSucceeded()
-	select {
-	case <-changes:
-	case <-time.After(time.Second):
-		t.Fatal("direct path change was not published")
-	}
-	if got := selector.Current(); got != PathDirect {
-		t.Fatalf("path=%q, want direct", got)
-	}
-	nextChanges := selector.Changes()
-	selector.DirectFailed()
-	select {
-	case <-nextChanges:
-	case <-time.After(time.Second):
-		t.Fatal("relay fallback change was not published")
 	}
 }
 

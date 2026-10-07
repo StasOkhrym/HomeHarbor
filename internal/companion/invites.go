@@ -18,7 +18,6 @@ import (
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
-	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
@@ -87,6 +86,8 @@ func (i *InviteIssuer) Issue(
 	return link, local.Code, local.Permit.InviteID, nil
 }
 
+var ErrInviteConsumed = errors.New("invite already consumed")
+
 // RemoteApprover verifies the user-entered code locally and sends only a
 // root-signed exact diff to control. The code is never placed in an HTTP body.
 type RemoteApprover struct {
@@ -134,7 +135,7 @@ func (a RemoteApprover) Approve(
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("load pending invite: status %d", response.StatusCode)
 	}
-	var pending controlinvites.Record
+	var pending protocol.InviteRecord
 	if err := json.NewDecoder(response.Body).Decode(&pending); err != nil {
 		return err
 	}
@@ -144,12 +145,12 @@ func (a RemoteApprover) Approve(
 		return invite.ErrInvalidProof
 	}
 	checkAt := a.Now().UTC()
-	if pending.Status == controlinvites.StatusApproved && pending.ApprovedAt != nil {
+	if pending.Status == "approved" && pending.ApprovedAt != nil {
 		checkAt = pending.ApprovedAt.UTC()
 	}
-	if pending.Status != controlinvites.StatusPending &&
-		pending.Status != controlinvites.StatusApproved {
-		return controlinvites.ErrInviteConsumed
+	if pending.Status != "pending" &&
+		pending.Status != "approved" {
+		return ErrInviteConsumed
 	}
 	network, err := invite.PermitNetworkID(pending.Permit)
 	if err != nil {
@@ -225,7 +226,7 @@ func (a RemoteApprover) Approve(
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("approve invite: status %d", response.StatusCode)
 	}
-	var result controlinvites.ApprovalResult
+	var result protocol.InviteApprovalResult
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 16<<10))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
@@ -236,7 +237,7 @@ func (a RemoteApprover) Approve(
 	}
 	if result.InviteID != pending.InviteID || result.DeviceID != pending.DeviceID ||
 		result.ProfileID != pending.ProfileID ||
-		result.Status != controlinvites.StatusApproved {
+		result.Status != "approved" {
 		return errors.New("approval response differs from signed public diff")
 	}
 	return nil
@@ -282,13 +283,13 @@ func (a RemoteApprover) PublishSnapshot(
 		_ = response.Body.Close()
 		return fmt.Errorf("load approved invite: status %d", response.StatusCode)
 	}
-	var record controlinvites.Record
+	var record protocol.InviteRecord
 	if err := json.NewDecoder(response.Body).Decode(&record); err != nil {
 		_ = response.Body.Close()
 		return err
 	}
 	_ = response.Body.Close()
-	if record.Status != controlinvites.StatusApproved {
+	if record.Status != "approved" {
 		return errors.New("invite is not approved")
 	}
 	permitNetworkID, err := invite.PermitNetworkID(record.Permit)

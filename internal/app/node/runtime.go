@@ -13,6 +13,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/node"
 	"github.com/StasOkhrym/homeharbor/internal/node/credentials"
 	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
+	nodepath "github.com/StasOkhrym/homeharbor/internal/node/path"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
@@ -87,7 +88,7 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 		source = leases
 	}
 	var peers *node.SnapshotWireGuardReconciler
-	var paths *protocol.PathSelector
+	var paths *nodepath.PathSelector
 	if kernel {
 		peers, err = node.NewSnapshotWireGuardReconciler(
 			cfg.WireGuard.InterfaceName,
@@ -98,7 +99,7 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 		if err != nil {
 			return nil, err
 		}
-		paths = protocol.NewPathSelector()
+		paths = nodepath.NewPathSelector()
 	}
 	candidates, err := prepareCandidates(cfg, state, peers, paths)
 	if err != nil {
@@ -184,19 +185,22 @@ func prepareCandidates(
 	cfg config.Node,
 	state node.State,
 	peers *node.SnapshotWireGuardReconciler,
-	paths *protocol.PathSelector,
+	paths *nodepath.PathSelector,
 ) (candidateBindings, error) {
 	if peers == nil || cfg.WireGuard.PeerPublicKey == "" || cfg.Relay.DestinationDevice == "" {
 		return candidateBindings{}, nil
 	}
+
 	endpoints, err := node.ParseDirectCandidates(cfg.Direct.Candidates)
 	if err != nil {
 		return candidateBindings{}, err
 	}
+
 	prober, err := node.NewWireGuardHandshakeProber(cfg.WireGuard.InterfaceName)
 	if err != nil {
 		return candidateBindings{}, err
 	}
+
 	manager, err := node.NewCandidatePathManager(
 		state.DeviceID,
 		cfg.Relay.DestinationDevice,
@@ -208,7 +212,9 @@ func prepareCandidates(
 	if err != nil {
 		return candidateBindings{}, err
 	}
+
 	set := node.NewCandidateSet(endpoints)
+
 	return candidateBindings{
 		set:    set,
 		handle: manager.HandleCandidateUpdate,
@@ -217,6 +223,7 @@ func prepareCandidates(
 			if len(current) == 0 {
 				return nil, nil
 			}
+
 			return []protocol.CandidateUpdate{
 				{DestinationDeviceID: cfg.Relay.DestinationDevice, Candidates: current},
 			}, nil
@@ -230,7 +237,7 @@ func prepareRelay(
 	state node.State,
 	leases credentials.LeaseSource,
 	peers *node.SnapshotWireGuardReconciler,
-	paths *protocol.PathSelector,
+	paths *nodepath.PathSelector,
 	candidates *node.CandidateSet,
 ) (lifecycle.Component, error) {
 	if cfg.Relay.SessionID == "" || cfg.Relay.DestinationDevice == "" {

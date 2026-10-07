@@ -8,10 +8,10 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
-	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
@@ -105,9 +105,9 @@ type RelaySessionIssuer interface {
 type RelayPeerAuthorizer func(context.Context, devices.Device, devices.Device) bool
 
 type PolicyService interface {
-	Replace(context.Context, []policy.Rule) (policy.Snapshot, error)
-	ReplaceIfRevision(context.Context, uint64, []policy.Rule) (policy.Snapshot, error)
-	Latest(context.Context) (policy.Snapshot, error)
+	Replace(context.Context, []acl.Rule) (acl.Snapshot, error)
+	ReplaceIfRevision(context.Context, uint64, []acl.Rule) (acl.Snapshot, error)
+	Latest(context.Context) (acl.Snapshot, error)
 }
 
 // ServiceCatalog is the HTTP-facing contract for named services and access

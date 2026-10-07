@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
-	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
@@ -51,7 +51,7 @@ type adminPageModel struct {
 	Routes        adminCollection[controlroutes.Advertisement]
 	Audit         adminCollection[audit.Event]
 	Device        *devices.Device
-	Policy        policy.Snapshot
+	Policy        acl.Snapshot
 	PolicyReady   bool
 	PolicyJSON    string
 	PolicyError   string
@@ -276,7 +276,7 @@ func (s *Server) loadAdminPolicy(ctx context.Context, model *adminPageModel) {
 		return
 	}
 	if value.Rules == nil {
-		value.Rules = []policy.Rule{}
+		value.Rules = []acl.Rule{}
 	}
 	encoded, err := json.MarshalIndent(value.Rules, "", "  ")
 	if err != nil {

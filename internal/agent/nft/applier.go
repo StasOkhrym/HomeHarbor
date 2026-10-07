@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/StasOkhrym/homeharbor/internal/control/policy"
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 )
 
 var ErrRevisionRollback = errors.New("nftables policy revision rollback")
@@ -40,13 +40,15 @@ type Applier struct {
 // or the peer map. The coordinator must prepare ALL owners before Guard.
 func (a *Applier) Prepare(
 	peers map[string]netip.Prefix,
-	value policy.Snapshot,
+	value acl.Snapshot,
 ) (*PreparedPolicy, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
 	if value.Revision == 0 || value.Revision < a.revision {
 		return nil, ErrRevisionRollback
 	}
+
 	script, err := Compile(a.interfaceName, peers, value)
 	if err != nil {
 		return nil, err
@@ -54,6 +56,7 @@ func (a *Applier) Prepare(
 	if value.Revision == a.revision && script != a.committedScript {
 		return nil, errors.New("different policy for committed revision")
 	}
+
 	return &PreparedPolicy{owner: a, revision: value.Revision, script: script}, nil
 }
 
@@ -65,13 +68,16 @@ func (a *Applier) Prepare(
 func (a *Applier) Guard(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	script, err := Compile(a.interfaceName, nil, policy.Snapshot{DefaultAction: policy.ActionDeny})
+
+	script, err := Compile(a.interfaceName, nil, acl.Snapshot{DefaultAction: acl.ActionDeny})
 	if err != nil {
 		return err
 	}
+
 	if err := a.run(ctx, script); err != nil {
 		return fmt.Errorf("install tunnel deny guard: %w", err)
 	}
+
 	return nil
 }
 
@@ -121,21 +127,26 @@ func NewApplierWithRunner(
 
 // Apply compiles and atomically installs a newer default-deny policy. The
 // revision check prevents a delayed control update from weakening a gateway.
-func (a *Applier) Apply(ctx context.Context, snapshot policy.Snapshot) error {
+func (a *Applier) Apply(ctx context.Context, snapshot acl.Snapshot) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
 	if snapshot.Revision <= a.revision {
 		return ErrRevisionRollback
 	}
+
 	script, err := Compile(a.interfaceName, a.peers, snapshot)
 	if err != nil {
 		return err
 	}
+
 	if err := a.run(ctx, script); err != nil {
 		return fmt.Errorf("apply nftables policy revision %d: %w", snapshot.Revision, err)
 	}
+
 	a.revision = snapshot.Revision
 	a.committedScript = script
+
 	return nil
 }
 

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
@@ -122,7 +123,7 @@ func TestPolicyErrorKeepsUnrelatedProfileID(t *testing.T) {
 		Dependencies{
 			Resources: ResourceDependencies{
 				Services: controlservices.NewService(controlservices.NewMemoryStore(), time.Now),
-				Policy:   policy.NewService(policy.NewMemoryStore(), policy.Compiler{}),
+				Policy:   policy.NewService(policy.NewMemoryStore(), acl.Compiler{}),
 			},
 		},
 	).Handler()

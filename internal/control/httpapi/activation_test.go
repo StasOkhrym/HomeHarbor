@@ -9,20 +9,21 @@ import (
 	"testing"
 
 	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 type activationUnavailable struct{}
 
-func (activationUnavailable) Challenge(context.Context, string) (workflows.ClaimChallenge, error) {
-	return workflows.ClaimChallenge{}, workflows.ErrNotReady
+func (activationUnavailable) Challenge(context.Context, string) (protocol.ClaimChallenge, error) {
+	return protocol.ClaimChallenge{}, workflows.ErrNotReady
 }
 
 func (activationUnavailable) Claim(
 	context.Context,
 	string,
-	workflows.ClaimProof,
+	protocol.ClaimProof,
 ) (workflows.ClaimResult, error) {
-	return workflows.ClaimResult{}, workflows.ErrInvalidClaim
+	return workflows.ClaimResult{}, protocol.ErrInvalidClaim
 }
 
 func TestActivationHTTPRejectsUnknownAndTrailingClaimFields(t *testing.T) {

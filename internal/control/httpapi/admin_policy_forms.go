@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 )
 
@@ -23,12 +24,12 @@ type adminPolicyPreview struct {
 
 type adminPolicyChange struct {
 	Kind   string
-	Before *policy.Rule
-	After  *policy.Rule
+	Before *acl.Rule
+	After  *acl.Rule
 }
 
-func policyChanges(before, after []policy.Rule) []adminPolicyChange {
-	old := make(map[string]policy.Rule, len(before))
+func policyChanges(before, after []acl.Rule) []adminPolicyChange {
+	old := make(map[string]acl.Rule, len(before))
 	for _, rule := range before {
 		old[rule.ID] = rule
 	}
@@ -55,23 +56,27 @@ func policyChanges(before, after []policy.Rule) []adminPolicyChange {
 }
 
 type browserAction struct {
-	Operation string        `json:"operation"`
-	Target    string        `json:"target,omitempty"`
-	Revision  uint64        `json:"revision"`
-	Rules     []policy.Rule `json:"rules,omitempty"`
+	Operation string     `json:"operation"`
+	Target    string     `json:"target,omitempty"`
+	Revision  uint64     `json:"revision"`
+	Rules     []acl.Rule `json:"rules,omitempty"`
 }
 
-func policyFormRules(r *http.Request) ([]policy.Rule, error) {
+func policyFormRules(r *http.Request) ([]acl.Rule, error) {
 	if r.FormValue("editor") != "structured" {
 		if !strings.HasPrefix(strings.TrimSpace(r.FormValue("rules")), "[") {
 			return nil, errors.New("enter a JSON array of rules (use [] to deny everything)")
 		}
-		var rules []policy.Rule
+
+		var rules []acl.Rule
+
 		if err := json.Unmarshal([]byte(r.FormValue("rules")), &rules); err != nil {
 			return nil, errors.New("enter a JSON array of rules")
 		}
+
 		return rules, nil
 	}
+
 	_ = r.ParseForm()
 	count := len(r.PostForm["destination"])
 	keys := []string{"rule_id", "source_device_id", "protocol", "port_from", "port_to"}
@@ -80,25 +85,30 @@ func policyFormRules(r *http.Request) ([]policy.Rule, error) {
 			return nil, errors.New("rule fields are incomplete")
 		}
 	}
-	rules := make([]policy.Rule, 0, count)
+
+	rules := make([]acl.Rule, 0, count)
 	for index := range count {
 		destination := strings.TrimSpace(r.PostForm["destination"][index])
 		source := r.PostForm["source_device_id"][index]
 		if destination == "" && source == "" {
 			continue
 		}
+
 		prefix, err := netip.ParsePrefix(destination)
 		if err != nil {
 			return nil, fmt.Errorf("rule %d needs a valid CIDR", index+1)
 		}
+
 		from, err := strconv.ParseUint(r.PostForm["port_from"][index], 10, 16)
 		if err != nil {
 			return nil, fmt.Errorf("rule %d needs a valid start port", index+1)
 		}
+
 		to, err := strconv.ParseUint(r.PostForm["port_to"][index], 10, 16)
 		if err != nil {
 			return nil, fmt.Errorf("rule %d needs a valid end port", index+1)
 		}
+
 		id := strings.TrimSpace(r.PostForm["rule_id"][index])
 		if id == "" {
 			id, err = newBrowserID()
@@ -106,15 +116,17 @@ func policyFormRules(r *http.Request) ([]policy.Rule, error) {
 				return nil, errors.New("a rule ID could not be generated")
 			}
 		}
-		rules = append(rules, policy.Rule{
+
+		rules = append(rules, acl.Rule{
 			ID:             id,
 			SourceDeviceID: source,
 			Destination:    prefix,
-			Protocol:       policy.Protocol(r.PostForm["protocol"][index]),
+			Protocol:       acl.Protocol(r.PostForm["protocol"][index]),
 			PortFrom:       uint16(from),
 			PortTo:         uint16(to),
 		})
 	}
+
 	return rules, nil
 }
 
@@ -154,7 +166,7 @@ func (s *Server) previewPolicyForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
-	proposed, err := (policy.Compiler{}).Compile(current.Revision+1, rules)
+	proposed, err := (acl.Compiler{}).Compile(current.Revision+1, rules)
 	if err != nil {
 		s.adminFormError(
 			w,
@@ -167,7 +179,7 @@ func (s *Server) previewPolicyForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if proposed.Rules == nil {
-		proposed.Rules = []policy.Rule{}
+		proposed.Rules = []acl.Rule{}
 	}
 	model, _ := s.loadAdminPage(r, "access")
 	if s.actionConfirmation == nil {
@@ -248,7 +260,7 @@ func (s *Server) replacePolicyForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
-	compiled, err := (policy.Compiler{}).Compile(revision+1, rules)
+	compiled, err := (acl.Compiler{}).Compile(revision+1, rules)
 	if err != nil {
 		s.adminFormError(
 			w,

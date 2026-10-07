@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 )
 
 func TestConfirmedReplacementRejectsStaleRevision(t *testing.T) {
-	service := NewService(NewMemoryStore(), Compiler{})
+	service := NewService(NewMemoryStore(), acl.Compiler{})
 	ctx := context.Background()
 	if _, err := service.ReplaceIfRevision(ctx, 0, nil); err != nil {
 		t.Fatal(err)

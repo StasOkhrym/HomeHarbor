@@ -99,8 +99,7 @@ func forbiddenDomainImport(path string) bool {
 		strings.HasPrefix(path, "github.com/jackc/pgx/") ||
 		strings.HasPrefix(path, "github.com/redis/go-redis/") ||
 		strings.HasPrefix(path, "github.com/go-chi/chi/") ||
-		strings.Contains(path, "/storage") || strings.Contains(path, "/httpapi") ||
-		path == "github.com/StasOkhrym/homeharbor/internal/control/network"
+		strings.Contains(path, "/storage") || strings.Contains(path, "/httpapi")
 }
 
 func TestDomainBoundaryRejectsNeutralStorageAdapters(t *testing.T) {

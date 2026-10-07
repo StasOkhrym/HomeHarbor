@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	nodepath "github.com/StasOkhrym/homeharbor/internal/node/path"
 	controlprotocol "github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
@@ -77,7 +78,7 @@ func (p *handshakeProbeStub) WaitForHandshake(context.Context, string, time.Time
 func TestCandidatePathManagerSelectsHighestPriorityHandshake(t *testing.T) {
 	updater := &endpointRecorder{}
 	probe := &handshakeProbeStub{results: []error{errors.New("first candidate timed out"), nil}}
-	selector := controlprotocol.NewPathSelector()
+	selector := nodepath.NewPathSelector()
 	manager, err := NewCandidatePathManager(
 		"client",
 		"gateway",
@@ -89,6 +90,7 @@ func TestCandidatePathManagerSelectsHighestPriorityHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	update := controlprotocol.CandidateUpdate{
 		SourceDeviceID:      "gateway",
 		DestinationDeviceID: "client",
@@ -101,17 +103,22 @@ func TestCandidatePathManagerSelectsHighestPriorityHandshake(t *testing.T) {
 			},
 		},
 	}
+
 	if err := manager.HandleCandidateUpdate(context.Background(), update); err != nil {
 		t.Fatal(err)
 	}
+
 	if got := selector.Current(); got != controlprotocol.PathDirect {
 		t.Fatalf("path=%q, want direct", got)
 	}
+
 	want := []netip.AddrPort{
 		netip.MustParseAddrPort("203.0.113.20:51820"),
 		netip.MustParseAddrPort("192.168.1.20:51820"),
 	}
+
 	_, _, endpoints := updater.state()
+
 	if len(endpoints) != len(want) || endpoints[0] != want[0] || endpoints[1] != want[1] {
 		t.Fatalf("endpoints=%v, want %v", endpoints, want)
 	}
@@ -120,7 +127,7 @@ func TestCandidatePathManagerSelectsHighestPriorityHandshake(t *testing.T) {
 func TestCandidatePathManagerFallsBackAfterEveryDirectHandshakeFails(t *testing.T) {
 	updater := &endpointRecorder{}
 	probe := &handshakeProbeStub{results: []error{errors.New("timeout")}}
-	selector := controlprotocol.NewPathSelector()
+	selector := nodepath.NewPathSelector()
 	manager, err := NewCandidatePathManager(
 		"client",
 		"gateway",
@@ -132,6 +139,7 @@ func TestCandidatePathManagerFallsBackAfterEveryDirectHandshakeFails(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := manager.HandleCandidateUpdate(
 		context.Background(),
 		controlprotocol.CandidateUpdate{
@@ -144,10 +152,13 @@ func TestCandidatePathManagerFallsBackAfterEveryDirectHandshakeFails(t *testing.
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	if selector.Current() != controlprotocol.PathRelay {
 		t.Fatalf("path=%q, want relay", selector.Current())
 	}
+
 	_, clearCount, _ := updater.state()
+
 	if clearCount != 1 {
 		t.Fatalf("clear calls=%d, want 1", clearCount)
 	}
@@ -159,12 +170,13 @@ func TestCandidatePathManagerRejectsUpdateForAnotherLocalDevice(t *testing.T) {
 		"gateway",
 		validPeerKey,
 		&endpointRecorder{},
-		controlprotocol.NewPathSelector(),
+		nodepath.NewPathSelector(),
 		&handshakeProbeStub{},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := manager.HandleCandidateUpdate(
 		context.Background(),
 		controlprotocol.CandidateUpdate{
@@ -177,6 +189,7 @@ func TestCandidatePathManagerRejectsUpdateForAnotherLocalDevice(t *testing.T) {
 	); err == nil {
 		t.Fatal("candidate update for another local device was accepted")
 	}
+
 	if err := manager.HandleCandidateUpdate(
 		context.Background(),
 		controlprotocol.CandidateUpdate{
@@ -193,10 +206,11 @@ func TestCandidatePathManagerRejectsUpdateForAnotherLocalDevice(t *testing.T) {
 
 func TestRelayWatcherFollowsDirectAndFallbackPathChanges(t *testing.T) {
 	updater := &endpointRecorder{}
-	selector := controlprotocol.NewPathSelector()
+	selector := nodepath.NewPathSelector()
 	bridge := &relayBridgeStub{started: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- runKernelRelayWithPathSelector(ctx, bridge, KernelRelayConfig{PeerPublicKey: validPeerKey, EndpointUpdater: updater, PathSelector: selector}, netip.MustParseAddrPort("127.0.0.1:51821"))
@@ -206,33 +220,44 @@ func TestRelayWatcherFollowsDirectAndFallbackPathChanges(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("relay bridge did not start")
 	}
+
 	deadline := time.Now().Add(time.Second)
+
 	setCount, _, _ := updater.state()
 	for setCount == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 		setCount, _, _ = updater.state()
 	}
+
 	setCount, _, endpoints := updater.state()
+
 	if setCount != 1 {
 		t.Fatalf("initial relay endpoint updates=%v", endpoints)
 	}
+
 	selector.DirectHandshakeSucceeded()
 	time.Sleep(20 * time.Millisecond)
 	setCount, _, endpoints = updater.state()
+
 	if setCount != 1 {
 		t.Fatalf("direct path caused relay endpoint overwrite: %v", endpoints)
 	}
+
 	selector.DirectFailed()
 	deadline = time.Now().Add(time.Second)
+
 	setCount, _, _ = updater.state()
 	for setCount < 2 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 		setCount, _, _ = updater.state()
 	}
+
 	setCount, _, endpoints = updater.state()
+
 	if setCount != 2 {
 		t.Fatalf("relay fallback endpoint updates=%v", endpoints)
 	}
+
 	cancel()
 	select {
 	case err := <-errCh:
@@ -242,7 +267,9 @@ func TestRelayWatcherFollowsDirectAndFallbackPathChanges(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("relay watcher did not stop")
 	}
+
 	_, clearCount, _ := updater.state()
+
 	if clearCount != 1 {
 		t.Fatalf("clear calls=%d, want 1", clearCount)
 	}

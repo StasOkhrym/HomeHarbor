@@ -21,19 +21,15 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/invites"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
 	"github.com/StasOkhrym/homeharbor/internal/platform/redissecurity"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
 const (
-	ClaimTTL     = 2 * time.Minute
 	claimPurpose = "activation-claim-v1"
-	claimDomain  = "homeharbor/activation-claim/v1\x00"
 )
 
-var (
-	ErrInvalidClaim = errors.New("invalid or consumed activation claim")
-	ErrNotReady     = errors.New("activation is not in the signed snapshot")
-)
+var ErrNotReady = errors.New("activation is not in the signed snapshot")
 
 type (
 	InviteReader interface {
@@ -98,7 +94,7 @@ type Activation struct {
 // ActivationOption supplies dependencies owned by the application boundary.
 type ActivationOption func(*Activation)
 
-// WithLifetimes uses validated issuance limits; ClaimTTL remains the maximum
+// WithLifetimes uses validated issuance limits; protocol.ClaimTTL remains the maximum
 // lifetime accepted by existing clients, not a negotiated trust relaxation.
 func WithLifetimes(claim, credential time.Duration) ActivationOption {
 	return func(a *Activation) { a.claimTTL, a.credentialTTL = claim, credential }
@@ -118,9 +114,11 @@ func NewActivation(
 	if now == nil {
 		now = time.Now
 	}
+
 	if random == nil {
 		random = rand.Reader
 	}
+
 	a := &Activation{
 		uow:           uow,
 		invites:       records,
@@ -130,12 +128,13 @@ func NewActivation(
 		network:       network,
 		now:           now,
 		random:        random,
-		claimTTL:      ClaimTTL,
+		claimTTL:      protocol.ClaimTTL,
 		credentialTTL: devices.CredentialTTL,
 	}
 	for _, option := range options {
 		option(a)
 	}
+
 	return a
 }
 
@@ -226,65 +225,8 @@ func (a *Activation) ApproveSigned(
 	return result, nil
 }
 
-// ClaimChallenge uses canonical unpadded base64url only for nonce and signature.
-// WireGuard public keys remain standard wgtypes.String() throughout storage.
-type ClaimChallenge struct {
-	Version   uint16 `json:"version"    cbor:"version"`
-	NetworkID string `json:"network_id" cbor:"network_id"`
-	InviteID  string `json:"invite_id"  cbor:"invite_id"`
-	DeviceID  string `json:"device_id"  cbor:"device_id"`
-	Nonce     string `json:"nonce"      cbor:"nonce"`
-	ExpiresAt int64  `json:"expires_at" cbor:"expires_at"`
-}
-type ClaimProof struct {
-	Challenge ClaimChallenge `json:"challenge"`
-	Signature string         `json:"signature"`
-}
 type ClaimResult struct {
 	Device devices.Device `json:"device"`
-}
-
-var canonical = func() cbor.EncMode {
-	m, err := cbor.CanonicalEncOptions().EncMode()
-	if err != nil {
-		panic(err)
-	}
-	return m
-}()
-
-func claimPayload(c ClaimChallenge) ([]byte, error) {
-	if c.Version != 1 || c.NetworkID == "" || c.InviteID == "" || c.DeviceID == "" ||
-		c.ExpiresAt <= 0 {
-		return nil, ErrInvalidClaim
-	}
-	if _, err := strictBase64(c.Nonce, 32); err != nil {
-		return nil, err
-	}
-	return canonical.Marshal(c)
-}
-
-func strictBase64(raw string, n int) ([]byte, error) {
-	b, err := base64.RawURLEncoding.Strict().DecodeString(raw)
-	if err != nil || len(b) != n || base64.RawURLEncoding.EncodeToString(b) != raw {
-		return nil, ErrInvalidClaim
-	}
-	return b, nil
-}
-
-func SignClaim(c ClaimChallenge, key ed25519.PrivateKey) (ClaimProof, error) {
-	if len(key) != ed25519.PrivateKeySize {
-		return ClaimProof{}, ErrInvalidClaim
-	}
-	p, err := claimPayload(c)
-	if err != nil {
-		return ClaimProof{}, err
-	}
-	return ClaimProof{
-		Challenge: c,
-		Signature: base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(key, append([]byte(claimDomain), p...)),
-		),
-	}, nil
 }
 
 func (a *Activation) ready(ctx context.Context, id string) (invites.Record, error) {
@@ -334,19 +276,22 @@ func (a *Activation) ready(ctx context.Context, id string) (invites.Record, erro
 	return invites.Record{}, ErrNotReady
 }
 
-func (a *Activation) Challenge(ctx context.Context, id string) (ClaimChallenge, error) {
+func (a *Activation) Challenge(ctx context.Context, id string) (protocol.ClaimChallenge, error) {
 	r, err := a.ready(ctx, id)
 	if err != nil {
-		return ClaimChallenge{}, err
+		return protocol.ClaimChallenge{}, err
 	}
 	if a.challenges == nil {
-		return ClaimChallenge{}, errors.New("shared challenge repository is required")
+		return protocol.ClaimChallenge{}, errors.New("shared challenge repository is required")
 	}
+
 	var nonce [32]byte
+
 	if _, err = io.ReadFull(a.random, nonce[:]); err != nil {
-		return ClaimChallenge{}, err
+		return protocol.ClaimChallenge{}, err
 	}
-	c := ClaimChallenge{
+
+	c := protocol.ClaimChallenge{
 		Version:   1,
 		NetworkID: a.network,
 		InviteID:  id,
@@ -354,58 +299,70 @@ func (a *Activation) Challenge(ctx context.Context, id string) (ClaimChallenge, 
 		Nonce:     base64.RawURLEncoding.EncodeToString(nonce[:]),
 		ExpiresAt: a.now().UTC().Add(a.claimTTL).Unix(),
 	}
-	p, err := claimPayload(c)
+	p, err := protocol.ClaimPayload(c)
 	if err != nil {
-		return ClaimChallenge{}, err
+		return protocol.ClaimChallenge{}, err
 	}
+
 	if err = a.challenges.PutChallenge(ctx, claimPurpose, c.Nonce, p, a.claimTTL); err != nil {
-		return ClaimChallenge{}, err
+		return protocol.ClaimChallenge{}, err
 	}
+
 	return c, nil
 }
 
-func (a *Activation) Claim(ctx context.Context, id string, proof ClaimProof) (ClaimResult, error) {
+func (a *Activation) Claim(
+	ctx context.Context,
+	id string,
+	proof protocol.ClaimProof,
+) (ClaimResult, error) {
 	r, err := a.ready(ctx, id)
 	if err != nil {
 		return ClaimResult{}, err
 	}
+
 	c := proof.Challenge
 	if c.NetworkID != a.network || c.InviteID != id || c.DeviceID != r.DeviceID ||
 		a.now().UTC().Unix() >= c.ExpiresAt ||
 		c.ExpiresAt > a.now().UTC().Add(a.claimTTL).Unix() {
-		return ClaimResult{}, ErrInvalidClaim
+		return ClaimResult{}, protocol.ErrInvalidClaim
 	}
-	p, err := claimPayload(c)
+
+	p, err := protocol.ClaimPayload(c)
 	if err != nil {
-		return ClaimResult{}, ErrInvalidClaim
+		return ClaimResult{}, protocol.ErrInvalidClaim
 	}
-	sig, err := strictBase64(proof.Signature, ed25519.SignatureSize)
-	if err != nil || !ed25519.Verify(r.DevicePublic, append([]byte(claimDomain), p...), sig) {
-		return ClaimResult{}, ErrInvalidClaim
+	if protocol.VerifyClaim(proof, r.DevicePublic) != nil {
+		return ClaimResult{}, protocol.ErrInvalidClaim
 	}
 	if a.challenges == nil {
 		return ClaimResult{}, errors.New("shared challenge repository is required")
 	}
+
 	stored, err := a.challenges.ConsumeChallenge(ctx, claimPurpose, c.Nonce)
 	if errors.Is(err, redissecurity.ErrChallengeMissing) {
-		return ClaimResult{}, ErrInvalidClaim
+		return ClaimResult{}, protocol.ErrInvalidClaim
 	}
 	if err != nil {
 		return ClaimResult{}, err
 	}
 	if !bytes.Equal(stored, p) {
-		return ClaimResult{}, ErrInvalidClaim
+		return ClaimResult{}, protocol.ErrInvalidClaim
 	}
 	if a.uow == nil {
 		return ClaimResult{}, errors.New("activation unit of work is required")
 	}
+
 	var secret [32]byte
+
 	if _, err = io.ReadFull(a.random, secret[:]); err != nil {
 		return ClaimResult{}, err
 	}
+
 	credential := base64.RawURLEncoding.EncodeToString(secret[:])
 	hash := sha256.Sum256([]byte(credential))
 	var d devices.Device
+
 	err = a.uow.WithinActivation(ctx, func(tx ActivationTransaction) error {
 		current, lockErr := tx.Invites.Lock(ctx, id)
 		if lockErr != nil {
@@ -415,8 +372,9 @@ func (a *Activation) Claim(ctx context.Context, id string, proof ClaimProof) (Cl
 			current.ProfileID != r.ProfileID ||
 			!bytes.Equal(current.DevicePublic, r.DevicePublic) ||
 			!bytes.Equal(current.WireGuardPublicKey, r.WireGuardPublicKey) {
-			return ErrInvalidClaim
+			return protocol.ErrInvalidClaim
 		}
+
 		now := a.now().UTC()
 		d, lockErr = tx.Devices.ReplaceCredential(
 			ctx,
@@ -429,13 +387,15 @@ func (a *Activation) Claim(ctx context.Context, id string, proof ClaimProof) (Cl
 		if lockErr != nil {
 			return lockErr
 		}
+
 		var wg wgtypes.Key
 		copy(wg[:], r.WireGuardPublicKey)
 		if d.IdentityPublicKey != base64.RawURLEncoding.EncodeToString(r.DevicePublic) ||
 			d.WireGuardPublicKey != wg.String() ||
 			d.Role != devices.RoleClient {
-			return ErrInvalidClaim
+			return protocol.ErrInvalidClaim
 		}
+
 		return tx.Outbox.Append(
 			ctx,
 			devices.Event{
@@ -448,7 +408,9 @@ func (a *Activation) Claim(ctx context.Context, id string, proof ClaimProof) (Cl
 	if err != nil {
 		return ClaimResult{}, err
 	}
+
 	d.Credential = credential
 	d.CredentialHash = [32]byte{}
+
 	return ClaimResult{Device: d}, nil
 }

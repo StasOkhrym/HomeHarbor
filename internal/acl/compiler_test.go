@@ -1,4 +1,4 @@
-package policy
+package acl
 
 import (
 	"net/netip"

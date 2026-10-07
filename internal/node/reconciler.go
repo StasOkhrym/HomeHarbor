@@ -9,8 +9,8 @@ import (
 	"net/netip"
 	"sync"
 
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/agent/nft"
-	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 	"github.com/StasOkhrym/homeharbor/internal/tunnel"
 )
@@ -152,7 +152,7 @@ func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSn
 	if _, err := nft.Compile(
 		r.interfaceName,
 		nil,
-		policy.Snapshot{DefaultAction: policy.ActionDeny},
+		acl.Snapshot{DefaultAction: acl.ActionDeny},
 	); err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSn
 	if _, err := nft.Compile(
 		r.interfaceName,
 		peers,
-		policy.Snapshot{DefaultAction: policy.ActionDeny},
+		acl.Snapshot{DefaultAction: acl.ActionDeny},
 	); err != nil {
 		return err
 	}
@@ -292,15 +292,18 @@ func (r *GatewayReconciler) prepare(ctx context.Context, value snapshot.NetworkS
 		r.ensure == nil {
 		return errors.New("gateway reconciler is not configured")
 	}
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	if value.Revision == 0 || value.Revision < r.revision {
 		return nft.ErrRevisionRollback
 	}
 	if value.Revision == r.revision && snapshotFingerprint(value) != r.committedFingerprint {
 		return errors.New("different gateway state for committed revision")
 	}
+
 	var local snapshot.Device
 	var isGateway bool
 	for _, gateway := range value.Gateways {
@@ -309,26 +312,31 @@ func (r *GatewayReconciler) prepare(ctx context.Context, value snapshot.NetworkS
 			break
 		}
 	}
+
 	peers := make(map[string]netip.Prefix, len(value.Devices))
 	for _, device := range value.Devices {
 		if _, exists := peers[device.ID]; exists || device.ID == "" {
 			return fmt.Errorf("duplicate or empty device ID %s", device.ID)
 		}
+
 		prefix, err := netip.ParsePrefix(device.OverlayAddress)
 		if err != nil {
 			return fmt.Errorf("device %s has invalid overlay address: %w", device.ID, err)
 		}
+
 		peers[device.ID] = prefix
 		if device.ID == r.deviceID {
 			local = device
 		}
 	}
+
 	if local.ID == "" && isGateway {
 		return errors.New("gateway device is missing from snapshot")
 	}
 	if isGateway && local.Role != "gateway" {
 		return errors.New("approved gateway has invalid device role")
 	}
+
 	routes := make([]netip.Prefix, 0)
 	if isGateway {
 		for id, prefix := range peers {
@@ -337,16 +345,20 @@ func (r *GatewayReconciler) prepare(ctx context.Context, value snapshot.NetworkS
 			}
 		}
 	}
+
 	seenRoutes := make(map[string]bool)
 	for _, route := range value.Routes {
 		if route.ID == "" || seenRoutes[route.ID] {
 			return errors.New("duplicate or empty route ID")
 		}
+
 		seenRoutes[route.ID] = true
+
 		prefix, parseErr := netip.ParsePrefix(route.Prefix)
 		if parseErr != nil || !prefix.IsValid() || prefix.Bits() == 0 {
 			return fmt.Errorf("route %s has invalid non-default prefix", route.ID)
 		}
+
 		// LANs served by this gateway keep their native host routes. Only
 		// another approved gateway's LAN belongs on the encrypted interface.
 		if isGateway && route.GatewayID != r.deviceID {
@@ -356,58 +368,68 @@ func (r *GatewayReconciler) prepare(ctx context.Context, value snapshot.NetworkS
 					approved = true
 				}
 			}
+
 			if !approved {
 				return fmt.Errorf("route %s references unapproved gateway", route.ID)
 			}
+
 			routes = append(routes, prefix.Masked())
 		}
 	}
+
 	if _, _, err := prepareDNS(value); err != nil {
 		return err
 	}
+
 	if r.dns != nil {
 		if err := r.dns.Prepare(ctx, value); err != nil {
 			return err
 		}
 	}
-	rules := make([]policy.Rule, 0, len(value.ACL))
-	for _, acl := range value.ACL {
-		destination, parseErr := netip.ParsePrefix(acl.Destination)
+
+	rules := make([]acl.Rule, 0, len(value.ACL))
+	for _, rule := range value.ACL {
+		destination, parseErr := netip.ParsePrefix(rule.Destination)
 		if parseErr != nil {
-			return fmt.Errorf("ACL %s has invalid destination: %w", acl.ID, parseErr)
+			return fmt.Errorf("ACL %s has invalid destination: %w", rule.ID, parseErr)
 		}
-		protocol := policy.Protocol(acl.Protocol)
+
+		protocol := acl.Protocol(rule.Protocol)
 		rules = append(
 			rules,
-			policy.Rule{
-				ID:             acl.ID,
-				SourceDeviceID: acl.SourceDeviceID,
+			acl.Rule{
+				ID:             rule.ID,
+				SourceDeviceID: rule.SourceDeviceID,
 				Destination:    destination,
 				Protocol:       protocol,
-				PortFrom:       acl.PortFrom,
-				PortTo:         acl.PortTo,
+				PortFrom:       rule.PortFrom,
+				PortTo:         rule.PortTo,
 			},
 		)
 	}
+
 	// Validate even an unapproved local gateway's ACL before any mutation;
 	// its final policy is nevertheless empty so revocation cannot retain allows.
 	if _, err := nft.Compile(
 		r.interfaceName,
 		peers,
-		policy.Snapshot{Revision: value.Revision, DefaultAction: policy.ActionDeny, Rules: rules},
+		acl.Snapshot{Revision: value.Revision, DefaultAction: acl.ActionDeny, Rules: rules},
 	); err != nil {
 		return err
 	}
+
 	if !isGateway {
 		rules = nil
 	}
+
 	prepared, err := r.policies.Prepare(
 		peers,
-		policy.Snapshot{Revision: value.Revision, DefaultAction: policy.ActionDeny, Rules: rules},
+		acl.Snapshot{Revision: value.Revision, DefaultAction: acl.ActionDeny, Rules: rules},
 	)
 	if err != nil {
 		return err
 	}
+
 	r.prepared = &gatewayPlan{
 		fingerprint: snapshotFingerprint(value),
 		value:       cloneNetworkSnapshot(value),
@@ -417,6 +439,7 @@ func (r *GatewayReconciler) prepare(ctx context.Context, value snapshot.NetworkS
 		approved:    isGateway,
 	}
 	r.staged = false
+
 	return nil
 }
 

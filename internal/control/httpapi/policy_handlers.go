@@ -3,7 +3,7 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/StasOkhrym/homeharbor/internal/control/policy"
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 )
 
 func (s *Server) latestPolicy(w http.ResponseWriter, r *http.Request) {
@@ -18,15 +18,17 @@ func (s *Server) latestPolicy(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) replacePolicy(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Rules []policy.Rule `json:"rules"`
+		Rules []acl.Rule `json:"rules"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+
 	snapshot, err := s.policy.Replace(r.Context(), input.Rules)
 	if err != nil {
 		writeErrorCode(w, http.StatusBadRequest, "invalid_policy", "policy rules are invalid")
 		return
 	}
+
 	writeJSON(w, http.StatusOK, snapshot)
 }

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 func TestPostgresMigrationRefusesDuplicatesWithoutDeletingCredentialHistory(t *testing.T) {
@@ -84,27 +84,34 @@ func TestPostgresSharedChallengeIsConsumedOnceConcurrently(t *testing.T) {
 	if os.Getenv("TEST_REDIS_URL") == "" {
 		t.Skip("TEST_REDIS_URL is not set")
 	}
+
 	f := newFixture(t)
 	ctx := context.Background()
+
 	if _, err := f.activation.ApproveSigned(ctx, f.approval); err != nil {
 		t.Fatal(err)
 	}
+
 	f.publish(t)
+
 	c, err := f.activation.Challenge(ctx, f.record.InviteID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, _ := workflows.SignClaim(c, f.deviceKey)
+
+	proof, _ := protocol.SignClaim(c, f.deviceKey)
 	var group sync.WaitGroup
 	failures := make(chan error, 8)
 	for range 8 {
 		group.Add(1)
 		go func() {
 			defer group.Done()
+
 			_, err := f.activation.Claim(ctx, f.record.InviteID, proof)
 			failures <- err
 		}()
 	}
+
 	group.Wait()
 	close(failures)
 	successes := 0
@@ -113,6 +120,7 @@ func TestPostgresSharedChallengeIsConsumedOnceConcurrently(t *testing.T) {
 			successes++
 		}
 	}
+
 	if successes != 1 {
 		t.Fatalf("same nonce succeeded %d times", successes)
 	}
@@ -122,19 +130,24 @@ func TestPostgresClaimRotationAndRevocationUseConsistentLockOrder(t *testing.T) 
 	if os.Getenv("TEST_REDIS_URL") == "" {
 		t.Skip("TEST_REDIS_URL is not set")
 	}
+
 	f := newFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
+
 	if _, err := f.activation.ApproveSigned(ctx, f.approval); err != nil {
 		t.Fatal(err)
 	}
+
 	f.publish(t)
 	first := f.claim(t)
+
 	c, err := f.activation.Challenge(ctx, f.record.InviteID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof, _ := workflows.SignClaim(c, f.deviceKey)
+
+	proof, _ := protocol.SignClaim(c, f.deviceKey)
 	var group sync.WaitGroup
 	results := make(chan error, 3)
 	start := make(chan struct{})
@@ -156,6 +169,7 @@ func TestPostgresClaimRotationAndRevocationUseConsistentLockOrder(t *testing.T) 
 		group.Add(1)
 		go func() { defer group.Done(); <-start; results <- op() }()
 	}
+
 	close(start)
 	group.Wait()
 	close(results)
@@ -164,7 +178,9 @@ func TestPostgresClaimRotationAndRevocationUseConsistentLockOrder(t *testing.T) 
 			t.Errorf("claim/rotate/revoke failed: %v", err)
 		}
 	}
+
 	var count int
+
 	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM device_credentials WHERE revoked_at IS NULL`).
 		Scan(&count); err != nil ||
 		count != 0 {

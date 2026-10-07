@@ -13,6 +13,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
+	nodepath "github.com/StasOkhrym/homeharbor/internal/node/path"
 	controlprotocol "github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
@@ -244,7 +245,7 @@ type CandidatePathManager struct {
 	peerDeviceID   string
 	peerPublicKey  string
 	updater        PeerEndpointUpdater
-	selector       *controlprotocol.PathSelector
+	selector       *nodepath.PathSelector
 	prober         HandshakeProber
 	handshakeLimit time.Duration
 }
@@ -255,7 +256,7 @@ type CandidatePathManager struct {
 func NewCandidatePathManager(
 	localDeviceID, peerDeviceID, peerPublicKey string,
 	updater PeerEndpointUpdater,
-	selector *controlprotocol.PathSelector,
+	selector *nodepath.PathSelector,
 	prober HandshakeProber,
 ) (*CandidatePathManager, error) {
 	if strings.TrimSpace(localDeviceID) == "" || strings.TrimSpace(peerDeviceID) == "" ||
@@ -266,9 +267,11 @@ func NewCandidatePathManager(
 			"local device, peer, endpoint updater, selector, and handshake prober are required",
 		)
 	}
+
 	if _, err := wgtypes.ParseKey(peerPublicKey); err != nil {
 		return nil, fmt.Errorf("invalid peer WireGuard public key: %w", err)
 	}
+
 	return &CandidatePathManager{
 		localDeviceID:  localDeviceID,
 		peerDeviceID:   peerDeviceID,

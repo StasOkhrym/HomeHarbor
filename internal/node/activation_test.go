@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing.T) {
@@ -66,14 +66,14 @@ func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing
 				return
 			}
 			_ = json.NewEncoder(w).
-				Encode(workflows.ClaimChallenge{Version: 1, NetworkID: "home", InviteID: local.Permit.InviteID, DeviceID: "linux", Nonce: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), ExpiresAt: time.Now().Add(time.Minute).Unix()})
+				Encode(protocol.ClaimChallenge{Version: 1, NetworkID: "home", InviteID: local.Permit.InviteID, DeviceID: "linux", Nonce: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), ExpiresAt: time.Now().Add(time.Minute).Unix()})
 		case strings.HasSuffix(r.URL.Path, "/claim"):
-			var p workflows.ClaimProof
+			var p protocol.ClaimProof
 			if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 				t.Error(err)
 			}
 			private, _ := base64.RawURLEncoding.DecodeString(state.IdentityPrivateKey)
-			expected, _ := workflows.SignClaim(p.Challenge, ed25519.PrivateKey(private))
+			expected, _ := protocol.SignClaim(p.Challenge, ed25519.PrivateKey(private))
 			if expected.Signature != p.Signature {
 				t.Error("invalid possession proof")
 			}

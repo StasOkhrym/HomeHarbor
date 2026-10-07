@@ -18,7 +18,6 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
-	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
@@ -275,16 +274,16 @@ func EnrollByInvite(
 		return err
 	}
 	for {
-		var challenge workflows.ClaimChallenge
+		var challenge protocol.ClaimChallenge
 		status, err = activationRequest(ctx, &client, endpoint+"/challenge", nil, &challenge)
 		if err == nil && status == http.StatusOK {
 			if challenge.InviteID != proof.InviteID || challenge.DeviceID != p.DeviceID ||
 				challenge.NetworkID != p.NetworkID ||
 				challenge.ExpiresAt <= time.Now().Unix() ||
-				challenge.ExpiresAt > time.Now().Add(workflows.ClaimTTL).Unix() {
-				return workflows.ErrInvalidClaim
+				challenge.ExpiresAt > time.Now().Add(protocol.ClaimTTL).Unix() {
+				return protocol.ErrInvalidClaim
 			}
-			signed, signErr := workflows.SignClaim(challenge, ed25519.PrivateKey(private))
+			signed, signErr := protocol.SignClaim(challenge, ed25519.PrivateKey(private))
 			if signErr != nil {
 				return signErr
 			}
