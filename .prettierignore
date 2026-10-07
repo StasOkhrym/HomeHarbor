@@ -4,7 +4,7 @@
 **/generated/**
 .git/
 .local/
-.superpowers/
+.superpowers/sdd/
 .worktrees/
 state/
 secrets/

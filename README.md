@@ -65,7 +65,8 @@ requires the full gate on its exact commit, not just a successful fast job.
 
 Linux supplies TUN, routing and nftables; Docker does not replace its kernel.
 See [architecture](docs/architecture.md), [local development](docs/local-development.md)
-and [tooling](docs/deployment-tooling.md). Working plans belong to ignored `.superpowers/`.
+and [tooling](docs/deployment-tooling.md). Architecture plans and reviews belong to `.superpowers/plans/` and
+`.superpowers/reviews/`; `docs/` contains product documentation.
 
 ## Native clients — deferred
 

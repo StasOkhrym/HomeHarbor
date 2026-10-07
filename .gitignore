@@ -6,7 +6,10 @@ bin/
 coverage.out
 dist/
 tmp/
-.superpowers/
+.superpowers/*
+!.superpowers/plans/
+!.superpowers/reviews/
+.superpowers/sdd/
 .worktrees/
 secrets/
 *.local.toml
