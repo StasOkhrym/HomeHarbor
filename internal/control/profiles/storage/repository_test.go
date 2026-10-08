@@ -95,25 +95,36 @@ func TestProfileMembershipRollback(t *testing.T) {
 
 func TestPostgresProfileRejectsDeviceRevokedDuringCreate(t *testing.T) {
 	pool := testutil.Postgres(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
 	testutil.Device(t, pool, "client", "client")
 	serviceRepo := servicespg.New(pool)
+
 	if err := serviceRepo.CreateService(ctx, services.Service{
 		ID: "cloud", Name: "Cloud", Kind: services.KindWeb,
 		URL: "https://cloud.home.test", CreatedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
+
 	revoke, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = revoke.Rollback(context.Background()) }()
+
+	var revokePID int32
+
+	if err = revoke.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&revokePID); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err = revoke.Exec(ctx,
 		`UPDATE devices SET status='revoked',revoked_at=now() WHERE id='client'`); err != nil {
 		t.Fatal(err)
 	}
+
 	created := make(chan error, 1)
 	go func() {
 		created <- profilespg.New(pool).CreateProfile(ctx, profiles.AccessProfile{
@@ -121,13 +132,54 @@ func TestPostgresProfileRejectsDeviceRevokedDuringCreate(t *testing.T) {
 			ServiceIDs: []string{"cloud"}, CreatedAt: time.Now().UTC(),
 		})
 	}()
+	// Observe the membership INSERT waiting on this still-open revoke transaction.
+	// Without this handshake, a scheduler could commit the revoke before the
+	// create goroutine starts, and the test would never exercise FOR SHARE.
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		var blocked bool
+
+		err = pool.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity a
+			WHERE a.datname = current_database()
+			  AND a.query LIKE '%INSERT INTO access_profile_devices%'
+			  AND $1 = ANY(pg_blocking_pids(a.pid))
+		)`, revokePID).Scan(&blocked)
+		if err != nil {
+			t.Fatalf("observe profile insert lock: %v", err)
+		}
+
+		if blocked {
+			select {
+			case err = <-created:
+				t.Fatalf("profile create returned while revoke was open: %v", err)
+			default:
+			}
+
+			break
+		}
+
+		select {
+		case err = <-created:
+			t.Fatalf("profile create did not wait for revoke: %v", err)
+		case <-ticker.C:
+		case <-ctx.Done():
+			t.Fatalf("profile insert never waited for revoke: %v", ctx.Err())
+		}
+	}
+
 	if err = revoke.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+
 	if err = <-created; !errors.Is(err, profiles.ErrDeviceNotAllowed) {
 		t.Fatalf("concurrent revoke error=%v", err)
 	}
+
 	items, err := profilespg.New(pool).ListProfiles(ctx)
+
 	if err != nil || len(items) != 0 {
 		t.Fatalf("rejected profile persisted: %#v, err=%v", items, err)
 	}
