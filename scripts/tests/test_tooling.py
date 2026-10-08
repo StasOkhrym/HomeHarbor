@@ -30,9 +30,19 @@ class ToolingTests(unittest.TestCase):
         (self.bin / "python3").write_text('#!/bin/sh\nexec "' + sys.executable + '" "$@"\n')
         (self.bin / "python3").chmod(0o755)
         self.env = {**os.environ, "PATH": f"{self.bin}:/usr/bin:/bin"}
-        # Fixtures own their fake interpreter. An inherited Make PYTHON value
-        # would bypass it and could start the real test suite recursively.
-        self.env.pop("PYTHON", None)
+        # Fixtures own their fake interpreter and Make invocation. An inherited
+        # command-line override in MAKEFLAGS can bypass a cleared PYTHON value.
+        for key in (
+            "PYTHON",
+            "MAKEFLAGS",
+            "MFLAGS",
+            "GNUMAKEFLAGS",
+            "MAKEOVERRIDES",
+            "MAKEFILES",
+            "MAKELEVEL",
+        ):
+            self.env.pop(key, None)
+
         for key in (
             "FULL",
             "TEST_DATABASE_URL",
@@ -637,7 +647,27 @@ exit 94
         sentinel.chmod(0o755)
         # The child runs a real fixture test. Its fake tools must win over a
         # PYTHON value inherited from the developer's outer shell.
-        result = subprocess.run(
+        returncode, output = self.run_nested_fixture_test(
+            {"PYTHON": str(sentinel), "SENTINEL_FILE": str(counter)}
+        )
+
+        self.assertEqual(returncode, 0, output)
+        self.assertFalse(counter.exists(), "fixture launched inherited PYTHON")
+
+    def test_inherited_makeflags_does_not_escape_fixture(self):
+        sentinel = self.root / "inherited-makeflags-python"
+        counter = self.root / "inherited-makeflags-calls"
+        sentinel.write_text('#!/bin/sh\nprintf x >> "$SENTINEL_FILE"\nexit 71\n')
+        sentinel.chmod(0o755)
+        returncode, output = self.run_nested_fixture_test(
+            {"MAKEFLAGS": f"-- PYTHON={sentinel}", "SENTINEL_FILE": str(counter)}
+        )
+
+        self.assertEqual(returncode, 0, output)
+        self.assertFalse(counter.exists(), "fixture launched inherited Make override")
+
+    def run_nested_fixture_test(self, inherited):
+        process = subprocess.Popen(
             [
                 sys.executable,
                 "-m",
@@ -645,13 +675,29 @@ exit 94
                 "scripts.tests.test_tooling.ToolingTests.test_make_test_runs_browser_tests",
             ],
             cwd=ROOT,
-            env={**os.environ, "PYTHON": str(sentinel), "SENTINEL_FILE": str(counter)},
-            capture_output=True,
+            env={**os.environ, **inherited},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=15,
+            start_new_session=True,
         )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(counter.exists(), "fixture launched inherited PYTHON")
+
+        try:
+            try:
+                stdout, stderr = process.communicate(timeout=15)
+            except subprocess.TimeoutExpired:
+                self.fail("nested fixture test exceeded its 15-second bound")
+
+            return process.returncode, stdout + stderr
+        finally:
+            # A recursive Make/Python descendant may outlive the direct child
+            # and hold its pipes open. Own and terminate the entire group.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+            process.communicate(timeout=5)
 
     def test_explicit_python_override_runs_once(self):
         sentinel = self.root / "explicit-python"
@@ -671,6 +717,26 @@ exit 94
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(counter.read_text(), "x", "explicit override should run exactly once")
+
+    def test_verify_uses_explicit_python_override_once(self):
+        sentinel = self.root / "verify-python"
+        counter = self.root / "verify-python-calls"
+        sentinel.write_text('#!/bin/sh\nprintf x >> "$SENTINEL_FILE"\nexit 0\n')
+        sentinel.chmod(0o755)
+        for command in ("make", "python3", "node", "go"):
+            self.cli(command)
+
+        result = subprocess.run(
+            ["/usr/bin/make", "-f", str(self.root / "Makefile"), f"PYTHON={sentinel}", "verify"],
+            cwd=self.bin,
+            env={**self.env, "SENTINEL_FILE": str(counter)},
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(counter.read_text(), "x", "verify ignored the explicit Python override")
 
     def test_dev_up_does_not_require_production_checks(self):
         self.cli("id", 'case "$1" in -u|-g) printf "501\\n" ;; esac\n')
