@@ -17,7 +17,7 @@ func main() {
 	flag.Parse()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
-	cfg, err := config.LoadControl(*configPath)
+	cfg, err := config.LoadControl(config.Sources{File: *configPath})
 	if err != nil {
 		logger.Error("load config", "error", err)
 		os.Exit(1)

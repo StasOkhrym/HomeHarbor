@@ -16,10 +16,12 @@ func TestRuntimeRejectsExplicitInvalid(t *testing.T) {
 	} {
 		t.Run(input, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "node.toml")
+
 			if err := os.WriteFile(path, []byte("[runtime]\n"+input+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := LoadClient(path); err == nil {
+
+			if _, err := LoadClient(Sources{File: path}); err == nil {
 				t.Fatal("explicit invalid runtime setting was accepted")
 			}
 		})
@@ -28,6 +30,7 @@ func TestRuntimeRejectsExplicitInvalid(t *testing.T) {
 
 func TestRuntimeDefaultsAndOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "node.toml")
+
 	if err := os.WriteFile(
 		path,
 		[]byte("[runtime]\noperation_timeout = '45s'\n"),
@@ -35,10 +38,12 @@ func TestRuntimeDefaultsAndOverrides(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadClient(path)
+
+	cfg, err := LoadClient(Sources{File: path})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if cfg.Runtime.OperationTimeout != 45*time.Second ||
 		cfg.Runtime.CleanupTimeout != 5*time.Second {
 		t.Fatalf(

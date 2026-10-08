@@ -74,7 +74,7 @@ func initSnapshot(args []string) error {
 	if err != nil {
 		return err
 	}
-	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile, cfg.Passphrase)
+	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile)
 	if err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func initRoot(args []string) error {
 	}
 	applyAdminString(flags, "key", path, cfg.RootKeyFile)
 	applyAdminString(flags, "passphrase-file", passphraseFile, cfg.PassphraseFile)
-	passphrase, err := configuredPassphrase(*passphraseFile, cfg.Passphrase)
+	passphrase, err := configuredPassphrase(*passphraseFile)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func issueInvite(args []string) error {
 	applyAdminString(flags, "profile", profileID, cfg.ProfileID)
 	applyAdminString(flags, "base-url", baseURL, cfg.BaseURL)
 	applyAdminString(flags, "key-id", keyID, cfg.KeyID)
-	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile, cfg.Passphrase)
+	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile)
 	if err != nil {
 		return err
 	}
@@ -191,7 +191,7 @@ func approveInvite(args []string) error {
 	if err != nil {
 		return err
 	}
-	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile, cfg.Passphrase)
+	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile)
 	if err != nil {
 		return err
 	}
@@ -239,7 +239,7 @@ func publishInviteSnapshot(args []string) error {
 	if err != nil {
 		return fmt.Errorf("parse overlay-pool: %w", err)
 	}
-	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile, cfg.Passphrase)
+	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile)
 	if err != nil {
 		return err
 	}
@@ -280,7 +280,7 @@ func revokeDeviceSnapshot(args []string) error {
 	if strings.TrimSpace(*deviceID) == "" {
 		return errors.New("device is required")
 	}
-	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile, cfg.Passphrase)
+	session, err := unlockSessionWithPassphrase(*keyPath, *passphraseFile)
 	if err != nil {
 		return err
 	}
@@ -318,22 +318,12 @@ func flagWasProvided(flags *flag.FlagSet, name string) bool {
 	return provided
 }
 
-func configuredPassphrase(passphraseFile, configured string) (string, error) {
-	if passphraseFile != "" {
-		return readPassphrase(passphraseFile)
-	}
-	if configured != "" {
-		return configured, nil
-	}
-	return "", errors.New(
-		"passphrase-file is required; do not pass secrets as command-line arguments",
-	)
+func configuredPassphrase(passphraseFile string) (string, error) {
+	return readPassphrase(passphraseFile)
 }
 
-func unlockSessionWithPassphrase(
-	path, passphraseFile, configuredSecret string,
-) (*companion.Session, error) {
-	passphrase, err := configuredPassphrase(passphraseFile, configuredSecret)
+func unlockSessionWithPassphrase(path, passphraseFile string) (*companion.Session, error) {
+	passphrase, err := configuredPassphrase(passphraseFile)
 	if err != nil {
 		return nil, err
 	}

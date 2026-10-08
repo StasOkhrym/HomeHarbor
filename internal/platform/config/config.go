@@ -124,13 +124,9 @@ type RelayServer struct {
 	} `toml:"security"`
 }
 
-type databaseConfigFile struct {
-	Database Database `toml:"database"`
-}
-
 // Admin describes the one-shot trusted-companion CLI. It contains operator
 // defaults and paths only; the encrypted root key remains in RootKeyFile and
-// the passphrase is loaded from PassphraseFile into the returned value.
+// the passphrase file is opened by the command after changed flags are applied.
 type Admin struct {
 	Endpoint             string `toml:"endpoint"`
 	KeyID                string `toml:"key_id"`
@@ -142,37 +138,33 @@ type Admin struct {
 	OverlayPool          string `toml:"overlay_pool"`
 	SnapshotManifestFile string `toml:"snapshot_manifest_file"`
 	InviteAttemptsFile   string `toml:"invite_attempts_file"`
-
-	Passphrase string `toml:"-"`
 }
 
-// LoadAdmin reads trusted-companion defaults and resolves only the explicitly
-// referenced passphrase file. It does not require an endpoint because init-root
-// is a local operation, while each command validates the fields it needs.
+// LoadAdmin reads trusted-companion defaults. The command resolves the selected
+// passphrase file after applying explicitly changed flags.
 func LoadAdmin(path string) (Admin, error) {
 	var cfg Admin
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
-		return Admin{}, fmt.Errorf("decode admin config: %w", err)
+
+	if _, err := readFileStrict(path, &cfg); err != nil {
+		return Admin{}, err
 	}
+
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = "https://control.example"
 	}
+
 	if cfg.KeyID == "" {
 		cfg.KeyID = "root-1"
 	}
+
 	if cfg.RootKeyFile == "" {
 		cfg.RootKeyFile = "state/root-key.age"
 	}
-	if cfg.PassphraseFile != "" {
-		value, err := readSecret(cfg.PassphraseFile, "admin root-key passphrase")
-		if err != nil {
-			return Admin{}, err
-		}
-		cfg.Passphrase = value
-	}
+
 	if cfg.InviteAttemptsFile == "" {
 		cfg.InviteAttemptsFile = "state/invite-attempts.json"
 	}
+
 	return cfg, nil
 }
 
@@ -223,48 +215,64 @@ func LoadRelayServer(path string) (RelayServer, error) {
 	return cfg, nil
 }
 
-// LoadDatabase reads only the database section required by the migration
-// process. Keeping this loader separate prevents a one-shot schema job from
-// receiving browser-signing, WebAuthn, or relay credentials through its config.
-func LoadDatabase(path string) (Database, error) {
-	var file databaseConfigFile
-	if _, err := toml.DecodeFile(path, &file); err != nil {
-		return Database{}, fmt.Errorf("decode database config: %w", err)
-	}
-	if err := file.Database.validateDriver(); err != nil {
+// LoadDatabase checks the complete control-file schema but resolves only the
+// database section. A migration never opens unrelated auth or relay secrets.
+func LoadDatabase(source Sources) (Database, error) {
+	var cfg Control
+
+	fileKeys, err := readFileStrict(source.File, &cfg)
+	if err != nil {
 		return Database{}, err
 	}
-	if value := os.Getenv("HOMEHARBOR_DATABASE_URL"); value != "" {
-		file.Database.URL = value
-	}
-	if err := resolveDatabaseSecret(&file.Database); err != nil {
+
+	// Only database fields are available to this role; other valid sections are
+	// parsed for schema correctness but their secrets are never resolved.
+	databaseOnly := struct {
+		Database Database `toml:"database"`
+	}{Database: cfg.Database}
+	envKeys, flagKeys, err := applySources(&databaseOnly, source)
+	if err != nil {
 		return Database{}, err
 	}
-	if strings.TrimSpace(file.Database.URL) == "" {
-		return Database{}, errors.New("database.url is required")
+
+	database := databaseOnly.Database
+	if err := selectedSecret(&database.Password, database.PasswordFile,
+		"database.password", "database.password_file", fileKeys, envKeys, flagKeys); err != nil {
+		return Database{}, err
 	}
-	return file.Database, nil
+
+	if err := validateDatabase(&database); err != nil {
+		return Database{}, err
+	}
+
+	return database, nil
 }
 
-func LoadControl(path string) (Control, error) {
+func LoadControl(source Sources) (Control, error) {
 	cfg := Control{Runtime: DefaultRuntime(false)}
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
-		return Control{}, fmt.Errorf("decode control config: %w", err)
-	}
-	if err := cfg.Database.validateDriver(); err != nil {
+	fileKeys, err := readFileStrict(source.File, &cfg)
+	if err != nil {
 		return Control{}, err
 	}
-	if value := os.Getenv("HOMEHARBOR_REDIS_URL"); value != "" {
-		cfg.Redis.URL = value
+	envKeys, flagKeys, err := applySources(&cfg, source)
+	if err != nil {
+		return Control{}, err
 	}
-	if value := os.Getenv("HOMEHARBOR_REDIS_PASSWORD"); value != "" {
-		cfg.Redis.Password = value
-	} else if cfg.Redis.PasswordFile != "" {
-		value, err := readSecret(cfg.Redis.PasswordFile, "Redis password")
-		if err != nil {
+	for _, pair := range []struct {
+		target       *string
+		path         string
+		inline, file string
+	}{
+		{&cfg.Database.Password, cfg.Database.PasswordFile, "database.password", "database.password_file"},
+		{&cfg.Redis.Password, cfg.Redis.PasswordFile, "redis.password", "redis.password_file"},
+		{&cfg.Auth.SessionSigningKey, cfg.Auth.SessionSigningKeyFile, "auth.session_signing_key", "auth.session_signing_key_file"},
+		{&cfg.Auth.CeremonyEncryptionKey, cfg.Auth.CeremonyEncryptionKeyFile, "auth.ceremony_encryption_key", "auth.ceremony_encryption_key_file"},
+		{&cfg.Relay.TicketKey, cfg.Relay.TicketKeyFile, "relay.ticket_key", "relay.ticket_key_file"},
+	} {
+		if err := selectedSecret(pair.target, pair.path, pair.inline, pair.file,
+			fileKeys, envKeys, flagKeys); err != nil {
 			return Control{}, err
 		}
-		cfg.Redis.Password = value
 	}
 	if cfg.Redis.URL != "" {
 		endpoint, err := url.Parse(cfg.Redis.URL)
@@ -276,44 +284,12 @@ func LoadControl(path string) (Control, error) {
 			)
 		}
 	}
-	if value := os.Getenv("HOMEHARBOR_SERVER_LISTEN_ADDRESS"); value != "" {
-		cfg.Server.ListenAddress = value
-	}
-	if value := os.Getenv("HOMEHARBOR_DATABASE_URL"); value != "" {
-		cfg.Database.URL = value
-	}
-	if value := os.Getenv("HOMEHARBOR_AUTH_SESSION_SIGNING_KEY"); value != "" {
-		cfg.Auth.SessionSigningKey = value
-	}
-	if value := os.Getenv("HOMEHARBOR_AUTH_CEREMONY_ENCRYPTION_KEY"); value != "" {
-		cfg.Auth.CeremonyEncryptionKey = value
-	}
-	if value := os.Getenv("HOMEHARBOR_RELAY_TICKET_KEY"); value != "" {
-		cfg.Relay.TicketKey = value
-	}
-	if err := resolveDatabaseSecret(&cfg.Database); err != nil {
+	if err := validateDatabase(&cfg.Database); err != nil {
 		return Control{}, err
 	}
-	if cfg.Auth.SessionSigningKey == "" && cfg.Auth.SessionSigningKeyFile != "" {
-		value, err := readSecret(cfg.Auth.SessionSigningKeyFile, "session signing key")
-		if err != nil {
-			return Control{}, err
-		}
-		cfg.Auth.SessionSigningKey = value
-	}
-	if cfg.Auth.CeremonyEncryptionKey == "" && cfg.Auth.CeremonyEncryptionKeyFile != "" {
-		value, err := readSecret(cfg.Auth.CeremonyEncryptionKeyFile, "ceremony encryption key")
-		if err != nil {
-			return Control{}, err
-		}
-		cfg.Auth.CeremonyEncryptionKey = value
-	}
-	if cfg.Relay.TicketKey == "" && cfg.Relay.TicketKeyFile != "" {
-		value, err := readSecret(cfg.Relay.TicketKeyFile, "relay ticket key")
-		if err != nil {
-			return Control{}, err
-		}
-		cfg.Relay.TicketKey = value
+	if cfg.Relay.TicketTTL == "" && (fileKeys["relay.ticket_ttl"] ||
+		envKeys["relay.ticket_ttl"] || flagKeys["relay.ticket_ttl"]) {
+		return Control{}, errors.New("relay.ticket_ttl must be a positive duration")
 	}
 	if err := cfg.validate(); err != nil {
 		return Control{}, err
@@ -322,18 +298,6 @@ func LoadControl(path string) (Control, error) {
 		return Control{}, err
 	}
 	return cfg, nil
-}
-
-func resolveDatabaseSecret(database *Database) error {
-	if database.PasswordFile == "" {
-		return nil
-	}
-	value, err := os.ReadFile(database.PasswordFile)
-	if err != nil {
-		return fmt.Errorf("read database password file: %w", err)
-	}
-	database.Password = strings.TrimSpace(string(value))
-	return nil
 }
 
 func (c Control) validate() error {
@@ -418,12 +382,4 @@ func (r Relay) TTL() string {
 	}
 
 	return r.TicketTTL
-}
-
-func readSecret(path, label string) (string, error) {
-	value, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", label, err)
-	}
-	return strings.TrimSpace(string(value)), nil
 }

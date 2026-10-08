@@ -1,13 +1,5 @@
 package config
 
-import (
-	"fmt"
-	"os"
-	"strings"
-
-	"github.com/BurntSushi/toml"
-)
-
 // Node describes the shared runtime configuration for the Linux gateway and
 // client executables. The two binaries intentionally share transport fields;
 // role-specific behavior remains in their composition code rather than in a
@@ -29,9 +21,9 @@ type NodeIdentity struct {
 	Refresh             bool   `toml:"refresh"`
 	Name                string `toml:"name"`
 
-	// Token is populated only from EnrollmentTokenFile and is never decoded
-	// from TOML. Keeping it out of the serialized shape makes accidental secret
-	// commits less likely and mirrors the control-plane secret-file contract.
+	// Token is populated from the selected file or an explicit CLI flag; it is
+	// never decoded from TOML. Keeping it out of the serialized shape reduces
+	// the chance of accidental secret commits.
 	Token string `toml:"-"`
 }
 
@@ -72,13 +64,13 @@ type NodeDNS struct {
 }
 
 // LoadClient reads a client TOML file and applies safe client defaults.
-func LoadClient(path string) (Node, error) {
-	return loadNode(path, DefaultClient())
+func LoadClient(source Sources) (Node, error) {
+	return loadNode(source, DefaultClient())
 }
 
 // LoadAgent reads a gateway TOML file and applies safe gateway defaults.
-func LoadAgent(path string) (Node, error) {
-	return loadNode(path, DefaultAgent())
+func LoadAgent(source Sources) (Node, error) {
+	return loadNode(source, DefaultAgent())
 }
 
 // DefaultClient is shared by flags and TOML loading to keep precedence stable.
@@ -105,38 +97,55 @@ func DefaultAgent() Node {
 	return cfg
 }
 
-func loadNode(path string, cfg Node) (Node, error) {
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
-		return Node{}, fmt.Errorf("decode node config: %w", err)
+func loadNode(source Sources, cfg Node) (Node, error) {
+	fileKeys, err := readFileStrict(source.File, &cfg)
+	if err != nil {
+		return Node{}, err
 	}
-	if cfg.Identity.EnrollmentTokenFile != "" {
-		value, err := readNodeSecret(cfg.Identity.EnrollmentTokenFile, "enrollment token")
-		if err != nil {
-			return Node{}, err
+
+	// Token and Ticket are not TOML fields. Their explicit CLI forms participate
+	// in selection without widening the on-disk secret schema.
+	flags := source.Flags
+	withoutInline := make(map[string]string, len(flags))
+	for key, value := range flags {
+		switch key {
+		case "node.token":
+			cfg.Identity.Token = value
+		case "relay.ticket":
+			cfg.Relay.Ticket = value
+		default:
+			withoutInline[key] = value
 		}
-		cfg.Identity.Token = value
 	}
-	if cfg.Relay.TicketFile != "" {
-		value, err := readNodeSecret(cfg.Relay.TicketFile, "relay ticket")
-		if err != nil {
-			return Node{}, err
-		}
-		cfg.Relay.Ticket = value
+
+	source.Flags = withoutInline
+
+	envKeys, flagKeys, err := applySources(&cfg, source)
+	if err != nil {
+		return Node{}, err
 	}
+
+	if _, ok := flags["node.token"]; ok {
+		flagKeys["node.token"] = true
+	}
+
+	if _, ok := flags["relay.ticket"]; ok {
+		flagKeys["relay.ticket"] = true
+	}
+
+	if err := selectedSecret(&cfg.Identity.Token, cfg.Identity.EnrollmentTokenFile,
+		"node.token", "node.enrollment_token_file", fileKeys, envKeys, flagKeys); err != nil {
+		return Node{}, err
+	}
+
+	if err := selectedSecret(&cfg.Relay.Ticket, cfg.Relay.TicketFile,
+		"relay.ticket", "relay.ticket_file", fileKeys, envKeys, flagKeys); err != nil {
+		return Node{}, err
+	}
+
 	if err := cfg.Runtime.Validate(); err != nil {
 		return Node{}, err
 	}
-	return cfg, nil
-}
 
-func readNodeSecret(path, label string) (string, error) {
-	value, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", label, err)
-	}
-	value = []byte(strings.TrimSpace(string(value)))
-	if len(value) == 0 {
-		return "", fmt.Errorf("%s file is empty", label)
-	}
-	return string(value), nil
+	return cfg, nil
 }

@@ -84,7 +84,7 @@ metrics_address = ":9090"
 	}
 	t.Setenv("HOMEHARBOR_SERVER_LISTEN_ADDRESS", ":8181")
 
-	cfg, err := LoadControl(configPath)
+	cfg, err := LoadControl(Sources{File: configPath})
 	if err != nil {
 		t.Fatalf("LoadControl() error = %v", err)
 	}
@@ -99,21 +99,26 @@ metrics_address = ":9090"
 func TestLoadDatabaseRequiresOnlyDatabaseConfig(t *testing.T) {
 	dir := t.TempDir()
 	passwordPath := filepath.Join(dir, "database-password")
+
 	if err := os.WriteFile(passwordPath, []byte("secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	configPath := filepath.Join(dir, "migration.toml")
 	content := `[database]
 url = "postgres://homeharbor@db/homeharbor"
 password_file = "` + passwordPath + `"
 `
+
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadDatabase(configPath)
+
+	cfg, err := LoadDatabase(Sources{File: configPath})
 	if err != nil {
 		t.Fatalf("LoadDatabase() error = %v", err)
 	}
+
 	if cfg.URL != "postgres://homeharbor@db/homeharbor" || cfg.Password != "secret" {
 		t.Fatalf("database config = %#v", cfg)
 	}
@@ -186,6 +191,7 @@ func TestControlValidationRequiresTrustedRootPublicKey(t *testing.T) {
 
 func TestLoadControlRejectsMissingRequiredValues(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.toml")
+
 	if err := os.WriteFile(
 		path,
 		[]byte("[server]\nlisten_address = \":8080\"\n"),
@@ -193,7 +199,8 @@ func TestLoadControlRejectsMissingRequiredValues(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadControl(path); err == nil {
+
+	if _, err := LoadControl(Sources{File: path}); err == nil {
 		t.Fatal("LoadControl() error = nil, want validation error")
 	}
 }
@@ -255,7 +262,7 @@ candidates = "203.0.113.2:51820"
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadClient(configPath)
+	cfg, err := LoadClient(Sources{File: configPath})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,13 +277,16 @@ candidates = "203.0.113.2:51820"
 
 func TestLoadAgentAppliesSafeDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.toml")
+
 	if err := os.WriteFile(path, []byte("[node]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadAgent(path)
+
+	cfg, err := LoadAgent(Sources{File: path})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if cfg.Identity.Name != "linux-gateway" || cfg.Identity.StatePath != "state/agent.json" ||
 		cfg.Relay.ListenAddress != "127.0.0.1:51821" ||
 		cfg.Relay.WireGuardAddress != "127.0.0.1:51820" ||
@@ -286,7 +296,7 @@ func TestLoadAgentAppliesSafeDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadAdminReadsDefaultsAndPassphraseFile(t *testing.T) {
+func TestLoadAdminDefersPassphraseFileUntilFlagsSelected(t *testing.T) {
 	dir := t.TempDir()
 	passphrasePath := filepath.Join(dir, "root-passphrase")
 	if err := os.WriteFile(
@@ -314,7 +324,7 @@ overlay_pool = "10.200.0.0/24"
 		t.Fatal(err)
 	}
 	if cfg.Endpoint != "https://control.example" || cfg.KeyID != "root-2026" ||
-		cfg.Passphrase != "correct horse battery staple" ||
+		cfg.PassphraseFile != passphrasePath ||
 		cfg.OverlayPool != "10.200.0.0/24" {
 		t.Fatalf("unexpected admin config: %#v", cfg)
 	}

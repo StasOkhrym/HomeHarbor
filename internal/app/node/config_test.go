@@ -37,3 +37,29 @@ func TestConfigRejectsUnreadableFileAndPositionalArguments(t *testing.T) {
 		}
 	}
 }
+
+func TestExplicitNodeTokenSkipsUnreadableLowerFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "node.toml")
+	if err := os.WriteFile(
+		path,
+		[]byte("[node]\nenrollment_token_file = '/definitely/missing/token'\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ParseConfig(
+		Client,
+		[]string{"-config", path, "-token", "from-flag", "-refresh=false"},
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Identity.Token != "from-flag" || cfg.Identity.Refresh {
+		t.Fatalf(
+			"explicit token/false lost: token=%q refresh=%v",
+			cfg.Identity.Token,
+			cfg.Identity.Refresh,
+		)
+	}
+}

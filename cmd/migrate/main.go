@@ -16,7 +16,7 @@ func main() {
 	configPath := flag.String("config", "config/control.toml", "control configuration path")
 	flag.Parse()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	cfg, err := config.LoadDatabase(*configPath)
+	cfg, err := config.LoadDatabase(config.Sources{File: *configPath})
 	if err != nil {
 		logger.Error("load config", "error", err)
 		os.Exit(1)

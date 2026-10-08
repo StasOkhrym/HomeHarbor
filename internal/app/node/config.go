@@ -16,9 +16,8 @@ const (
 	Gateway
 )
 
-// ParseConfig loads TOML defaults before reapplying explicitly supplied flags.
-// Both passes use the same bindings, so newly added flags cannot acquire a
-// different precedence in the client and gateway executables.
+// ParseConfig parses changed flags once, then composes file, environment and
+// flags before any referenced secret is opened.
 func ParseConfig(role Role, args []string, output io.Writer) (config.Node, error) {
 	if role != Client && role != Gateway {
 		return config.Node{}, errors.New("invalid node role")
@@ -27,23 +26,23 @@ func ParseConfig(role Role, args []string, output io.Writer) (config.Node, error
 	if role == Gateway {
 		cfg = config.DefaultAgent()
 	}
-	path, err := parseFlags(&cfg, args, output)
-	if err != nil || path == "" {
-		return cfg, err
-	}
-	if role == Gateway {
-		cfg, err = config.LoadAgent(path)
-	} else {
-		cfg, err = config.LoadClient(path)
-	}
+	path, changed, err := parseFlags(&cfg, args, output)
 	if err != nil {
 		return config.Node{}, err
 	}
-	_, err = parseFlags(&cfg, args, io.Discard)
-	return cfg, err
+	sources := config.Sources{File: path, Flags: changed}
+	if role == Gateway {
+		return config.LoadAgent(sources)
+	} else {
+		return config.LoadClient(sources)
+	}
 }
 
-func parseFlags(cfg *config.Node, args []string, output io.Writer) (string, error) {
+func parseFlags(
+	cfg *config.Node,
+	args []string,
+	output io.Writer,
+) (string, map[string]string, error) {
 	flags := flag.NewFlagSet("node", flag.ContinueOnError)
 	flags.SetOutput(output)
 	path := flags.String("config", "", "TOML node configuration path")
@@ -183,7 +182,30 @@ func parseFlags(cfg *config.Node, args []string, output io.Writer) (string, erro
 		"explicitly enable host IP forwarding",
 	)
 	err := parseNodeFlags(flags, args)
-	return *path, err
+	if err != nil {
+		return "", nil, err
+	}
+	keys := map[string]string{
+		"state": "node.state_path", "control": "node.control_url", "token": "node.token",
+		"refresh": "node.refresh", "name": "node.name",
+		"relay": "relay.websocket_url", "relay-udp": "relay.udp_address",
+		"relay-ticket": "relay.ticket", "relay-session": "relay.session_id",
+		"relay-destination": "relay.destination_device_id", "bridge-listen": "relay.listen_address",
+		"wireguard-address": "relay.wireguard_address", "stun": "relay.stun_server",
+		"wg-interface": "wireguard.interface", "wg-port": "wireguard.listen_port",
+		"wg-peer-key": "wireguard.peer_public_key", "wg-overlay": "wireguard.overlay_address",
+		"wg-allowed-prefixes": "wireguard.allowed_prefixes", "wg-routes": "wireguard.routes",
+		"coordination": "coordination.url", "root-public-key": "coordination.root_public_key_file",
+		"network-id": "coordination.network_id", "direct-candidates": "direct.candidates",
+		"dns-link": "dns.link", "enable-forwarding": "dns.enable_forwarding",
+	}
+	changed := make(map[string]string)
+	flags.Visit(func(item *flag.Flag) {
+		if key, ok := keys[item.Name]; ok {
+			changed[key] = item.Value.String()
+		}
+	})
+	return *path, changed, nil
 }
 
 func parseNodeFlags(flags *flag.FlagSet, args []string) error {
