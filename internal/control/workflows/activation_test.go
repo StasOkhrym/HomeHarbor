@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 	memoryinvites "github.com/StasOkhrym/homeharbor/internal/testutil/control/invites"

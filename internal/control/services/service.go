@@ -1,4 +1,4 @@
-// Package services owns the user-facing service catalog and access profiles.
+// Package services owns the user-facing service catalog.
 // The policy compiler consumes these concepts later; the catalog itself never
 // exposes database tables to HTTP handlers.
 package services
@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"slices"
 	"strings"
 	"time"
 )
@@ -20,12 +19,7 @@ const (
 	KindNative Kind = "native"
 )
 
-var (
-	ErrServiceNotFound  = errors.New("service not found")
-	ErrProfileNotFound  = errors.New("access profile not found")
-	ErrDuplicateID      = errors.New("service or profile ID already exists")
-	ErrDeviceNotAllowed = errors.New("device is not allowed in access profile")
-)
+var ErrDuplicateID = errors.New("service ID already exists")
 
 type Service struct {
 	ID          string    `json:"id"`
@@ -38,48 +32,23 @@ type Service struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-type AccessProfile struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	DeviceIDs  []string  `json:"device_ids"`
-	ServiceIDs []string  `json:"service_ids"`
-	CreatedAt  time.Time `json:"created_at"`
-}
-
 type Repository interface {
 	CreateService(context.Context, Service) error
 	ListServices(context.Context) ([]Service, error)
 	ListServicesForDevice(context.Context, string) ([]Service, error)
-	CreateProfile(context.Context, AccessProfile) error
-	ListProfiles(context.Context) ([]AccessProfile, error)
-}
-
-// DeviceActiveChecker is supplied by the composition root so this module can
-// validate profile membership without importing the devices repository or
-// exposing its tables. A profile may remain empty for an invite template.
-type DeviceActiveChecker func(context.Context, string) (bool, error)
-
-type Option func(*Catalog)
-
-func WithDeviceActiveChecker(checker DeviceActiveChecker) Option {
-	return func(catalog *Catalog) { catalog.deviceActive = checker }
 }
 
 type Catalog struct {
-	store        Repository
-	now          func() time.Time
-	deviceActive DeviceActiveChecker
+	store Repository
+	now   func() time.Time
 }
 
-func NewService(store Repository, now func() time.Time, options ...Option) *Catalog {
+func NewService(store Repository, now func() time.Time) *Catalog {
 	if now == nil {
 		now = time.Now
 	}
-	catalog := &Catalog{store: store, now: now}
-	for _, option := range options {
-		option(catalog)
-	}
-	return catalog
+
+	return &Catalog{store: store, now: now}
 }
 
 func (c *Catalog) Create(ctx context.Context, item Service) (Service, error) {
@@ -110,55 +79,6 @@ func (c *Catalog) ListForDevice(ctx context.Context, deviceID string) ([]Service
 	}
 
 	return c.store.ListServicesForDevice(ctx, deviceID)
-}
-
-func (c *Catalog) CreateProfile(ctx context.Context, profile AccessProfile) (AccessProfile, error) {
-	profile.ID = strings.TrimSpace(profile.ID)
-	profile.Name = strings.TrimSpace(profile.Name)
-	if profile.ID == "" || profile.Name == "" {
-		return AccessProfile{}, errors.New("profile ID and name are required")
-	}
-	profile.DeviceIDs = uniqueSorted(profile.DeviceIDs)
-	profile.ServiceIDs = uniqueSorted(profile.ServiceIDs)
-	if len(profile.ServiceIDs) == 0 {
-		return AccessProfile{}, errors.New("profile must contain at least one service")
-	}
-	services, err := c.store.ListServices(ctx)
-	if err != nil {
-		return AccessProfile{}, err
-	}
-	known := make(map[string]struct{}, len(services))
-	for _, item := range services {
-		known[item.ID] = struct{}{}
-	}
-	for _, serviceID := range profile.ServiceIDs {
-		if _, ok := known[serviceID]; !ok {
-			return AccessProfile{}, fmt.Errorf("%w: %s", ErrServiceNotFound, serviceID)
-		}
-	}
-	if len(profile.DeviceIDs) > 0 {
-		if c.deviceActive == nil {
-			return AccessProfile{}, errors.New("device validation is not configured")
-		}
-		for _, deviceID := range profile.DeviceIDs {
-			active, checkErr := c.deviceActive(ctx, deviceID)
-			if checkErr != nil {
-				return AccessProfile{}, checkErr
-			}
-			if !active {
-				return AccessProfile{}, fmt.Errorf("%w: %s", ErrDeviceNotAllowed, deviceID)
-			}
-		}
-	}
-	profile.CreatedAt = c.now().UTC()
-	if err := c.store.CreateProfile(ctx, profile); err != nil {
-		return AccessProfile{}, err
-	}
-	return profile, nil
-}
-
-func (c *Catalog) Profiles(ctx context.Context) ([]AccessProfile, error) {
-	return c.store.ListProfiles(ctx)
 }
 
 func validateService(item Service) error {
@@ -204,10 +124,4 @@ func validateURL(label, raw string, requireHTTPS bool) error {
 	}
 
 	return nil
-}
-
-func uniqueSorted(values []string) []string {
-	values = slices.Clone(values)
-	slices.Sort(values)
-	return slices.Compact(values)
 }

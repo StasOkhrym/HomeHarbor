@@ -21,6 +21,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
+	controlprofiles "github.com/StasOkhrym/homeharbor/internal/control/profiles"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
@@ -30,6 +31,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
 	memoryinvites "github.com/StasOkhrym/homeharbor/internal/testutil/control/invites"
+	memoryprofiles "github.com/StasOkhrym/homeharbor/internal/testutil/control/profiles"
 	memoryroutes "github.com/StasOkhrym/homeharbor/internal/testutil/control/routes"
 	memoryservices "github.com/StasOkhrym/homeharbor/internal/testutil/control/services"
 	memorysnapshots "github.com/StasOkhrym/homeharbor/internal/testutil/control/snapshots"
@@ -389,13 +391,11 @@ func TestDecodeJSONRejectsTrailingValues(t *testing.T) {
 }
 
 func TestAdminPageUsesLocalAssets(t *testing.T) {
-	catalog := controlservices.NewService(
-		memoryservices.NewRepository(),
-		time.Now,
-		controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
-			return true, nil
-		}),
-	)
+	serviceStore := memoryservices.NewRepository()
+	catalog := controlservices.NewService(serviceStore, time.Now)
+	profileOwner := controlprofiles.NewService(memoryprofiles.NewRepository(serviceStore),
+		catalog, time.Now, nil)
+
 	if _, err := catalog.Create(
 		context.Background(),
 		controlservices.Service{
@@ -408,22 +408,30 @@ func TestAdminPageUsesLocalAssets(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := catalog.CreateProfile(
+
+	if _, err := profileOwner.Create(
 		context.Background(),
-		controlservices.AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}},
+		controlprofiles.AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}},
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
-		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
+		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{
+			Services: catalog, Profiles: profileOwner,
+		}},
 	).Handler()
 	recorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/", nil))
+
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d", recorder.Code)
 	}
+
 	body := recorder.Body.String()
+
 	if strings.Contains(body, "unpkg.com") || strings.Contains(body, "<style>") ||
 		!strings.Contains(body, "/assets/admin.css") ||
 		!strings.Contains(body, "Nextcloud") ||
@@ -433,24 +441,22 @@ func TestAdminPageUsesLocalAssets(t *testing.T) {
 	if strings.Contains(body, "Add LAN route") {
 		t.Fatal("admin page exposed a route action without the network module")
 	}
+
 	approve := httptest.NewRecorder()
+
 	handler.ServeHTTP(
 		approve,
 		httptest.NewRequest(http.MethodPost, "/admin/routes/route-1/approve", nil),
 	)
+
 	if approve.Code != http.StatusNotFound {
 		t.Fatalf("route approval without network module status=%d", approve.Code)
 	}
 }
 
 func TestAdminFormCreatesServiceThroughDomainCatalog(t *testing.T) {
-	catalog := controlservices.NewService(
-		memoryservices.NewRepository(),
-		time.Now,
-		controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
-			return true, nil
-		}),
-	)
+	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
@@ -469,7 +475,9 @@ func TestAdminFormCreatesServiceThroughDomainCatalog(t *testing.T) {
 	)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(recorder, request)
+
 	if recorder.Code != http.StatusSeeOther ||
 		recorder.Header().Get("Location") != "/admin/?notice=service-created" {
 		t.Fatalf(
@@ -479,7 +487,9 @@ func TestAdminFormCreatesServiceThroughDomainCatalog(t *testing.T) {
 			recorder.Body.String(),
 		)
 	}
+
 	items, err := catalog.List(context.Background())
+
 	if err != nil || len(items) != 1 || items[0].ID != "cloud" {
 		t.Fatalf("catalog items=%#v error=%v", items, err)
 	}
@@ -529,6 +539,7 @@ func TestAdminFormCreatesRouteThroughNetworkService(t *testing.T) {
 
 func TestAvailableServicesRequireDeviceCredentialAndProfileMembership(t *testing.T) {
 	deviceService := devices.NewService(memorydevices.NewRepository(), time.Now, nil)
+
 	token, err := deviceService.IssueEnrollmentToken(
 		context.Background(),
 		devices.RoleClient,
@@ -537,6 +548,7 @@ func TestAvailableServicesRequireDeviceCredentialAndProfileMembership(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	device, err := deviceService.Enroll(
 		context.Background(),
 		validEnrollmentRequest(t, token.Token, "phone"),
@@ -544,13 +556,12 @@ func TestAvailableServicesRequireDeviceCredentialAndProfileMembership(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := controlservices.NewService(
-		memoryservices.NewRepository(),
-		time.Now,
-		controlservices.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
-			return true, nil
-		}),
-	)
+
+	serviceStore := memoryservices.NewRepository()
+	catalog := controlservices.NewService(serviceStore, time.Now)
+	profileOwner := controlprofiles.NewService(memoryprofiles.NewRepository(serviceStore),
+		catalog, time.Now, func(context.Context, string) (bool, error) { return true, nil })
+
 	if _, err := catalog.Create(
 		context.Background(),
 		controlservices.Service{
@@ -562,9 +573,10 @@ func TestAvailableServicesRequireDeviceCredentialAndProfileMembership(t *testing
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := catalog.CreateProfile(
+
+	if _, err := profileOwner.Create(
 		context.Background(),
-		controlservices.AccessProfile{
+		controlprofiles.AccessProfile{
 			ID:         "family",
 			Name:       "Family",
 			DeviceIDs:  []string{device.ID},
@@ -573,16 +585,21 @@ func TestAvailableServicesRequireDeviceCredentialAndProfileMembership(t *testing
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	handler := newTestServer(
 		deviceService,
-		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
+		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{
+			Services: catalog, Profiles: profileOwner,
+		}},
 	).Handler()
 
 	unauthorized := httptest.NewRecorder()
+
 	handler.ServeHTTP(
 		unauthorized,
 		httptest.NewRequest(http.MethodGet, "/api/v1/services/available", nil),
 	)
+
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized status=%d", unauthorized.Code)
 	}
@@ -590,7 +607,9 @@ func TestAvailableServicesRequireDeviceCredentialAndProfileMembership(t *testing
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/services/available", nil)
 	request.Header.Set("Authorization", "Bearer "+device.Credential)
 	available := httptest.NewRecorder()
+
 	handler.ServeHTTP(available, request)
+
 	if available.Code != http.StatusOK ||
 		!strings.Contains(available.Body.String(), `"id":"cloud"`) {
 		t.Fatalf("available status=%d body=%s", available.Code, available.Body.String())

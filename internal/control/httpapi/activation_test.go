@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
+	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 

@@ -8,9 +8,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	workflowstorage "github.com/StasOkhrym/homeharbor/internal/app/control/storage"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	devicesstorage "github.com/StasOkhrym/homeharbor/internal/control/devices/storage"
+	workflowstorage "github.com/StasOkhrym/homeharbor/internal/control/transactions"
 )
 
 func TestPostgresRotationLocksDeviceBeforeCredential(t *testing.T) {

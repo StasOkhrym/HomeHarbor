@@ -9,9 +9,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 

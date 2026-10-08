@@ -12,8 +12,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/StasOkhrym/homeharbor/internal/acl"
-	workflowstorage "github.com/StasOkhrym/homeharbor/internal/app/control/storage"
-	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
 	auditstorage "github.com/StasOkhrym/homeharbor/internal/control/audit/storage"
 	"github.com/StasOkhrym/homeharbor/internal/control/coordination"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
@@ -26,13 +24,16 @@ import (
 	invitesstorage "github.com/StasOkhrym/homeharbor/internal/control/invites/storage"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	policystorage "github.com/StasOkhrym/homeharbor/internal/control/policy/storage"
+	"github.com/StasOkhrym/homeharbor/internal/control/profiles"
+	profilesstorage "github.com/StasOkhrym/homeharbor/internal/control/profiles/storage"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 	routesstorage "github.com/StasOkhrym/homeharbor/internal/control/routes/storage"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 	servicesstorage "github.com/StasOkhrym/homeharbor/internal/control/services/storage"
 	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
 	snapshotsstorage "github.com/StasOkhrym/homeharbor/internal/control/snapshots/storage"
-	recoveryworkflow "github.com/StasOkhrym/homeharbor/internal/control/workflows"
+	workflowstorage "github.com/StasOkhrym/homeharbor/internal/control/transactions"
+	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 	"github.com/StasOkhrym/homeharbor/internal/platform/events"
 	"github.com/StasOkhrym/homeharbor/internal/platform/redissecurity"
@@ -58,17 +59,18 @@ func buildHTTP(
 	)
 	routeService := controlroutes.NewService(routesstorage.New(pool), time.Now)
 	policyService := policy.NewService(policystorage.New(pool), acl.Compiler{})
-	serviceCatalog := controlservices.NewService(
-		servicesstorage.New(pool),
-		time.Now,
-		controlservices.WithDeviceActiveChecker(func(ctx context.Context, id string) (bool, error) {
+	serviceCatalog := controlservices.NewService(servicesstorage.New(pool), time.Now)
+	profileService := profiles.NewService(
+		profilesstorage.New(pool), serviceCatalog, time.Now,
+		func(ctx context.Context, id string) (bool, error) {
 			device, err := deviceService.Device(ctx, id)
 			if err != nil {
 				return false, err
 			}
 			return device.Status == devices.StatusActive, nil
-		}),
+		},
 	)
+
 	peerAuthorization := func(_ context.Context, source, destination devices.Device) bool {
 		return source.Status == devices.StatusActive &&
 			destination.Status == devices.StatusActive &&
@@ -114,7 +116,7 @@ func buildHTTP(
 	deps := httpapi.Dependencies{
 		Resources: httpapi.ResourceDependencies{
 			Devices: deviceService,
-			Recovery: recoveryworkflow.NewCredentialRecovery(
+			Recovery: workflows.NewCredentialRecovery(
 				deviceService,
 				sharedChallenges{store: securityState, timeout: cfg.Runtime.RedisTimeout},
 				cfg.Networking.NetworkID,
@@ -124,6 +126,7 @@ func buildHTTP(
 			Routes:   routeService,
 			Policy:   policyService,
 			Services: serviceCatalog,
+			Profiles: profileService,
 			Audit:    auditSink,
 		},
 		Browser: httpapi.BrowserDependencies{

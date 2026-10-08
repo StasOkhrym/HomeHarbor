@@ -33,12 +33,13 @@ ADAPTERS = {
         "identity",
         "invites",
         "policy",
+        "profiles",
         "routes",
         "services",
         "snapshots",
     )
 }
-ADAPTERS.add("app/control/storage")
+ADAPTERS.add("control/transactions")
 
 
 def test_urls(postgres_password, redis_password, postgres_port, redis_port):
@@ -115,35 +116,47 @@ def validate_events(stream):
         event = json.loads(line)
         if event.get("Output"):
             print(event["Output"], end="", flush=True)
+
         name, package = event.get("Test", ""), event.get("Package", "")
         if event.get("Action") == "skip" and name:
             skipped.append(f"{package}/{name}")
+
         if event.get("Action") != "pass" or not name or "/" in name:
             continue
+
         if name == "TestRedisRecoveryChallengeConsumedOnceAcrossReplicas" and package.endswith(
             "/control/workflows"
         ):
             passed.add("credential recovery Redis")
+
         if name == "TestPostgresRecoveredCredentialInvalidatesOldCredential" and package.endswith(
             "/control/devices/storage"
         ):
             passed.add("credential recovery SQL")
+
         if name == "TestPostgresCoordinationCrossReplicaRevoke" and package.endswith(
             "/control/coordination"
         ):
             passed.add("coordination cross-replica revoke")
-        if name.startswith("TestPostgres") and "/control/" in package:
+
+        if (
+            name.startswith("TestPostgres") or name == "TestProfileMembershipRollback"
+        ) and "/control/" in package:
             passed.add("PostgreSQL")
-            if package.endswith("/storage"):
+            if package.endswith("/storage") or package.endswith("/control/transactions"):
                 adapters.add(package.split("/internal/", 1)[-1])
+
         if name.startswith("TestRedis") and package.endswith("/platform/redissecurity"):
             passed.add("Redis")
+
         if name == "TestRedisSessionSharedTTLAndRevoke" and package.endswith(
             "/control/identity/redis"
         ):
             passed.add("Redis browser sessions")
+
         if "AdvisoryLock" in name and package.endswith("/migrations"):
             passed.add("migration advisory lock")
+
     if skipped:
         raise ValueError("Required integration tests skipped: " + ", ".join(skipped))
     if missing := REQUIRED - passed:
@@ -169,12 +182,12 @@ def contracts(env):
         "./internal/control/workflows",
         "./internal/control/coordination",
         "./internal/control/identity/redis",
-        "./internal/app/control/storage",
+        "./internal/control/transactions",
         "./internal/platform/events",
         "./internal/platform/redissecurity",
         "./migrations",
         "-run",
-        "Integration|Postgres|Redis|Contract|AdvisoryLock",
+        "Integration|Postgres|Redis|Contract|AdvisoryLock|ProfileMembershipRollback",
         "-count=1",
         "-timeout=120s",
     ]

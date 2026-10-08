@@ -27,6 +27,7 @@ func TestDomainModulesDoNotImportAdapters(t *testing.T) {
 		"routes",
 		"policy",
 		"services",
+		"profiles",
 		"invites",
 		"snapshots",
 		"audit",
@@ -100,7 +101,8 @@ func forbiddenDomainImport(path string) bool {
 		strings.HasPrefix(path, "github.com/jackc/pgx/") ||
 		strings.HasPrefix(path, "github.com/redis/go-redis/") ||
 		strings.HasPrefix(path, "github.com/go-chi/chi/") ||
-		strings.Contains(path, "/storage") || strings.Contains(path, "/httpapi")
+		strings.Contains(path, "/storage") || strings.Contains(path, "/httpapi") ||
+		strings.HasSuffix(path, "/control/transactions")
 }
 
 // Test helpers may depend on domains; runtime packages may not depend on test helpers.
@@ -155,7 +157,7 @@ func TestProductionPackagesDoNotImportTestutil(t *testing.T) {
 func TestDomainBoundaryRejectsNeutralStorageAdapters(t *testing.T) {
 	for _, path := range []string{
 		"github.com/StasOkhrym/homeharbor/internal/control/devices/storage",
-		"github.com/StasOkhrym/homeharbor/internal/app/control/storage",
+		"github.com/StasOkhrym/homeharbor/internal/control/transactions",
 	} {
 		if !forbiddenDomainImport(path) {
 			t.Errorf("domain boundary permits durable adapter %s", path)
@@ -164,7 +166,7 @@ func TestDomainBoundaryRejectsNeutralStorageAdapters(t *testing.T) {
 }
 
 func TestControlModulesDoNotUseDotImports(t *testing.T) {
-	for _, module := range []string{"identity", "devices", "routes", "policy", "services", "invites", "snapshots", "audit"} {
+	for _, module := range []string{"identity", "devices", "routes", "policy", "services", "profiles", "invites", "snapshots", "audit"} {
 		err := filepath.WalkDir(
 			filepath.Join("..", "control", module),
 			func(path string, entry os.DirEntry, err error) error {

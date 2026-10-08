@@ -34,7 +34,11 @@ class ChangeTests(unittest.TestCase):
                 {"fast", "integration", "network", "fuzz", "vulnerability"},
             ),
             (
-                ["internal/app/control/workflows/activation.go"],
+                ["internal/control/workflows/activation.go"],
+                {"fast", "integration", "network", "fuzz", "vulnerability"},
+            ),
+            (
+                ["internal/control/transactions/activation.go"],
                 {"fast", "integration", "network", "fuzz", "vulnerability"},
             ),
             (["internal/node/reconciler.go"], {"fast", "network", "fuzz", "vulnerability"}),
@@ -47,7 +51,8 @@ class ChangeTests(unittest.TestCase):
                 self.assertEqual({key for key, value in result.items() if value}, expected)
 
     def test_actual_workflow_path_runs_integration(self):
-        path = "internal/app/control/workflows/activation.go"
+        path = "internal/control/workflows/activation.go"
+
         self.assertTrue((Path(__file__).resolve().parents[2] / path).is_file())
         self.assertTrue(MODULE.classify([path], True, False)["integration"])
 

@@ -14,6 +14,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/control/profiles"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
@@ -47,7 +48,7 @@ type adminPageModel struct {
 	FieldErrors   map[string]string
 	Devices       adminCollection[devices.Device]
 	Services      adminCollection[controlservices.Service]
-	Profiles      adminCollection[controlservices.AccessProfile]
+	Profiles      adminCollection[profiles.AccessProfile]
 	Routes        adminCollection[controlroutes.Advertisement]
 	Audit         adminCollection[audit.Event]
 	Device        *devices.Device
@@ -187,7 +188,11 @@ func (s *Server) loadAdminPage(r *http.Request, page string) (adminPageModel, in
 	if s.services != nil &&
 		(page == "overview" || page == "setup" || page == "services" || page == "access" || page == "invites") {
 		model.Services = loadAdminCollection(ctx, "Services", s.services.List)
-		model.Profiles = loadAdminCollection(ctx, "Access profiles", s.services.Profiles)
+		if s.profiles != nil {
+			model.Profiles = loadAdminCollection(ctx, "Access profiles", s.profiles.List)
+		} else {
+			model.Profiles.Error = "Access profiles are not configured"
+		}
 	} else if s.services == nil {
 		model.Services.Error = "Services are not configured"
 		model.Profiles.Error = "Access profiles are not configured"

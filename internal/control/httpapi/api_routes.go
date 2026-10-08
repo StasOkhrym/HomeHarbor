@@ -39,6 +39,8 @@ func (s *Server) registerAdminAPI(api chi.Router) {
 		}
 		if s.services != nil {
 			admin.Get("/services", s.listServices)
+		}
+		if s.profiles != nil {
 			admin.Get("/access-profiles", s.listProfiles)
 		}
 	})
@@ -55,7 +57,7 @@ func (s *Server) registerAdminAPI(api chi.Router) {
 			admin.Get("/policy", s.latestPolicy)
 			admin.Put("/policy", s.replacePolicy)
 		}
-		if s.services != nil {
+		if s.profiles != nil {
 			admin.Get("/access-profiles", s.listProfiles)
 			admin.Post("/access-profiles", s.createProfile)
 		}

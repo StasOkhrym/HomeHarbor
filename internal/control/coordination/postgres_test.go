@@ -11,9 +11,9 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	workflowstorage "github.com/StasOkhrym/homeharbor/internal/app/control/storage"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	devicesstorage "github.com/StasOkhrym/homeharbor/internal/control/devices/storage"
+	workflowstorage "github.com/StasOkhrym/homeharbor/internal/control/transactions"
 	"github.com/StasOkhrym/homeharbor/internal/node"
 	"github.com/StasOkhrym/homeharbor/internal/testutil"
 )

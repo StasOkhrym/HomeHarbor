@@ -16,10 +16,12 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
+	controlprofiles "github.com/StasOkhrym/homeharbor/internal/control/profiles"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
 	memorypolicy "github.com/StasOkhrym/homeharbor/internal/testutil/control/policy"
+	memoryprofiles "github.com/StasOkhrym/homeharbor/internal/testutil/control/profiles"
 	memoryroutes "github.com/StasOkhrym/homeharbor/internal/testutil/control/routes"
 	memoryservices "github.com/StasOkhrym/homeharbor/internal/testutil/control/services"
 )
@@ -350,7 +352,11 @@ func TestAdminPolicyDiffIncludesRemovalAndModification(t *testing.T) {
 }
 
 func TestAdminProfileSelectionsPersistAfterError(t *testing.T) {
-	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
+	serviceStore := memoryservices.NewRepository()
+	catalog := controlservices.NewService(serviceStore, time.Now)
+	profileOwner := controlprofiles.NewService(
+		memoryprofiles.NewRepository(serviceStore), catalog, time.Now, nil,
+	)
 	for _, id := range []string{"photos", "cloud"} {
 		if _, err := catalog.Create(
 			context.Background(),
@@ -366,7 +372,9 @@ func TestAdminProfileSelectionsPersistAfterError(t *testing.T) {
 	}
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
-		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
+		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{
+			Services: catalog, Profiles: profileOwner,
+		}},
 	).Handler()
 	response := postAdminForm(
 		handler,

@@ -30,6 +30,7 @@ type ResourceDependencies struct {
 	Recovery            CredentialRecovery
 	Routes              RouteService
 	Policy              PolicyService
+	Profiles            ProfileService
 	Services            ServiceCatalog
 	Audit               AuditReader
 	Invites             InviteService
@@ -139,6 +140,7 @@ func NewServer(deps Dependencies) (*Server, error) {
 		recovery:            deps.Resources.Recovery,
 		routes:              deps.Resources.Routes,
 		policy:              deps.Resources.Policy,
+		profiles:            deps.Resources.Profiles,
 		services:            deps.Resources.Services,
 		audit:               deps.Resources.Audit,
 		invites:             deps.Resources.Invites,

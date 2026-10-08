@@ -15,9 +15,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
-	workflowstorage "github.com/StasOkhrym/homeharbor/internal/app/control/storage"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	devicesstorage "github.com/StasOkhrym/homeharbor/internal/control/devices/storage"
+	workflowstorage "github.com/StasOkhrym/homeharbor/internal/control/transactions"
 	"github.com/StasOkhrym/homeharbor/migrations"
 )
 

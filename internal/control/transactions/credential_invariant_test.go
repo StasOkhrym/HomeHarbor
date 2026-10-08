@@ -1,4 +1,4 @@
-package storage_test
+package transactions_test
 
 import (
 	"context"
@@ -16,17 +16,21 @@ import (
 func TestPostgresMigrationRefusesDuplicatesWithoutDeletingCredentialHistory(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
+
 	if _, err := f.activation.ApproveSigned(ctx, f.approval); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := f.pool.Exec(
 		ctx,
 		`DROP INDEX device_credentials_one_active_per_device`,
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	for i := byte(1); i <= 2; i++ {
 		hash := [32]byte{i}
+
 		if _, err := f.pool.Exec(
 			ctx,
 			`INSERT INTO device_credentials(device_id,credential_hash,expires_at) VALUES('linux',$1,$2)`,
@@ -36,14 +40,18 @@ func TestPostgresMigrationRefusesDuplicatesWithoutDeletingCredentialHistory(t *t
 			t.Fatal(err)
 		}
 	}
-	sql, err := os.ReadFile("../../../../migrations/000011_active_device_credential.up.sql")
+
+	sql, err := os.ReadFile("../../../migrations/000011_active_device_credential.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := f.pool.Exec(ctx, string(sql)); err == nil {
 		t.Fatal("multiple active credentials permitted")
 	}
+
 	var count int
+
 	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM device_credentials WHERE revoked_at IS NULL`).
 		Scan(&count); err != nil ||
 		count != 2 {

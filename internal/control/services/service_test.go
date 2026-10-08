@@ -2,7 +2,6 @@ package services_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -10,12 +9,13 @@ import (
 	memorystore "github.com/StasOkhrym/homeharbor/internal/testutil/control/services"
 )
 
-func TestServiceRequiresHTTPSAndSupportsProfiles(t *testing.T) {
+func TestServiceRequiresHTTPS(t *testing.T) {
 	store := memorystore.NewRepository()
 	service := domainpkg.NewService(
 		store,
 		func() time.Time { return time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC) },
 	)
+
 	if _, err := service.Create(
 		context.Background(),
 		domainpkg.Service{
@@ -27,6 +27,7 @@ func TestServiceRequiresHTTPSAndSupportsProfiles(t *testing.T) {
 	); err == nil {
 		t.Fatal("insecure service URL accepted")
 	}
+
 	created, err := service.Create(
 		context.Background(),
 		domainpkg.Service{
@@ -39,18 +40,9 @@ func TestServiceRequiresHTTPSAndSupportsProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if created.CreatedAt.IsZero() {
 		t.Fatal("created timestamp is empty")
-	}
-	profile, err := service.CreateProfile(
-		context.Background(),
-		domainpkg.AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"cloud"}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(profile.ServiceIDs) != 1 || profile.ServiceIDs[0] != "cloud" {
-		t.Fatalf("profile=%#v", profile)
 	}
 }
 
@@ -69,16 +61,6 @@ func TestServiceRejectsDuplicateIDs(t *testing.T) {
 
 	if _, err := service.Create(context.Background(), item); err == nil {
 		t.Fatal("duplicate service accepted")
-	}
-}
-
-func TestProfileRejectsUnknownService(t *testing.T) {
-	service := domainpkg.NewService(memorystore.NewRepository(), time.Now)
-	if _, err := service.CreateProfile(
-		context.Background(),
-		domainpkg.AccessProfile{ID: "family", Name: "Family", ServiceIDs: []string{"missing"}},
-	); err == nil {
-		t.Fatal("profile referenced unknown service")
 	}
 }
 
@@ -136,104 +118,5 @@ func TestServiceAllowsExplicitNativeDeepLink(t *testing.T) {
 
 	if item.NativeURL != "nextcloud://cloud.example" {
 		t.Fatalf("native URL=%q", item.NativeURL)
-	}
-}
-
-func TestProfileRequiresActiveDevicesWhenDeviceValidationIsConfigured(t *testing.T) {
-	service := domainpkg.NewService(
-		memorystore.NewRepository(),
-		time.Now,
-		domainpkg.WithDeviceActiveChecker(func(_ context.Context, id string) (bool, error) {
-			return id == "active-phone", nil
-		}),
-	)
-	if _, err := service.Create(
-		context.Background(),
-		domainpkg.Service{
-			ID:   "cloud",
-			Name: "Cloud",
-			Kind: domainpkg.KindWeb,
-			URL:  "https://cloud.example",
-		},
-	); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.CreateProfile(
-		context.Background(),
-		domainpkg.AccessProfile{
-			ID:         "family",
-			Name:       "Family",
-			ServiceIDs: []string{"cloud"},
-			DeviceIDs:  []string{"revoked-phone"},
-		},
-	); !errors.Is(
-		err,
-		domainpkg.ErrDeviceNotAllowed,
-	) {
-		t.Fatalf("revoked device error=%v", err)
-	}
-	profile, err := service.CreateProfile(
-		context.Background(),
-		domainpkg.AccessProfile{
-			ID:         "family",
-			Name:       "Family",
-			ServiceIDs: []string{"cloud"},
-			DeviceIDs:  []string{"active-phone"},
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(profile.DeviceIDs) != 1 || profile.DeviceIDs[0] != "active-phone" {
-		t.Fatalf("profile=%#v", profile)
-	}
-}
-
-func TestListForDeviceIsDefaultDenyAndUnionsExplicitProfiles(t *testing.T) {
-	store := memorystore.NewRepository()
-	service := domainpkg.NewService(
-		store,
-		time.Now,
-		domainpkg.WithDeviceActiveChecker(func(_ context.Context, _ string) (bool, error) {
-			return true, nil
-		}),
-	)
-	for _, item := range []domainpkg.Service{
-		{ID: "cloud", Name: "Cloud", Kind: domainpkg.KindWeb, URL: "https://cloud.example"},
-		{ID: "ssh", Name: "SSH", Kind: domainpkg.KindNative, URL: "https://ssh.example"},
-	} {
-		if _, err := service.Create(context.Background(), item); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := service.CreateProfile(
-		context.Background(),
-		domainpkg.AccessProfile{
-			ID:         "family",
-			Name:       "Family",
-			DeviceIDs:  []string{"phone"},
-			ServiceIDs: []string{"cloud"},
-		},
-	); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.CreateProfile(
-		context.Background(),
-		domainpkg.AccessProfile{
-			ID:         "admins",
-			Name:       "Admins",
-			DeviceIDs:  []string{"laptop"},
-			ServiceIDs: []string{"ssh"},
-		},
-	); err != nil {
-		t.Fatal(err)
-	}
-	phone, err := service.ListForDevice(context.Background(), "phone")
-	if err != nil || len(phone) != 1 || phone[0].ID != "cloud" {
-		t.Fatalf("phone services=%#v err=%v", phone, err)
-	}
-	unknown, err := service.ListForDevice(context.Background(), "unknown")
-	if err != nil || len(unknown) != 0 {
-		t.Fatalf("unknown services=%#v err=%v", unknown, err)
 	}
 }

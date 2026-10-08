@@ -14,10 +14,12 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
+	controlprofiles "github.com/StasOkhrym/homeharbor/internal/control/profiles"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
 	memorypolicy "github.com/StasOkhrym/homeharbor/internal/testutil/control/policy"
+	memoryprofiles "github.com/StasOkhrym/homeharbor/internal/testutil/control/profiles"
 	memoryroutes "github.com/StasOkhrym/homeharbor/internal/testutil/control/routes"
 	memoryservices "github.com/StasOkhrym/homeharbor/internal/testutil/control/services"
 )
@@ -39,7 +41,11 @@ func TestRecoveryFormCannotSubmitSecretsInURL(t *testing.T) {
 }
 
 func TestProfileCheckboxIDsAreOpaque(t *testing.T) {
-	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
+	serviceStore := memoryservices.NewRepository()
+	catalog := controlservices.NewService(serviceStore, time.Now)
+	profileOwner := controlprofiles.NewService(
+		memoryprofiles.NewRepository(serviceStore), catalog, time.Now, nil,
+	)
 	for _, id := range []string{"photos,admin", "photos", "admin"} {
 		if _, err := catalog.Create(context.Background(), controlservices.Service{
 			ID: id, Name: id, Kind: controlservices.KindWeb, URL: "https://photos.home.arpa",
@@ -47,18 +53,23 @@ func TestProfileCheckboxIDsAreOpaque(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
-		Dependencies{Resources: ResourceDependencies{Services: catalog}},
+		Dependencies{Resources: ResourceDependencies{Services: catalog, Profiles: profileOwner}},
 	).Handler()
+
 	response := postAdminForm(handler, "/admin/access-profiles", url.Values{
 		"name": {"Family"}, "service_ids": {"photos,admin"},
 	})
-	profiles, err := catalog.Profiles(context.Background())
+
+	profiles, err := profileOwner.List(context.Background())
+
 	if response.Code != http.StatusSeeOther || err != nil || len(profiles) != 1 {
 		t.Fatalf("profile creation: status=%d profiles=%v err=%v", response.Code, profiles, err)
 	}
+
 	if ids := profiles[0].ServiceIDs; len(ids) != 1 || ids[0] != "photos,admin" {
 		t.Fatalf("checkbox selection changed memberships: %v", ids)
 	}
@@ -131,12 +142,18 @@ func TestMalformedURLNeverRetainsCredentials(t *testing.T) {
 }
 
 func TestPolicyErrorKeepsUnrelatedProfileID(t *testing.T) {
+	serviceStore := memoryservices.NewRepository()
+	catalog := controlservices.NewService(serviceStore, time.Now)
+	profileOwner := controlprofiles.NewService(
+		memoryprofiles.NewRepository(serviceStore), catalog, time.Now, nil,
+	)
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{
-				Services: controlservices.NewService(memoryservices.NewRepository(), time.Now),
+				Services: catalog,
+				Profiles: profileOwner,
 				Policy:   policy.NewService(memorypolicy.NewRepository(), acl.Compiler{}),
 			},
 		},

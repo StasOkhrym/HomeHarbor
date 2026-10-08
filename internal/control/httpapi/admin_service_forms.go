@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/StasOkhrym/homeharbor/internal/control/profiles"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 )
 
@@ -78,7 +79,7 @@ func (s *Server) createServiceForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createProfileForm(w http.ResponseWriter, r *http.Request) {
-	if s.services == nil {
+	if s.profiles == nil {
 		s.adminFormError(
 			w,
 			r,
@@ -111,20 +112,20 @@ func (s *Server) createProfileForm(w http.ResponseWriter, r *http.Request) {
 		s.adminFormError(w, r, "access", status, "id", message)
 		return
 	}
-	profile := controlservices.AccessProfile{
+	profile := profiles.AccessProfile{
 		ID:         id,
 		Name:       strings.TrimSpace(r.FormValue("name")),
 		DeviceIDs:  formSelections(r, "device_ids"),
 		ServiceIDs: serviceIDs,
 	}
-	if _, err = s.services.CreateProfile(r.Context(), profile); err != nil {
+	if _, err = s.profiles.Create(r.Context(), profile); err != nil {
 		status, field, message := http.StatusServiceUnavailable, "form", "The profile could not be saved. Try again shortly."
 		switch {
-		case errors.Is(err, controlservices.ErrDuplicateID):
+		case errors.Is(err, profiles.ErrDuplicateID):
 			status, field, message = http.StatusConflict, "id", "This profile ID already exists. Check the profiles before submitting again."
-		case errors.Is(err, controlservices.ErrServiceNotFound):
+		case errors.Is(err, profiles.ErrServiceNotFound):
 			status, field, message = http.StatusBadRequest, "service_ids", "A selected service is no longer available. Review your selection."
-		case errors.Is(err, controlservices.ErrDeviceNotAllowed):
+		case errors.Is(err, profiles.ErrDeviceNotAllowed):
 			status, field, message = http.StatusBadRequest, "device_ids", "Choose only active registered devices."
 		}
 		s.adminFormError(w, r, "access", status, field, message)

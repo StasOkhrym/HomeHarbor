@@ -103,7 +103,16 @@ class ToolingTests(unittest.TestCase):
                 "Test": "TestConcurrentUpSerializesWithAdvisoryLock",
             },
         ]
-        for module in ("audit", "identity", "invites", "policy", "routes", "services", "snapshots"):
+        for module in (
+            "audit",
+            "identity",
+            "invites",
+            "policy",
+            "profiles",
+            "routes",
+            "services",
+            "snapshots",
+        ):
             events.append(
                 {
                     "Action": "pass",
@@ -114,7 +123,7 @@ class ToolingTests(unittest.TestCase):
         events.append(
             {
                 "Action": "pass",
-                "Package": "example/internal/app/control/storage",
+                "Package": "example/internal/control/transactions",
                 "Test": "TestPostgresActivation",
             }
         )

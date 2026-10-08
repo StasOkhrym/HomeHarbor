@@ -1,5 +1,5 @@
-// Package postgres provides use-case-specific PostgreSQL transaction adapters.
-package storage
+// Package transactions provides use-case-specific PostgreSQL transaction adapters.
+package transactions
 
 import (
 	"context"
@@ -8,11 +8,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	devicepg "github.com/StasOkhrym/homeharbor/internal/control/devices/storage"
 	invitepg "github.com/StasOkhrym/homeharbor/internal/control/invites/storage"
-	profilepg "github.com/StasOkhrym/homeharbor/internal/control/services/storage"
+	profilepg "github.com/StasOkhrym/homeharbor/internal/control/profiles/storage"
+	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
 )
 
 type ActivationUnitOfWork struct{ pool *pgxpool.Pool }

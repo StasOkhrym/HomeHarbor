@@ -12,6 +12,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
+	"github.com/StasOkhrym/homeharbor/internal/control/profiles"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
@@ -56,6 +57,7 @@ type Server struct {
 	apiLimiter          *RateLimiter
 	authLimiter         *RateLimiter
 	deviceLimiter       *RateLimiter
+	profiles            ProfileService
 	services            ServiceCatalog
 	audit               AuditReader
 	invites             InviteService
@@ -116,11 +118,11 @@ type ServiceCatalog interface {
 	Create(context.Context, controlservices.Service) (controlservices.Service, error)
 	List(context.Context) ([]controlservices.Service, error)
 	ListForDevice(context.Context, string) ([]controlservices.Service, error)
-	CreateProfile(
-		context.Context,
-		controlservices.AccessProfile,
-	) (controlservices.AccessProfile, error)
-	Profiles(context.Context) ([]controlservices.AccessProfile, error)
+}
+
+type ProfileService interface {
+	Create(context.Context, profiles.AccessProfile) (profiles.AccessProfile, error)
+	List(context.Context) ([]profiles.AccessProfile, error)
 }
 
 // InviteService accepts a signed device proof without exposing the companion's

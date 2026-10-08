@@ -26,12 +26,15 @@ PROTECTED = (
             "devices",
             "routes",
             "policy",
+            "profiles",
             "services",
             "invites",
             "snapshots",
             "coordination",
             "audit",
             "httpapi",
+            "transactions",
+            "workflows",
         )
     ),
 )
@@ -63,7 +66,7 @@ def classify(paths: list[str], base_available: bool, full: bool) -> dict[str, bo
             or migration
             or "/storage/" in path
             or "/redis" in path
-            or path.startswith("internal/app/control/workflows/")
+            or path.startswith(("internal/control/workflows/", "internal/control/transactions/"))
         ):
             enabled.add("integration")
         if compose:

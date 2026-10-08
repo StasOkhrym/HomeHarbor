@@ -1,4 +1,4 @@
-package storage_test
+package transactions_test
 
 import (
 	"context"
@@ -22,12 +22,12 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
-	workflowpg "github.com/StasOkhrym/homeharbor/internal/app/control/storage"
-	"github.com/StasOkhrym/homeharbor/internal/app/control/workflows"
 	devicepg "github.com/StasOkhrym/homeharbor/internal/control/devices/storage"
 	"github.com/StasOkhrym/homeharbor/internal/control/httpapi"
 	"github.com/StasOkhrym/homeharbor/internal/control/invites"
 	invitepg "github.com/StasOkhrym/homeharbor/internal/control/invites/storage"
+	workflowpg "github.com/StasOkhrym/homeharbor/internal/control/transactions"
+	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
 	"github.com/StasOkhrym/homeharbor/internal/node"
 	"github.com/StasOkhrym/homeharbor/internal/platform/redissecurity"
