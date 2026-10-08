@@ -30,6 +30,9 @@ class ToolingTests(unittest.TestCase):
         (self.bin / "python3").write_text('#!/bin/sh\nexec "' + sys.executable + '" "$@"\n')
         (self.bin / "python3").chmod(0o755)
         self.env = {**os.environ, "PATH": f"{self.bin}:/usr/bin:/bin"}
+        # Fixtures own their fake interpreter. An inherited Make PYTHON value
+        # would bypass it and could start the real test suite recursively.
+        self.env.pop("PYTHON", None)
         for key in (
             "FULL",
             "TEST_DATABASE_URL",
@@ -626,6 +629,48 @@ exit 94
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.root / "node-calls").is_file(), "make test omitted browser tests")
+
+    def test_inherited_python_does_not_escape_fixture(self):
+        sentinel = self.root / "inherited-python"
+        counter = self.root / "inherited-python-calls"
+        sentinel.write_text('#!/bin/sh\nprintf x >> "$SENTINEL_FILE"\nexit 71\n')
+        sentinel.chmod(0o755)
+        # The child runs a real fixture test. Its fake tools must win over a
+        # PYTHON value inherited from the developer's outer shell.
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "unittest",
+                "scripts.tests.test_tooling.ToolingTests.test_make_test_runs_browser_tests",
+            ],
+            cwd=ROOT,
+            env={**os.environ, "PYTHON": str(sentinel), "SENTINEL_FILE": str(counter)},
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(counter.exists(), "fixture launched inherited PYTHON")
+
+    def test_explicit_python_override_runs_once(self):
+        sentinel = self.root / "explicit-python"
+        counter = self.root / "explicit-python-calls"
+        sentinel.write_text('#!/bin/sh\nprintf x >> "$SENTINEL_FILE"\nexit 0\n')
+        sentinel.chmod(0o755)
+        self.cli("go")
+        self.cli("node")
+        result = subprocess.run(
+            ["/usr/bin/make", "-f", str(self.root / "Makefile"), f"PYTHON={sentinel}", "test"],
+            cwd=self.bin,
+            env={**self.env, "SENTINEL_FILE": str(counter)},
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(counter.read_text(), "x", "explicit override should run exactly once")
 
     def test_dev_up_does_not_require_production_checks(self):
         self.cli("id", 'case "$1" in -u|-g) printf "501\\n" ;; esac\n')
