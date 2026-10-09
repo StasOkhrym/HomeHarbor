@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +17,35 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 )
+
+type failingAuthAuditor struct{}
+
+func (failingAuthAuditor) RecordIdentity(context.Context, string, bool) error {
+	return errors.New("audit sink unavailable")
+}
+
+func TestBrowserAuthUsesInjectedLoggerForFailedAudit(t *testing.T) {
+	var logs bytes.Buffer
+	auth, err := NewBrowserAuth(BrowserAuthConfig{
+		Origin:     "https://tunnel.example.com",
+		SigningKey: bytes.Repeat([]byte("k"), 32),
+		SessionTTL: time.Hour,
+		Auditor:    failingAuthAuditor{},
+		Logger:     slog.New(slog.NewJSONHandler(&logs, nil)),
+	}, fakePasskeys{}, &fakeSessions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	if authorized, err := auth.IsAdmin(request.Context(), request); authorized || err != nil {
+		t.Fatalf("missing session authorized=%v err=%v", authorized, err)
+	}
+	if output := logs.String(); !strings.Contains(output, `"msg":"persist identity audit event"`) ||
+		!strings.Contains(output, `"action":"admin.auth"`) ||
+		!strings.Contains(output, "audit sink unavailable") {
+		t.Fatalf("failed audit was absent from injected logger: %q", output)
+	}
+}
 
 type fakeSessions struct {
 	session  identity.IssuedSession

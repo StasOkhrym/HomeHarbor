@@ -52,7 +52,8 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
       target: control
-    command: ["-config", "/etc/homeharbor/control.toml"]
+    command: ["--config", "/etc/homeharbor/control.toml"]
+    stop_grace_period: 135s
     configs:
       - source: control_config
         target: /etc/homeharbor/control.toml

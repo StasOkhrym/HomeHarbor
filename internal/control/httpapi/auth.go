@@ -50,6 +50,7 @@ type BrowserAuthConfig struct {
 	SessionTTL time.Duration
 	Auditor    AuthAuditor
 	SetupState PasskeyState
+	Logger     *slog.Logger
 }
 
 // PasskeyState reads durable setup state without starting a WebAuthn ceremony.
@@ -72,6 +73,7 @@ type BrowserAuth struct {
 	sessions   AdminSessions
 	auditor    AuthAuditor
 	setupState PasskeyState
+	logger     *slog.Logger
 }
 
 // NewBrowserAuth rejects weak signing material before serving any auth route.
@@ -89,6 +91,10 @@ func NewBrowserAuth(
 	if config.Origin == "" {
 		return nil, errors.New("auth origin is required")
 	}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &BrowserAuth{
 		origin:     strings.TrimSuffix(config.Origin, "/"),
 		signingKey: append([]byte(nil), config.SigningKey...),
@@ -97,6 +103,7 @@ func NewBrowserAuth(
 		sessions:   sessions,
 		auditor:    config.Auditor,
 		setupState: config.SetupState,
+		logger:     logger,
 	}, nil
 }
 
@@ -246,7 +253,7 @@ func (a *BrowserAuth) loginPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	if err := loginTemplate.Execute(w, model); err != nil {
-		slog.ErrorContext(r.Context(), "render login page", "error", err)
+		a.logger.ErrorContext(r.Context(), "render login page", "error", err)
 	}
 }
 
@@ -408,7 +415,9 @@ func (a *BrowserAuth) audit(ctx context.Context, action string, success bool) {
 		// Authentication availability must not depend on the audit sink, but a
 		// failed durable write remains visible to operators in structured logs.
 		if err := a.auditor.RecordIdentity(ctx, action, success); err != nil {
-			slog.ErrorContext(ctx, "persist identity audit event", "action", action, "error", err)
+			a.logger.ErrorContext(
+				ctx, "persist identity audit event", "action", action, "error", err,
+			)
 		}
 	}
 }

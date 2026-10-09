@@ -108,6 +108,7 @@ func buildHTTP(
 		SessionTTL: cfg.Auth.SessionDuration(),
 		Auditor:    events.NewIdentityAuditor(auditSink, time.Now),
 		SetupState: passkeyService,
+		Logger:     logger,
 	}, passkeyService, identityService)
 	if err != nil {
 		return nil, nil, nil, errors.Join(errors.New("configure browser authentication"), err)

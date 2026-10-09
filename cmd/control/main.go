@@ -2,36 +2,22 @@ package main
 
 import (
 	"context"
-	"flag"
-	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
+	"time"
 
-	controlapp "github.com/StasOkhrym/homeharbor/internal/app/control"
-	"github.com/StasOkhrym/homeharbor/internal/platform/config"
+	controlcli "github.com/StasOkhrym/homeharbor/internal/cli/control"
+	"github.com/StasOkhrym/homeharbor/internal/cli/host"
 )
 
-func main() {
-	configPath := flag.String("config", "config/control.toml", "control configuration path")
-	flag.Parse()
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
-	cfg, err := config.LoadControl(config.Sources{File: *configPath})
-	if err != nil {
-		logger.Error("load config", "error", err)
-		os.Exit(1)
-	}
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-	app, err := controlapp.New(ctx, cfg, logger)
-	if err != nil {
-		logger.Error("create control runtime", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("control listening", "address", cfg.Server.ListenAddress)
-	if err = app.Run(ctx); err != nil {
-		logger.Error("serve control", "error", err)
-		os.Exit(1)
-	}
+// Allow the longest valid runtime shutdown and cleanup to finish before the
+// signal host forces an unresponsive control process to exit.
+const controlDrainTimeout = 130 * time.Second
+
+func main() { os.Exit(run()) }
+
+func run() int {
+	ctx, stop := host.SignalContext(context.Background(), controlDrainTimeout)
+	defer stop()
+
+	return host.Execute(ctx, os.Args[1:], os.Stdout, os.Stderr, controlcli.NewCommand())
 }
