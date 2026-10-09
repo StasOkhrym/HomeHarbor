@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -78,36 +79,77 @@ var envBindings = map[string]string{
 	"coordination.url":                  "HOMEHARBOR_NODE_COORDINATION_URL",
 }
 
+// The relay process has a different schema from control's relay section.
+// Keep its legacy HOMEHARBOR_RELAY_* variables bound to that role only.
+var relayEnvBindings = map[string]string{
+	"server.listen_address":     "HOMEHARBOR_RELAY_LISTEN_ADDRESS",
+	"server.udp_listen_address": "HOMEHARBOR_RELAY_UDP_LISTEN_ADDRESS",
+	"server.udp_port_min":       "HOMEHARBOR_RELAY_UDP_PORT_MIN",
+	"server.udp_port_max":       "HOMEHARBOR_RELAY_UDP_PORT_MAX",
+	"server.udp_advertise_host": "HOMEHARBOR_RELAY_UDP_ADVERTISE_HOST",
+	"security.ticket_key":       "HOMEHARBOR_RELAY_TICKET_KEY",
+	"security.ticket_key_file":  "HOMEHARBOR_RELAY_TICKET_KEY_FILE",
+	"security.tls_cert_file":    "HOMEHARBOR_RELAY_TLS_CERT_FILE",
+	"security.tls_key_file":     "HOMEHARBOR_RELAY_TLS_KEY_FILE",
+}
+
 func applySources(target any, source Sources) (presence, presence, error) {
+	return applySourcesWithBindings(target, source, envBindings)
+}
+
+func applySourcesWithBindings(
+	target any,
+	source Sources,
+	bindings map[string]string,
+) (presence, presence, error) {
 	envKeys, flagKeys := presence{}, presence{}
 	lookup := source.Env
 	if lookup == nil {
 		lookup = os.LookupEnv
 	}
+
 	fields := fieldPaths(reflect.ValueOf(target).Elem(), "")
-	for key, name := range envBindings {
+	for _, key := range sortedSourceKeys(bindings) {
+		name := bindings[key]
 		field, allowed := fields[key]
 		if !allowed {
 			continue
 		}
+
 		if value, ok := lookup(name); ok {
 			if err := setScalar(field, value); err != nil {
 				return nil, nil, fmt.Errorf("invalid environment value for %s", key)
 			}
+
 			envKeys[key] = true
 		}
 	}
-	for key, value := range source.Flags {
+
+	for _, key := range sortedSourceKeys(source.Flags) {
+		value := source.Flags[key]
 		field, ok := fields[key]
 		if !ok {
 			return nil, nil, fmt.Errorf("unknown config flag: %s", key)
 		}
+
 		if err := setScalar(field, value); err != nil {
 			return nil, nil, fmt.Errorf("invalid flag value for %s", key)
 		}
+
 		flagKeys[key] = true
 	}
+
 	return envKeys, flagKeys, nil
+}
+
+func sortedSourceKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+	return keys
 }
 
 func fieldPaths(value reflect.Value, prefix string) map[string]reflect.Value {

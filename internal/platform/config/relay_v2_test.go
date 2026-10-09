@@ -22,7 +22,7 @@ tls_key_file = "/run/secrets/relay_tls_key"
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadRelayServer(path)
+	cfg, err := LoadRelayServer(Sources{File: path})
 	if err != nil {
 		t.Fatal(err)
 	}

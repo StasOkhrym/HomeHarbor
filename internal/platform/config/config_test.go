@@ -8,6 +8,7 @@ import (
 
 func TestHomeHarborEnvironmentOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relay.toml")
+
 	if err := os.WriteFile(
 		path,
 		[]byte("[server]\nlisten_address = '127.0.0.1:0'\n"),
@@ -15,12 +16,15 @@ func TestHomeHarborEnvironmentOverrides(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	t.Setenv("HOMEHARBOR_RELAY_TICKET_KEY", "01234567890123456789012345678901")
 	t.Setenv("HOMEHARBOR_RELAY_UDP_LISTEN_ADDRESS", "127.0.0.1:55000")
-	cfg, err := LoadRelayServer(path)
+
+	cfg, err := LoadRelayServer(Sources{File: path})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if cfg.Server.UDPListenAddress != "127.0.0.1:55000" || cfg.Security.TicketKey == "" {
 		t.Fatal("HomeHarbor environment was ignored")
 	}
@@ -207,6 +211,7 @@ func TestLoadControlRejectsMissingRequiredValues(t *testing.T) {
 
 func TestLoadRelayServerEnvironmentSecretOverridesMissingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relay.toml")
+
 	if err := os.WriteFile(
 		path,
 		[]byte(
@@ -216,12 +221,15 @@ func TestLoadRelayServerEnvironmentSecretOverridesMissingFile(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	t.Setenv("HOMEHARBOR_RELAY_TICKET_KEY", "01234567890123456789012345678901")
 	t.Setenv("HOMEHARBOR_RELAY_UDP_LISTEN_ADDRESS", "127.0.0.1:0")
-	cfg, err := LoadRelayServer(path)
+
+	cfg, err := LoadRelayServer(Sources{File: path})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if cfg.Security.TicketKey != "01234567890123456789012345678901" ||
 		cfg.Server.UDPListenAddress != "127.0.0.1:0" {
 		t.Fatalf("config=%#v", cfg)

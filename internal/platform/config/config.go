@@ -5,12 +5,9 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/BurntSushi/toml"
 )
 
 type Control struct {
@@ -168,50 +165,63 @@ func LoadAdmin(path string) (Admin, error) {
 	return cfg, nil
 }
 
-func LoadRelayServer(path string) (RelayServer, error) {
+func LoadRelayServer(source Sources) (RelayServer, error) {
 	cfg := RelayServer{Runtime: DefaultRuntime(true)}
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
-		return cfg, fmt.Errorf("decode relay config: %w", err)
+	cfg.Server.UDPListenAddress = ":51820"
+
+	fileKeys, err := readFileStrict(source.File, &cfg)
+	if err != nil {
+		return RelayServer{}, fmt.Errorf("decode relay config: %w", err)
 	}
-	if value := os.Getenv("HOMEHARBOR_RELAY_LISTEN_ADDRESS"); value != "" {
-		cfg.Server.ListenAddress = value
+
+	envKeys, flagKeys, err := applySourcesWithBindings(&cfg, source, relayEnvBindings)
+	if err != nil {
+		return RelayServer{}, err
 	}
-	if value := os.Getenv("HOMEHARBOR_RELAY_UDP_LISTEN_ADDRESS"); value != "" {
-		cfg.Server.UDPListenAddress = value
+
+	if err := selectedSecret(
+		&cfg.Security.TicketKey,
+		cfg.Security.TicketKeyFile,
+		"security.ticket_key",
+		"security.ticket_key_file",
+		fileKeys,
+		envKeys,
+		flagKeys,
+	); err != nil {
+		return RelayServer{}, err
 	}
-	if value := os.Getenv("HOMEHARBOR_RELAY_TICKET_KEY"); value != "" {
-		cfg.Security.TicketKey = value
+
+	if strings.TrimSpace(cfg.Server.UDPListenAddress) == "" {
+		return RelayServer{}, errors.New("relay udp_listen_address is required")
 	}
-	if cfg.Security.TicketKey == "" && cfg.Security.TicketKeyFile != "" {
-		value, err := os.ReadFile(cfg.Security.TicketKeyFile)
-		if err != nil {
-			return cfg, fmt.Errorf("read relay ticket key: %w", err)
-		}
-		cfg.Security.TicketKey = strings.TrimSpace(string(value))
-	}
-	if cfg.Server.UDPListenAddress == "" {
-		cfg.Server.UDPListenAddress = ":51820"
-	}
+
 	if _, err := net.ResolveUDPAddr("udp", cfg.Server.UDPListenAddress); err != nil {
-		return cfg, fmt.Errorf("invalid relay udp_listen_address: %w", err)
+		return RelayServer{}, fmt.Errorf("invalid relay udp_listen_address: %w", err)
 	}
+
 	if (cfg.Security.TLSCertFile == "") != (cfg.Security.TLSKeyFile == "") {
-		return cfg, errors.New("relay TLS certificate and key files must be configured together")
+		return RelayServer{}, errors.New(
+			"relay TLS certificate and key files must be configured together",
+		)
 	}
+
 	if cfg.Server.UDPPortMin != 0 || cfg.Server.UDPPortMax != 0 {
 		if cfg.Server.UDPPortMin < 1 || cfg.Server.UDPPortMax < cfg.Server.UDPPortMin ||
 			cfg.Server.UDPPortMax > 65535 {
-			return cfg, errors.New("relay UDP port range must be ordered within 1..65535")
+			return RelayServer{}, errors.New("relay UDP port range must be ordered within 1..65535")
 		}
 	}
+
 	if cfg.Server.ListenAddress == "" || len(cfg.Security.TicketKey) < 32 {
-		return cfg, errors.New(
+		return RelayServer{}, errors.New(
 			"relay listen_address and a ticket key of at least 32 bytes are required",
 		)
 	}
+
 	if err := cfg.Runtime.Validate(); err != nil {
-		return cfg, err
+		return RelayServer{}, err
 	}
+
 	return cfg, nil
 }
 
