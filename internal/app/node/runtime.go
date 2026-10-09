@@ -241,10 +241,12 @@ func prepareRelay(
 	candidates *node.CandidateSet,
 ) (lifecycle.Component, error) {
 	if cfg.Relay.SessionID == "" || cfg.Relay.DestinationDevice == "" {
-		return nil, errors.New("-relay-session and -relay-destination are required for relay mode")
+		return nil, errors.New(
+			"--relay-session and --relay-destination are required for relay mode",
+		)
 	}
 	if cfg.Relay.WebSocketURL == "" && cfg.Relay.UDPAddress == "" && cfg.Relay.Ticket != "" {
-		return nil, errors.New("-relay or -relay-udp is required when -relay-ticket is supplied")
+		return nil, errors.New("--relay or --relay-udp is required when --relay-ticket is supplied")
 	}
 	bridge := node.RelayBridgeConfig{
 		RelayURL:            cfg.Relay.WebSocketURL,
