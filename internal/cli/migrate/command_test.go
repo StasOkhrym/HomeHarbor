@@ -47,6 +47,7 @@ func TestMigrateHelpAndVersionDoNotReadConfigOrOpenPool(t *testing.T) {
 
 func TestMigrateClosesSessionAndPassesCommandContext(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.toml")
+
 	if err := os.WriteFile(
 		path,
 		[]byte("[database]\nurl = 'postgres://localhost/test'\n"),
@@ -54,8 +55,10 @@ func TestMigrateClosesSessionAndPassesCommandContext(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	canceled, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	for _, tc := range []struct {
 		name  string
 		ctx   context.Context
@@ -69,15 +72,19 @@ func TestMigrateClosesSessionAndPassesCommandContext(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			session := &trackedSession{apply: tc.apply}
 			var out, errOut bytes.Buffer
+
 			root := newCommand(
 				func(ctx context.Context, cfg config.Database) (migrationSession, error) {
 					if ctx != tc.ctx || cfg.URL != "postgres://localhost/test" {
 						t.Fatalf("open context/config = %v/%q", ctx, cfg.URL)
 					}
+
 					return session, nil
 				},
 			)
+
 			code := host.Execute(tc.ctx, []string{"--config", path}, &out, &errOut, root)
+
 			if code != tc.want || session.closed != 1 {
 				t.Fatalf(
 					"exit=%d closed=%d want exit=%d stderr=%q",
@@ -90,7 +97,47 @@ func TestMigrateClosesSessionAndPassesCommandContext(t *testing.T) {
 			if tc.want == 0 && !strings.Contains(out.String(), "migrations complete") {
 				t.Fatalf("missing success output: %q", out.String())
 			}
+			if tc.want != 0 && strings.Contains(out.String(), "migrations complete") {
+				t.Fatalf("false success output: %q", out.String())
+			}
 		})
+	}
+}
+
+func TestMigrateCancellationAfterApplySuppressesSuccess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.toml")
+
+	if err := os.WriteFile(
+		path,
+		[]byte("[database]\nurl = 'postgres://localhost/test'\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	session := &trackedSession{apply: func(context.Context) error {
+		cancel()
+		return nil
+	}}
+	var out, errOut bytes.Buffer
+
+	root := newCommand(func(context.Context, config.Database) (migrationSession, error) {
+		return session, nil
+	})
+
+	code := host.Execute(ctx, []string{"--config", path}, &out, &errOut, root)
+
+	if code != 130 || session.closed != 1 || strings.Contains(out.String(), "migrations complete") {
+		t.Fatalf(
+			"exit=%d closed=%d stdout=%q stderr=%q",
+			code,
+			session.closed,
+			out.String(),
+			errOut.String(),
+		)
 	}
 }
 

@@ -58,13 +58,16 @@ func newCommand(
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+
 			cfg, err := config.LoadDatabase(config.Sources{File: configPath})
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
+
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+
 			session, err := open(ctx, cfg)
 			if err != nil {
 				return err
@@ -73,9 +76,15 @@ func newCommand(
 				return errors.New("migration session is unavailable")
 			}
 			defer session.Close()
+
 			if err := session.Apply(ctx); err != nil {
 				return fmt.Errorf("apply migrations: %w", err)
 			}
+
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
 			cmd.Println("migrations complete")
 			return nil
 		},
