@@ -289,9 +289,9 @@ def initialize():
                 "run",
                 "./cmd/admin",
                 "init-root",
-                "-key",
+                "--key",
                 str(temp_key),
-                "-passphrase-file",
+                "--passphrase-file",
                 str(temp_phrase),
             )
             if not public.strip() or not temp_key.is_file() or not temp_key.read_bytes():

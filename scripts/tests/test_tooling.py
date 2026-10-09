@@ -979,11 +979,17 @@ exit 94
         self.assertFalse((secrets / "relay_tls_ca").exists())
 
     def test_init_root_generation_failure_publishes_no_state(self):
-        self.cli("go", "exit 23\n")
+        self.cli("go", "printf '%s\\n' \"$@\" > go-args\nexit 23\n")
         result = self.run_script("dev-init")
+
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.root / "secrets").exists())
         self.assertFalse((self.root / ".local").exists())
+
+        arguments = (self.root / "go-args").read_text().splitlines()
+
+        self.assertIn("--key", arguments)
+        self.assertIn("--passphrase-file", arguments)
 
     def test_init_works_from_another_directory(self):
         self.local_state()
