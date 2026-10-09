@@ -1,6 +1,6 @@
 // Package node assembles the long-running agent and client node processes.
-// Runtime composition and flags are shared across both entrypoints; the role
-// selects ownership of forwarding policy rather than a second transport stack.
+// Runtime composition is shared across both entrypoints; the role selects
+// ownership of forwarding policy rather than a second transport stack.
 package node
 
 import (

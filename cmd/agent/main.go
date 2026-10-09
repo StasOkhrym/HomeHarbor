@@ -2,28 +2,23 @@ package main
 
 import (
 	"context"
-	"errors"
-	"flag"
-	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
-	nodeapp "github.com/StasOkhrym/homeharbor/internal/app/node"
+	agentcli "github.com/StasOkhrym/homeharbor/internal/cli/agent"
+	"github.com/StasOkhrym/homeharbor/internal/cli/host"
 )
 
-func main() {
-	cfg, err := nodeapp.ParseConfig(nodeapp.Gateway, os.Args[1:], os.Stderr)
-	if errors.Is(err, flag.ErrHelp) {
-		return
+func main() { os.Exit(run()) }
+
+func run() int {
+	ctx, stop := host.SignalContext(context.Background(), host.DefaultDrainTimeout)
+	defer stop()
+
+	status := host.Execute(ctx, os.Args[1:], os.Stdout, os.Stderr, agentcli.NewCommand())
+	// The pre-Cobra node CLI used exit 1 for syntax errors.
+	if status == 2 {
+		return 1
 	}
-	if err == nil {
-		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer cancel()
-		err = nodeapp.RunCommand(ctx, nodeapp.Gateway, cfg)
-	}
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+
+	return status
 }
