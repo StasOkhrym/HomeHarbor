@@ -86,7 +86,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
       target: migrate
-    command: ["-config", "/etc/homeharbor/control.toml"]
+    command: ["--config", "/etc/homeharbor/control.toml"]
     configs:
       - source: control_config
         target: /etc/homeharbor/control.toml
