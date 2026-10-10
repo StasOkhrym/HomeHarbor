@@ -10,6 +10,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	devicepg "github.com/StasOkhrym/homeharbor/internal/control/devices/storage"
+	"github.com/StasOkhrym/homeharbor/internal/control/events"
 	invitepg "github.com/StasOkhrym/homeharbor/internal/control/invites/storage"
 	profilepg "github.com/StasOkhrym/homeharbor/internal/control/profiles/storage"
 	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
@@ -53,17 +54,32 @@ func (o outbox) Append(ctx context.Context, event devices.Event) error {
 // AppendEvent is also the explicit devices adapter publication port. All
 // outbox SQL belongs at the application boundary, not in module adapters.
 func AppendEvent(ctx context.Context, tx pgx.Tx, event devices.Event) error {
-	payload, err := json.Marshal(event)
+	fact, err := events.FromDeviceEvent(event)
 	if err != nil {
 		return err
 	}
+	return AppendFact(ctx, tx, fact)
+}
+
+// AppendFact keeps the durable fact in the caller's business transaction.
+func AppendFact(ctx context.Context, tx pgx.Tx, fact events.Envelope) error {
+	if err := fact.Validate(); err != nil {
+		return err
+	}
+
+	payload, err := json.Marshal(fact)
+	if err != nil {
+		return err
+	}
+
 	_, err = tx.Exec(
 		ctx,
 		`INSERT INTO event_outbox(topic,payload,occurred_at) VALUES($1,$2,$3)`,
-		event.Type,
+		fact.Type,
 		payload,
-		event.OccurredAt,
+		fact.OccurredAt,
 	)
+
 	return err
 }
 

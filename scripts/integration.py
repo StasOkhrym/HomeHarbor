@@ -183,7 +183,7 @@ def contracts(env):
         "./internal/control/coordination",
         "./internal/control/identity/redis",
         "./internal/control/transactions",
-        "./internal/platform/events",
+        "./internal/control/events",
         "./internal/platform/redissecurity",
         "./migrations",
         "-run",

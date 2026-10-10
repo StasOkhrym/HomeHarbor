@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/coordination"
+	"github.com/StasOkhrym/homeharbor/internal/control/events"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
-	"github.com/StasOkhrym/homeharbor/internal/platform/events"
 	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 )
 
@@ -25,7 +25,7 @@ type App struct {
 	server          *http.Server
 	metricsServer   *http.Server
 	logger          *slog.Logger
-	auditPipeline   *events.AuditPipeline
+	auditDispatcher *events.Dispatcher
 	coordination    *coordination.Handler
 	shutdownTimeout time.Duration
 }
@@ -82,12 +82,12 @@ func (a *App) assemble(ctx context.Context) error {
 			stores.close()
 		}
 	}()
-	httpServer, coordinationHandler, auditPipeline, err := buildHTTP(cfg, logger, stores)
+	httpServer, coordinationHandler, auditDispatcher, err := buildHTTP(cfg, logger, stores)
 	if err != nil {
 		return err
 	}
 	a.coordination = coordinationHandler
-	a.auditPipeline = auditPipeline
+	a.auditDispatcher = auditDispatcher
 	a.shutdownTimeout = cfg.Runtime.ShutdownTimeout
 	a.metricsServer = newMetricsServer(cfg)
 	a.server = &http.Server{
@@ -130,15 +130,7 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	workers := []lifecycle.Worker{
 		{Name: "coordination", Component: a.coordination},
-		{Name: "audit", Component: a.auditPipeline},
-		{Name: "outbox", Component: lifecycle.Func(func(ctx context.Context) error {
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-a.auditPipeline.Ready():
-			}
-			return events.RunOutboxDispatcher(ctx, a.stores.pool, a.auditPipeline, a.logger)
-		})},
+		{Name: "outbox", Component: a.auditDispatcher},
 		{Name: "http", Component: lifecycle.Func(
 			func(ctx context.Context) error { return serveHTTP(ctx, a.server, listener, a.shutdownTimeout) },
 		)},

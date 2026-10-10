@@ -16,6 +16,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/coordination"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	devicesstorage "github.com/StasOkhrym/homeharbor/internal/control/devices/storage"
+	"github.com/StasOkhrym/homeharbor/internal/control/events"
 	"github.com/StasOkhrym/homeharbor/internal/control/httpapi"
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	identityredis "github.com/StasOkhrym/homeharbor/internal/control/identity/redis"
@@ -35,7 +36,6 @@ import (
 	workflowstorage "github.com/StasOkhrym/homeharbor/internal/control/transactions"
 	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
-	"github.com/StasOkhrym/homeharbor/internal/platform/events"
 	"github.com/StasOkhrym/homeharbor/internal/platform/redissecurity"
 	"github.com/StasOkhrym/homeharbor/internal/relay"
 	"github.com/StasOkhrym/homeharbor/migrations"
@@ -45,11 +45,11 @@ func buildHTTP(
 	cfg config.Control,
 	logger *slog.Logger,
 	stores *runtimeStores,
-) (*httpapi.Server, *coordination.Handler, *events.AuditPipeline, error) {
-	pool, redisClient, bus := stores.pool, stores.redis, stores.bus
+) (*httpapi.Server, *coordination.Handler, *events.Dispatcher, error) {
+	pool, redisClient := stores.pool, stores.redis
 	securityState := redissecurity.New(redisClient, "homeharbor:"+cfg.Networking.NetworkID)
 	auditSink := auditstorage.New(pool)
-	auditPipeline := events.NewAuditPipeline(bus, auditSink)
+	auditDispatcher := events.NewDispatcher(pool, auditSink, logger)
 
 	deviceService := devices.NewService(
 		devicesstorage.New(pool, workflowstorage.AppendEvent),
@@ -158,7 +158,7 @@ func buildHTTP(
 		Observability: httpapi.ObservabilityDependencies{
 			Logger: logger,
 			Ready: func(readinessCtx context.Context) error {
-				if err := auditPipeline.Check(); err != nil {
+				if err := auditDispatcher.Ready(readinessCtx); err != nil {
 					return err
 				}
 				if err := redisClient.Ping(readinessCtx).Err(); err != nil {
@@ -270,7 +270,7 @@ func buildHTTP(
 	if err != nil {
 		return nil, nil, nil, errors.Join(errors.New("configure HTTP dependencies"), err)
 	}
-	return httpServer, coordinationHandler, auditPipeline, nil
+	return httpServer, coordinationHandler, auditDispatcher, nil
 }
 
 func newMetricsServer(cfg config.Control) *http.Server {

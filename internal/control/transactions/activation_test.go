@@ -623,3 +623,74 @@ func TestPostgresHTTPResponseLossRequestsFreshChallengeAndPersistsReplacement(t 
 		t.Fatal("plaintext credential was persisted")
 	}
 }
+
+func TestPostgresOutboxFactsAreVersionedAndDoNotInventActors(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.activation.ApproveSigned(ctx, f.approval); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := f.pool.Query(ctx, `SELECT topic,payload FROM event_outbox ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	for rows.Next() {
+		var topic string
+		var data []byte
+		if err := rows.Scan(&topic, &data); err != nil {
+			t.Fatal(err)
+		}
+		var fact map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fact); err != nil {
+			t.Fatal(err)
+		}
+		allowed := map[string]bool{
+			"event_id":           true,
+			"type":               true,
+			"schema_version":     true,
+			"aggregate_id":       true,
+			"aggregate_revision": true,
+			"occurred_at":        true,
+			"actor_type":         true,
+			"actor_id":           true,
+			"target_type":        true,
+			"target_id":          true,
+			"correlation_id":     true,
+			"payload":            true,
+		}
+		for key := range fact {
+			if !allowed[key] {
+				t.Fatalf("unsafe outbox key %q", key)
+			}
+		}
+		var version int
+		var eventID, action, actorType, actorID, targetType, targetID string
+		_ = json.Unmarshal(fact["schema_version"], &version)
+		_ = json.Unmarshal(fact["event_id"], &eventID)
+		_ = json.Unmarshal(fact["type"], &action)
+		_ = json.Unmarshal(fact["actor_type"], &actorType)
+		_ = json.Unmarshal(fact["actor_id"], &actorID)
+		_ = json.Unmarshal(fact["target_type"], &targetType)
+		_ = json.Unmarshal(fact["target_id"], &targetID)
+		if version != 1 || eventID == "" || action != topic || actorType != "unknown" ||
+			actorID != "" ||
+			targetID == "" {
+			t.Fatalf("invalid fact: %s", data)
+		}
+		if topic == "invite.approved" && targetType != "invite" {
+			t.Fatalf("invite target=%s", targetType)
+		}
+		if topic == "device.enrolled" && targetType != "device" {
+			t.Fatalf("device target=%s", targetType)
+		}
+		seen[topic] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !seen["device.enrolled"] || !seen["invite.approved"] {
+		t.Fatalf("missing facts: %v", seen)
+	}
+}

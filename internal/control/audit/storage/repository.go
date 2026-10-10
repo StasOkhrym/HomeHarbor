@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
@@ -15,15 +17,30 @@ type Repository struct{ pool *pgxpool.Pool }
 
 func New(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
 func (s *Repository) Write(ctx context.Context, event audit.Event) error {
+	return write(ctx, s.pool, event)
+}
+
+// WriteTx projects an outbox fact inside the dispatch transaction.
+func (s *Repository) WriteTx(ctx context.Context, tx pgx.Tx, event audit.Event) error {
+	return write(ctx, tx, event)
+}
+
+type executor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func write(ctx context.Context, exec executor, event audit.Event) error {
 	metadata, err := json.Marshal(event.Metadata)
 	if err != nil {
 		return err
 	}
+
 	var eventID *string
 	if event.ID != "" {
 		eventID = &event.ID
 	}
-	_, err = s.pool.Exec(
+
+	_, err = exec.Exec(
 		ctx,
 		`INSERT INTO audit_events(event_id,occurred_at,actor_type,actor_id,action,target_type,target_id,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(event_id) DO NOTHING`,
 		eventID,
@@ -35,6 +52,7 @@ func (s *Repository) Write(ctx context.Context, event audit.Event) error {
 		event.TargetID,
 		metadata,
 	)
+
 	return err
 }
 
