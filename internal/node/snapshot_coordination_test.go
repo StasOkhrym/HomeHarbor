@@ -112,12 +112,15 @@ func TestSnapshotLiveAndReconnectHeadsFetchMissingHistory(t *testing.T) {
 							w.WriteHeader(401)
 							return
 						}
+
 						after, err := strconv.ParseUint(r.URL.Query().Get("after_revision"), 10, 64)
 						if err != nil {
 							t.Error(err)
+
 							w.WriteHeader(400)
 							return
 						}
+
 						requests <- after
 						page := []snapshot.Envelope{}
 						for _, envelope := range history {
@@ -126,19 +129,26 @@ func TestSnapshotLiveAndReconnectHeadsFetchMissingHistory(t *testing.T) {
 								page = append(page, envelope)
 							}
 						}
+
 						_ = json.NewEncoder(w).Encode(page)
+
 						return
 					}
+
 					connection, err := websocket.Accept(w, r, nil)
 					if err != nil {
 						t.Error(err)
+
 						return
 					}
 					defer func() { _ = connection.CloseNow() }()
+
 					var hello controlprotocol.Hello
+
 					if err := wsjson.Read(r.Context(), connection, &hello); err != nil {
 						return
 					}
+
 					if err := wsjson.Write(
 						r.Context(),
 						connection,
@@ -146,12 +156,13 @@ func TestSnapshotLiveAndReconnectHeadsFetchMissingHistory(t *testing.T) {
 							"type": "welcome",
 							"protocol": controlprotocol.Negotiated{
 								Version:      controlprotocol.CurrentVersion,
-								Capabilities: []string{controlprotocol.CapabilityRelay},
+								Capabilities: []string{controlprotocol.CapabilityUDPPair},
 							},
 						},
 					); err != nil {
 						return
 					}
+
 					count := connections.Add(1)
 					heads := []snapshot.Envelope{history[1], history[3]}
 					if reconnect {
@@ -161,8 +172,10 @@ func TestSnapshotLiveAndReconnectHeadsFetchMissingHistory(t *testing.T) {
 							heads = heads[1:]
 						}
 					}
+
 					for _, head := range heads {
 						payload, _ := json.Marshal(head)
+
 						if err := wsjson.Write(
 							r.Context(),
 							connection,
@@ -171,12 +184,15 @@ func TestSnapshotLiveAndReconnectHeadsFetchMissingHistory(t *testing.T) {
 							return
 						}
 					}
+
 					if reconnect && count == 1 {
 						_ = connection.Close(websocket.StatusServiceRestart, "reconnect test")
 						return
 					}
+
 					for {
 						var message controlprotocol.Message
+
 						if err := wsjson.Read(r.Context(), connection, &message); err != nil {
 							return
 						}
@@ -184,9 +200,12 @@ func TestSnapshotLiveAndReconnectHeadsFetchMissingHistory(t *testing.T) {
 				}),
 			)
 			defer server.Close()
+
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
+
 			applier := &cursorRecorder{cancel: cancel}
+
 			err := RunCoordinationLoop(
 				ctx,
 				CoordinationConfig{
@@ -203,13 +222,16 @@ func TestSnapshotLiveAndReconnectHeadsFetchMissingHistory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			if got := applier.revisions(); !reflect.DeepEqual(got, []uint64{2, 4}) {
 				t.Fatalf("applied=%v", got)
 			}
+
 			got := []uint64{}
 			for len(requests) > 0 {
 				got = append(got, <-requests)
 			}
+
 			if !reflect.DeepEqual(got, []uint64{0, 2}) {
 				t.Fatalf("history cursors=%v", got)
 			}

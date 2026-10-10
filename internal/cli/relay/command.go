@@ -103,7 +103,7 @@ func runRelay(
 ) error {
 	app, err := relayapp.NewWithOptions(cfg, logger, relayapp.Options{
 		TLSConfig: tlsConfig,
-		UDPV2: relayruntime.UDPPairV2Config{
+		UDPPair: relayruntime.UDPPairConfig{
 			PortMin:       cfg.Server.UDPPortMin,
 			PortMax:       cfg.Server.UDPPortMax,
 			AdvertiseHost: cfg.Server.UDPAdvertiseHost,

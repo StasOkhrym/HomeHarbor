@@ -20,12 +20,14 @@ func (s *Server) issueRelaySession(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+
 	credential := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	source, err := s.devices.Authenticate(r.Context(), credential)
 	if err != nil || source.Status != devices.StatusActive {
 		writeError(w, http.StatusUnauthorized, "device authentication required")
 		return
 	}
+
 	destination, err := s.devices.Device(r.Context(), strings.TrimSpace(input.DestinationDeviceID))
 	if err != nil || destination.Status != devices.StatusActive || destination.ID == source.ID {
 		writeError(w, http.StatusForbidden, "destination device is unavailable")
@@ -47,23 +49,24 @@ func (s *Server) issueRelaySession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "session_id is required")
 		return
 	}
-	if !slices.Contains(input.Capabilities, protocol.CapabilityUDPPairV2) {
+	if !slices.Contains(input.Capabilities, protocol.CapabilityUDPPair) {
 		writeErrorCode(
 			w,
 			http.StatusUpgradeRequired,
 			protocol.ErrorUpgradeRequired,
-			"udp_pair_v2 capability required",
+			"udp_pair capability required",
 		)
 		return
 	}
-	if !strings.HasPrefix(s.relayURL, "wss://") || !strings.HasSuffix(s.relayURL, "/relay/udp/v2") {
-		writeError(w, http.StatusServiceUnavailable, "verified TLS UDP v2 relay unavailable")
+	if protocol.ValidateRelayControlURL(s.relayURL) != nil {
+		writeError(w, http.StatusServiceUnavailable, "verified TLS UDP pair relay unavailable")
 		return
 	}
 	if s.relayTTL <= 0 {
 		writeError(w, http.StatusServiceUnavailable, "relay sessions are unavailable")
 		return
 	}
+
 	ticket, err := s.relayIssuer.IssueForPeer(
 		input.SessionID,
 		source.ID,
@@ -74,6 +77,7 @@ func (s *Server) issueRelaySession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "issue relay session")
 		return
 	}
+
 	writeJSON(w, http.StatusCreated, struct {
 		SessionID           string `json:"session_id"`
 		DeviceID            string `json:"device_id"`
@@ -82,5 +86,5 @@ func (s *Server) issueRelaySession(w http.ResponseWriter, r *http.Request) {
 		RelayTransport      string `json:"relay_transport"`
 		Ticket              string `json:"ticket"`
 		ExpiresInSeconds    int64  `json:"expires_in_seconds"`
-	}{input.SessionID, source.ID, destination.ID, s.relayURL, relay.UDPPairV2Protocol, ticket, int64(s.relayTTL / time.Second)})
+	}{input.SessionID, source.ID, destination.ID, s.relayURL, relay.UDPPairProtocol, ticket, int64(s.relayTTL / time.Second)})
 }

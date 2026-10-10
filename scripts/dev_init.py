@@ -75,19 +75,22 @@ def configs(control_name, relay_name, https_port):
     )
     if control["auth"]["rp_id"] in {"tunnel.example.com", control_name}:
         control["auth"]["rp_id"] = control_name
+
     control["relay"]["public_url"] = managed_url(
         control["relay"]["public_url"],
         relay_name,
         {"relay.example.com"},
         "wss",
-        "/relay/udp/v2",
+        "/relay/udp",
         https_port,
     )
     if urlsplit(control["database"]["url"]).hostname == "postgres":
         control["database"]["url"] = control["database"]["url"].replace("@postgres:", "@db:")
+
     control["security"]["root_public_key_file"] = "/run/secrets/root_public_key"
     if relay["server"]["udp_advertise_host"] == "relay.example.com":
         relay["server"]["udp_advertise_host"] = relay_name
+
     origin = f"https://{control_name}:{https_port}"
     admin.update(
         endpoint=origin,

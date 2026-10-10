@@ -30,14 +30,16 @@ ceremony_encryption_key = "abcdefghijklmnopqrstuvwxyzABCDEF"
 session_ttl = "12h"
 ceremony_ttl = "5m"
 [relay]
-public_url = "https://relay.example"
+public_url = "wss://relay.example/relay/udp"
 ticket_key = "01234567890123456789012345678901"
 [security]
 root_public_key_file = "root.pub"
 `
+
 	if err := os.WriteFile(path, []byte(file), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	return path
 }
 

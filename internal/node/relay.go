@@ -21,25 +21,21 @@ import (
 // concerns remain owned by the tunnel and gateway layers.
 type RelayBridgeConfig struct {
 	RelayURL string
-	// RelayTransport selects udp_pair_v2. The versioned /relay/udp/v2 URL also
-	// selects it, allowing existing thin entrypoints to consume control URLs.
+	// RelayTransport is the control-issued udp_pair capability. Empty is valid
+	// for a directly configured bridge; the URL still must be canonical.
 	RelayTransport  string
 	RelayHTTPClient *http.Client
-	RelayUDPAddress string
 	Ticket          string
 	// TicketLifetime is returned by control with a freshly issued ticket. When
-	// a provider is configured, v2 renews authentication on the existing local
-	// socket. Failed renewal never cancels an established v2 packet plane.
+	// a provider is configured, UDP pair renews authentication on the existing local
+	// socket. Failed renewal never cancels an established UDP packet plane.
 	TicketLifetime      time.Duration
 	SessionID           string
 	DeviceID            string
 	DestinationDeviceID string
 	ListenAddress       string
 	WireGuardAddress    string
-	// STUNServer is retained for entrypoint compatibility. UDP v2 obtains its
-	// observed endpoint during authenticated binding on the actual data socket.
-	STUNServer string
-	// OnObservedEndpoint is called when udp_pair_v2 confirms the address from
+	// OnObservedEndpoint is called when udp_pair confirms the address from
 	// which this node reached the relay. It is metadata for candidate exchange,
 	// not an authorization decision or a proof that direct UDP will succeed.
 	OnObservedEndpoint func(netip.AddrPort)
@@ -50,8 +46,8 @@ type RelayBridgeConfig struct {
 // expired bearer ticket.
 type RelayTicketProvider func(context.Context) (string, error)
 
-// RunRelayBridgeLoop retries admission with bounded exponential backoff. V2
-// keeps its local WireGuard socket across retries, renewals and control outages.
+// RunRelayBridgeLoop retains one local WireGuard socket through admissions,
+// ticket renewals and control outages.
 func RunRelayBridgeLoop(
 	ctx context.Context,
 	cfg RelayBridgeConfig,
@@ -60,105 +56,16 @@ func RunRelayBridgeLoop(
 	if err := validateRelayBridgeConfig(cfg); err != nil {
 		return err
 	}
-	if usesUDPV2(cfg) {
-		bridge, err := newUDPV2Bridge(cfg)
-		if err != nil {
-			return err
-		}
-		return runUDPV2Owner(ctx, cfg, bridge, ticketProvider, bridge.Run)
+
+	bridge, err := newUDPPairBridge(cfg)
+	if err != nil {
+		return err
 	}
-	backoff := time.Second
-	for {
-		if ticketProvider != nil {
-			ticket, err := ticketProvider(ctx)
-			if err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				if err := waitBackoff(ctx, backoff); err != nil {
-					return nil
-				}
-				backoff = min(backoff*2, 30*time.Second)
-				continue
-			}
-			cfg.Ticket = ticket
-		}
-		attemptLifetime := time.Duration(0)
-		if ticketProvider != nil {
-			attemptLifetime = cfg.TicketLifetime
-		}
-		err, renewed := runTicketAttempt(
-			ctx,
-			attemptLifetime,
-			func(attemptContext context.Context) error {
-				return RunRelayBridge(attemptContext, cfg)
-			},
-		)
-		if ctx.Err() != nil {
-			return nil
-		}
-		if renewed {
-			backoff = time.Second
-			continue
-		}
-		if err == nil {
-			return nil
-		}
-		if err := waitBackoff(ctx, backoff); err != nil {
-			return nil
-		}
-		backoff = min(backoff*2, 30*time.Second)
-	}
+
+	return runUDPPairOwner(ctx, cfg, bridge, ticketProvider, bridge.Run)
 }
 
 const ticketRenewalSkew = 15 * time.Second
-
-// runTicketAttempt bounds one transport attempt by the ticket lifetime. The
-// renewal cancellation is deliberately indistinguishable from normal
-// transport shutdown to the bridge; the boolean lets the outer loop refresh
-// credentials instead of treating an intentional renewal as a failure.
-func runTicketAttempt(
-	ctx context.Context,
-	lifetime time.Duration,
-	run func(context.Context) error,
-) (error, bool) {
-	if lifetime <= 0 {
-		return run(ctx), false
-	}
-	refreshAfter := lifetime - ticketRenewalSkew
-	if refreshAfter <= 0 {
-		refreshAfter = lifetime / 2
-	}
-	if refreshAfter <= 0 {
-		refreshAfter = time.Millisecond
-	}
-	attemptContext, cancel := context.WithCancel(ctx)
-	defer cancel()
-	timer := time.NewTimer(refreshAfter)
-	defer timer.Stop()
-	renewal := make(chan struct{}, 1)
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-timer.C:
-			renewal <- struct{}{}
-			cancel()
-		case <-ctx.Done():
-		case <-done:
-		}
-	}()
-	err := run(attemptContext)
-	close(done)
-	if ctx.Err() != nil {
-		return nil, false
-	}
-	select {
-	case <-renewal:
-		return err, true
-	default:
-		return err, false
-	}
-}
 
 func waitBackoff(ctx context.Context, delay time.Duration) error {
 	timer := time.NewTimer(delay)
@@ -219,77 +126,66 @@ func ParsePrefixList(value string) ([]netip.Prefix, error) {
 	return prefixes, nil
 }
 
-// RunRelayBridge owns the bridge until control cancellation or a transport
-// failure. Callers should recreate it after credential/session renewal rather
-// than mutating a live bridge's ticket.
+// RunRelayBridge owns the authenticated UDP bridge until cancellation or failure.
 func RunRelayBridge(ctx context.Context, cfg RelayBridgeConfig) error {
 	if err := validateRelayBridgeConfig(cfg); err != nil {
 		return err
 	}
-	if usesUDPV2(cfg) {
-		bridge, err := newUDPV2Bridge(cfg)
-		if err != nil {
-			return err
-		}
-		return bridge.Run(ctx)
-	}
-	listenAddress, err := net.ResolveUDPAddr("udp", cfg.ListenAddress)
-	if err != nil {
-		return errors.New("invalid relay bridge listen address: " + err.Error())
-	}
-	wireGuardAddress, err := net.ResolveUDPAddr("udp", cfg.WireGuardAddress)
-	if err != nil {
-		return errors.New("invalid WireGuard UDP address: " + err.Error())
-	}
-	bridge, err := relay.NewBridge(relay.BridgeConfig{
-		RelayURL:            cfg.RelayURL,
-		Ticket:              cfg.Ticket,
-		SessionID:           cfg.SessionID,
-		DeviceID:            cfg.DeviceID,
-		DestinationDeviceID: cfg.DestinationDeviceID,
-		ListenAddress:       listenAddress,
-		WireGuardAddress:    wireGuardAddress,
-	})
+	bridge, err := newUDPPairBridge(cfg)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = bridge.Close() }()
 	return bridge.Run(ctx)
 }
 
 func validateRelayBridgeConfig(cfg RelayBridgeConfig) error {
-	if cfg.RelayTransport != "" && cfg.RelayTransport != relay.UDPPairV2Protocol {
+	if cfg.RelayTransport != "" && cfg.RelayTransport != relay.UDPPairProtocol {
 		return errors.New("unsupported relay transport")
 	}
-	if cfg.RelayUDPAddress != "" && !usesUDPV2(cfg) {
-		return errors.New("legacy UDP ingress disabled; udp_pair_v2 TLS control required")
+
+	if err := controlprotocol.ValidateRelayControlURL(cfg.RelayURL); err != nil {
+		return err
 	}
-	if (cfg.RelayURL == "" && cfg.RelayUDPAddress == "") || cfg.Ticket == "" ||
+
+	if cfg.RelayURL == "" || cfg.Ticket == "" ||
 		cfg.SessionID == "" ||
 		cfg.DeviceID == "" ||
 		cfg.DestinationDeviceID == "" {
 		return errors.New(
-			"relay URL or UDP address, ticket, session, and device identities are required",
+			"relay URL, ticket, session, and device identities are required",
 		)
-	}
-	if usesUDPV2(cfg) && !strings.HasPrefix(cfg.RelayURL, "wss://") {
-		return errors.New("UDP v2 requires WSS relay control")
 	}
 	if cfg.ListenAddress == "" || cfg.WireGuardAddress == "" {
 		return errors.New("relay bridge UDP addresses are required")
 	}
+
 	if _, err := net.ResolveUDPAddr("udp", cfg.ListenAddress); err != nil {
 		return errors.New("invalid relay bridge listen address: " + err.Error())
 	}
+
 	if _, err := net.ResolveUDPAddr("udp", cfg.WireGuardAddress); err != nil {
 		return errors.New("invalid WireGuard UDP address: " + err.Error())
 	}
+
 	return nil
 }
 
-// RunKernelRelay reconciles a Linux interface before opening the relay
-// transport. WireGuard receives the bridge's loopback UDP address as its peer
-// endpoint; the bridge then carries the already-encrypted datagrams remotely.
+// RunKernelRelay reconciles Linux WireGuard before opening the UDP bridge.
 func RunKernelRelay(ctx context.Context, cfg KernelRelayConfig) error {
+	if err := validateKernelRelayConfig(cfg); err != nil {
+		return err
+	}
+	bridge, err := newUDPPairBridge(cfg.RelayBridgeConfig)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = bridge.Close() }()
+	address := bridge.LocalAddr()
+	return runKernelRelayBridge(ctx, cfg, bridge, address.AddrPort())
+}
+
+func validateKernelRelayConfig(cfg KernelRelayConfig) error {
 	if cfg.InterfaceName == "" || cfg.PrivateKey == "" || cfg.PeerPublicKey == "" ||
 		cfg.OverlayAddress == "" ||
 		cfg.ListenPort == 0 {
@@ -297,45 +193,8 @@ func RunKernelRelay(ctx context.Context, cfg KernelRelayConfig) error {
 			"kernel relay interface, keys, overlay address, and listen port are required",
 		)
 	}
-	if err := validateRelayBridgeConfig(cfg.RelayBridgeConfig); err != nil {
-		return err
-	}
-	if usesUDPV2(cfg.RelayBridgeConfig) {
-		bridge, err := newUDPV2Bridge(cfg.RelayBridgeConfig)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = bridge.Close() }()
-		address := bridge.LocalAddr()
-		return runKernelRelayBridge(ctx, cfg, bridge, address.AddrPort())
-	}
-	listenAddress, err := net.ResolveUDPAddr("udp", cfg.ListenAddress)
-	if err != nil {
-		return fmt.Errorf("invalid relay bridge listen address: %w", err)
-	}
-	wireGuardAddress, err := net.ResolveUDPAddr("udp", cfg.WireGuardAddress)
-	if err != nil {
-		return fmt.Errorf("invalid WireGuard UDP address: %w", err)
-	}
-	var bridge relayBridgeRunner
-	var bridgeEndpoint netip.AddrPort
-	{
-		kernelBridge, bridgeErr := relay.NewBridge(relay.BridgeConfig{
-			RelayURL: cfg.RelayURL, Ticket: cfg.Ticket, SessionID: cfg.SessionID,
-			DeviceID: cfg.DeviceID, DestinationDeviceID: cfg.DestinationDeviceID,
-			ListenAddress: listenAddress, WireGuardAddress: wireGuardAddress,
-		})
-		if bridgeErr != nil {
-			return bridgeErr
-		}
-		bridge = kernelBridge
-		kernelBridgeAddress := kernelBridge.LocalAddr()
-		bridgeEndpoint, err = netip.ParseAddrPort(kernelBridgeAddress.String())
-	}
-	if err != nil {
-		return fmt.Errorf("parse relay bridge endpoint: %w", err)
-	}
-	return runKernelRelayBridge(ctx, cfg, bridge, bridgeEndpoint)
+
+	return validateRelayBridgeConfig(cfg.RelayBridgeConfig)
 }
 
 func runKernelRelayBridge(
@@ -450,81 +309,30 @@ func runKernelRelayWithPathSelector(
 	}
 }
 
-// RunKernelRelayLoop repeats the idempotent Linux interface/WireGuard setup
-// after a relay failure. Reapplying the same peer configuration is deliberate:
-// the bridge owns its UDP socket, so a fresh bridge must be bound before the
-// encrypted peer can resume forwarding packets.
+// RunKernelRelayLoop keeps one local endpoint across authenticated rebinds.
 func RunKernelRelayLoop(
 	ctx context.Context,
 	cfg KernelRelayConfig,
 	ticketProvider RelayTicketProvider,
 ) error {
-	if cfg.InterfaceName == "" || cfg.PrivateKey == "" || cfg.PeerPublicKey == "" ||
-		cfg.OverlayAddress == "" ||
-		cfg.ListenPort == 0 {
-		return errors.New(
-			"kernel relay interface, keys, overlay address, and listen port are required",
-		)
-	}
-	if err := validateRelayBridgeConfig(cfg.RelayBridgeConfig); err != nil {
+	if err := validateKernelRelayConfig(cfg); err != nil {
 		return err
 	}
-	if usesUDPV2(cfg.RelayBridgeConfig) {
-		bridge, err := newUDPV2Bridge(cfg.RelayBridgeConfig)
-		if err != nil {
-			return err
-		}
-		address := bridge.LocalAddr()
-		return runUDPV2Owner(
-			ctx,
-			cfg.RelayBridgeConfig,
-			bridge,
-			ticketProvider,
-			func(runCtx context.Context) error {
-				return runKernelRelayBridge(runCtx, cfg, bridge, address.AddrPort())
-			},
-		)
+
+	bridge, err := newUDPPairBridge(cfg.RelayBridgeConfig)
+	if err != nil {
+		return err
 	}
-	backoff := time.Second
-	for {
-		if ticketProvider != nil {
-			ticket, err := ticketProvider(ctx)
-			if err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				if err := waitBackoff(ctx, backoff); err != nil {
-					return nil
-				}
-				backoff = min(backoff*2, 30*time.Second)
-				continue
-			}
-			cfg.Ticket = ticket
-		}
-		attemptLifetime := time.Duration(0)
-		if ticketProvider != nil {
-			attemptLifetime = cfg.TicketLifetime
-		}
-		err, renewed := runTicketAttempt(
-			ctx,
-			attemptLifetime,
-			func(attemptContext context.Context) error {
-				return RunKernelRelay(attemptContext, cfg)
-			},
-		)
-		if ctx.Err() != nil {
-			return nil
-		}
-		if renewed {
-			backoff = time.Second
-			continue
-		}
-		if err == nil {
-			return nil
-		}
-		if err := waitBackoff(ctx, backoff); err != nil {
-			return nil
-		}
-		backoff = min(backoff*2, 30*time.Second)
-	}
+
+	address := bridge.LocalAddr()
+
+	return runUDPPairOwner(
+		ctx,
+		cfg.RelayBridgeConfig,
+		bridge,
+		ticketProvider,
+		func(runCtx context.Context) error {
+			return runKernelRelayBridge(runCtx, cfg, bridge, address.AddrPort())
+		},
+	)
 }

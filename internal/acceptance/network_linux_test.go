@@ -808,7 +808,9 @@ func TestGatewayRuntimeProcess(t *testing.T) {
 	if mode == "" {
 		return
 	}
+
 	dir := os.Getenv("HH_ACCEPTANCE_DIR")
+
 	cfg := config.DefaultClient()
 	cfg.Identity.StatePath = filepath.Join(dir, "state.json")
 	cfg.Identity.Token = "fixture-enrollment"
@@ -837,26 +839,35 @@ func TestGatewayRuntimeProcess(t *testing.T) {
 				); err != nil {
 					t.Error(err)
 				}
+
 				w.WriteHeader(http.StatusServiceUnavailable)
 			default:
 				w.WriteHeader(http.StatusServiceUnavailable)
 			}
 		}))
 		defer server.Close()
+
 		cfg.Identity.ControlURL = server.URL
 		cfg.Coordination.URL = "ws" + strings.TrimPrefix(server.URL, "http") + "/coordination"
 	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM)
 	defer cancel()
+
 	ctx, timeout := context.WithTimeout(ctx, 30*time.Second)
 	defer timeout()
+
 	err := appnode.RunCommand(ctx, appnode.Gateway, cfg)
 	if mode == "unavailable" {
-		if err == nil || !strings.Contains(err.Error(), "connection refused") {
-			t.Fatalf("expected unavailable control admission, got %v", err)
+		// Startup first tries rotation, then identity recovery. A failed
+		// challenge is intentionally reported without its network error.
+		if err == nil || !strings.Contains(err.Error(), "credential challenge unavailable") {
+			t.Fatalf("expected unavailable credential admission, got %v", err)
 		}
+
 		return
 	}
+
 	if err != nil {
 		t.Fatal(err)
 	}

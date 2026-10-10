@@ -8,16 +8,17 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
-type UDPPairV2BridgeConfig struct {
+type UDPPairBridgeConfig struct {
 	ControlURL          string
 	Ticket              string
 	SessionID           string
@@ -33,22 +34,22 @@ type UDPPairV2BridgeConfig struct {
 	OnObservedEndpoint func(netip.AddrPort)
 }
 
-type v2Binding struct {
+type binding struct {
 	address   *net.UDPAddr
 	challenge chan string
 }
 
-// UDPPairV2Bridge keeps one local socket across authenticated admissions and
+// UDPPairBridge keeps one local socket across authenticated admissions and
 // rebindings. Exactly one owned reader dispatches UDP traffic, including return
 // challenges, so renewing a ticket cannot steal WireGuard packets from Run.
-type UDPPairV2Bridge struct {
-	cfg             UDPPairV2BridgeConfig
+type UDPPairBridge struct {
+	cfg             UDPPairBridgeConfig
 	udp             *net.UDPConn
 	ctx             context.Context
 	cancel          context.CancelFunc
 	mu              sync.Mutex
 	relay           *net.UDPAddr
-	pending         *v2Binding
+	pending         *binding
 	observed        netip.AddrPort
 	observedChanges chan struct{}
 	bindMu          sync.Mutex
@@ -60,17 +61,16 @@ type UDPPairV2Bridge struct {
 	started         bool
 }
 
-func NewUDPPairV2Bridge(cfg UDPPairV2BridgeConfig) (*UDPPairV2Bridge, error) {
-	u, err := url.Parse(cfg.ControlURL)
-	if err != nil || u.Scheme != "wss" || u.Host == "" || u.User != nil {
-		return nil, errors.New("UDP v2 requires a wss control URL")
+func NewUDPPairBridge(cfg UDPPairBridgeConfig) (*UDPPairBridge, error) {
+	if err := protocol.ValidateRelayControlURL(cfg.ControlURL); err != nil {
+		return nil, err
 	}
 	if cfg.Ticket == "" || cfg.SessionID == "" || cfg.DeviceID == "" ||
 		cfg.DestinationDeviceID == "" ||
 		cfg.DeviceID == cfg.DestinationDeviceID ||
 		cfg.ListenAddress == nil ||
 		cfg.WireGuardAddress == nil {
-		return nil, errors.New("UDP v2 ticket, peer identities and UDP addresses required")
+		return nil, errors.New("UDP pair ticket, peer identities and UDP addresses required")
 	}
 	if cfg.BindTimeout == 0 {
 		cfg.BindTimeout = 10 * time.Second
@@ -79,7 +79,7 @@ func NewUDPPairV2Bridge(cfg UDPPairV2BridgeConfig) (*UDPPairV2Bridge, error) {
 		cfg.MaxDatagramBytes = 65507
 	}
 	if cfg.BindTimeout < 0 || cfg.MaxDatagramBytes < 1 || cfg.MaxDatagramBytes > 65507 {
-		return nil, errors.New("invalid UDP v2 bridge limits")
+		return nil, errors.New("invalid UDP pair bridge limits")
 	}
 	client := http.Client{}
 	if cfg.HTTPClient != nil {
@@ -92,7 +92,7 @@ func NewUDPPairV2Bridge(cfg UDPPairV2BridgeConfig) (*UDPPairV2Bridge, error) {
 	httpTransport, ok := transport.(*http.Transport)
 	//nolint:staticcheck // Reject the deprecated TLS hook too: it can bypass certificate verification.
 	if !ok || httpTransport.DialTLS != nil || httpTransport.DialTLSContext != nil {
-		return nil, errors.New("UDP v2 requires a verifying HTTP TLS transport")
+		return nil, errors.New("UDP pair requires a verifying HTTP TLS transport")
 	}
 	ownedTransport := httpTransport.Clone()
 	if ownedTransport.TLSClientConfig == nil {
@@ -101,7 +101,7 @@ func NewUDPPairV2Bridge(cfg UDPPairV2BridgeConfig) (*UDPPairV2Bridge, error) {
 		ownedTransport.TLSClientConfig = ownedTransport.TLSClientConfig.Clone()
 	}
 	if ownedTransport.TLSClientConfig.InsecureSkipVerify {
-		return nil, errors.New("UDP v2 TLS verification cannot be disabled")
+		return nil, errors.New("UDP pair TLS verification cannot be disabled")
 	}
 	client.Transport = ownedTransport
 	// net/http otherwise forwards Authorization on a same-host downgrade.
@@ -112,10 +112,10 @@ func NewUDPPairV2Bridge(cfg UDPPairV2BridgeConfig) (*UDPPairV2Bridge, error) {
 	cfg.WireGuardAddress = cloneUDPAddr(cfg.WireGuardAddress)
 	udp, err := net.ListenUDP("udp", cfg.ListenAddress)
 	if err != nil {
-		return nil, fmt.Errorf("listen UDP v2 bridge: %w", err)
+		return nil, fmt.Errorf("listen UDP pair bridge: %w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	b := &UDPPairV2Bridge{
+	b := &UDPPairBridge{
 		cfg:             cfg,
 		udp:             udp,
 		ctx:             ctx,
@@ -127,24 +127,26 @@ func NewUDPPairV2Bridge(cfg UDPPairV2BridgeConfig) (*UDPPairV2Bridge, error) {
 	return b, nil
 }
 
-func (b *UDPPairV2Bridge) LocalAddr() net.UDPAddr {
+func (b *UDPPairBridge) LocalAddr() net.UDPAddr {
 	return *cloneUDPAddr(b.udp.LocalAddr().(*net.UDPAddr))
 }
-func (b *UDPPairV2Bridge) Connected() <-chan struct{} { return b.connected }
+func (b *UDPPairBridge) Connected() <-chan struct{} { return b.connected }
 
-func (b *UDPPairV2Bridge) ObservedEndpoint() (netip.AddrPort, bool) {
+func (b *UDPPairBridge) ObservedEndpoint() (netip.AddrPort, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
 	return b.observed, b.observed.IsValid()
 }
 
-func (b *UDPPairV2Bridge) ObservedEndpointChanges() <-chan struct{} {
+func (b *UDPPairBridge) ObservedEndpointChanges() <-chan struct{} {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
 	return b.observedChanges
 }
 
-func (b *UDPPairV2Bridge) Close() error {
+func (b *UDPPairBridge) Close() error {
 	b.closeOnce.Do(func() {
 		b.cancel()
 		_ = b.udp.Close()
@@ -158,8 +160,9 @@ func (b *UDPPairV2Bridge) Close() error {
 	return nil
 }
 
-func (b *UDPPairV2Bridge) Run(ctx context.Context) error {
+func (b *UDPPairBridge) Run(ctx context.Context) error {
 	defer func() { _ = b.Close() }()
+
 	b.mu.Lock()
 	bound := b.relay != nil
 	b.mu.Unlock()
@@ -168,9 +171,11 @@ func (b *UDPPairV2Bridge) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
+
 			return err
 		}
 	}
+
 	select {
 	case <-ctx.Done():
 		return nil
@@ -184,7 +189,7 @@ func (b *UDPPairV2Bridge) Run(ctx context.Context) error {
 // Bind performs a fresh control authentication on the same local UDP socket.
 // A failed renewal leaves the existing route usable; callers can retry when
 // control returns. Established sessions do not need renewal at ticket expiry.
-func (b *UDPPairV2Bridge) Bind(parent context.Context, ticket string) error {
+func (b *UDPPairBridge) Bind(parent context.Context, ticket string) error {
 	b.bindMu.Lock()
 	defer b.bindMu.Unlock()
 	if b.ctx.Err() != nil {
@@ -210,33 +215,33 @@ func (b *UDPPairV2Bridge) Bind(parent context.Context, ticket string) error {
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("UDP v2 control: %w", err)
+		return fmt.Errorf("UDP pair control: %w", err)
 	}
 	defer func() { _ = c.CloseNow() }()
 	c.SetReadLimit(2048)
-	var offer UDPPairV2Message
+	var offer UDPPairMessage
 	if err := wsjson.Read(ctx, c, &offer); err != nil {
 		return err
 	}
-	if offer.Protocol != UDPPairV2Protocol || offer.Kind != "offer" ||
+	if offer.Protocol != UDPPairProtocol || offer.Kind != "offer" ||
 		offer.SessionID != b.cfg.SessionID ||
 		offer.DeviceID != b.cfg.DeviceID ||
 		offer.DestinationDeviceID != b.cfg.DestinationDeviceID ||
 		len(offer.Nonce) != 43 {
-		return errors.New("UDP v2 offer identity or version mismatch")
+		return errors.New("UDP pair offer identity or version mismatch")
 	}
 	address, err := net.ResolveUDPAddr("udp", offer.UDPAddress)
 	if err != nil || address.Port == 0 || address.IP.IsUnspecified() {
-		return errors.New("invalid UDP v2 ingress address")
+		return errors.New("invalid UDP pair ingress address")
 	}
-	binding := &v2Binding{address: address, challenge: make(chan string, 1)}
+	binding := &binding{address: address, challenge: make(chan string, 1)}
 	b.mu.Lock()
 	b.pending = binding
 	b.mu.Unlock()
 	defer func() { b.mu.Lock(); b.pending = nil; b.mu.Unlock() }()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	probe := func() error { _, err := b.udp.WriteToUDP([]byte("HHU2P"+offer.Nonce), address); return err }
+	probe := func() error { _, err := b.udp.WriteToUDP([]byte("HHUP"+offer.Nonce), address); return err }
 	if err := probe(); err != nil {
 		return err
 	}
@@ -257,23 +262,23 @@ wait:
 	if err := wsjson.Write(
 		ctx,
 		c,
-		UDPPairV2Message{Protocol: UDPPairV2Protocol, Kind: "confirm", Challenge: challenge},
+		UDPPairMessage{Protocol: UDPPairProtocol, Kind: "confirm", Challenge: challenge},
 	); err != nil {
 		return err
 	}
-	var bound UDPPairV2Message
+	var bound UDPPairMessage
 	if err := wsjson.Read(ctx, c, &bound); err != nil {
 		return err
 	}
 	observed, err := netip.ParseAddrPort(bound.ObservedEndpoint)
-	if err != nil || bound.Protocol != UDPPairV2Protocol || bound.Kind != "bound" {
-		return errors.New("invalid UDP v2 confirmation")
+	if err != nil || bound.Protocol != UDPPairProtocol || bound.Kind != "bound" {
+		return errors.New("invalid UDP pair confirmation")
 	}
 	// Renewal proves reachability on the retained ingress, so the confirmed
 	// endpoint mapping is also valid for data behind endpoint-dependent NAT.
 	boundAddress, err := net.ResolveUDPAddr("udp", bound.UDPAddress)
 	if err != nil || boundAddress.Port == 0 || boundAddress.IP.IsUnspecified() {
-		return errors.New("invalid confirmed UDP v2 ingress address")
+		return errors.New("invalid confirmed UDP pair ingress address")
 	}
 	b.mu.Lock()
 	b.relay = cloneUDPAddr(boundAddress)
@@ -290,7 +295,7 @@ wait:
 	return nil
 }
 
-func (b *UDPPairV2Bridge) readUDP() {
+func (b *UDPPairBridge) readUDP() {
 	defer b.wg.Done()
 	buffer := make([]byte, 65535)
 	for {
@@ -306,9 +311,9 @@ func (b *UDPPairV2Bridge) readUDP() {
 		pending := b.pending
 		b.mu.Unlock()
 		if pending != nil && sameUDPAddr(source, pending.address) {
-			if n == 48 && strings.HasPrefix(string(buffer[:n]), "HHU2C") {
+			if n == 47 && strings.HasPrefix(string(buffer[:n]), "HHUC") {
 				select {
-				case pending.challenge <- string(buffer[5:n]):
+				case pending.challenge <- string(buffer[4:n]):
 				default:
 				}
 				continue

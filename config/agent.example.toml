@@ -7,14 +7,12 @@ control_url = "https://control.example"
 name = "linux-gateway"
 
 [relay]
-websocket_url = "wss://relay.example/relay/v1"
-udp_address = "relay.example:51820"
+websocket_url = "wss://relay.example/relay/udp"
 # ticket_file = "state/relay-ticket"
 session_id = ""
 destination_device_id = "client"
 listen_address = "127.0.0.1:51821"
 wireguard_address = "127.0.0.1:51820"
-# stun_server = "stun:stun.example:3478"
 
 [wireguard]
 interface = "wg0"

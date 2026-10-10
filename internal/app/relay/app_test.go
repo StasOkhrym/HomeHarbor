@@ -33,8 +33,8 @@ func TestRelayConfiguredRuntimeReachesHTTPServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if a.udpV2 != nil {
-			_ = a.udpV2.Close()
+		if a.udpPair != nil {
+			_ = a.udpPair.Close()
 		}
 	})
 	if a.server.ReadTimeout != 3*time.Second {
@@ -117,7 +117,12 @@ func TestRelayAppDoesNotExposeLegacyUDPTicketIngress(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = sender.Close() }()
-	ticket, _ := a.tickets.IssueForPeer("s", "a", "b", time.Minute)
+	ticket, _ := (relayruntime.TicketIssuer{Key: []byte(cfg.Security.TicketKey)}).IssueForPeer(
+		"s",
+		"a",
+		"b",
+		time.Minute,
+	)
 	// Keep the obsolete wire fixture, not its removed production encoder.
 	packet := []byte{'G', 'T', 'U', 'P', 1, 1, 0, 0}
 	binary.BigEndian.PutUint16(packet[6:8], uint16(len(ticket)))
@@ -130,11 +135,35 @@ func TestRelayAppDoesNotExposeLegacyUDPTicketIngress(t *testing.T) {
 	if _, _, err := sender.ReadFromUDP(make([]byte, 512)); err == nil {
 		t.Fatal("production app admitted a UDP v1 bearer packet")
 	}
-	request := httptest.NewRequest(http.MethodGet, "/relay/udp/v2", nil)
+	request := httptest.NewRequest(http.MethodGet, "/relay/udp", nil)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusUpgradeRequired {
-		t.Fatalf("v2 plaintext status=%d, want TLS requirement", recorder.Code)
+		t.Fatalf("relay plaintext status=%d, want TLS requirement", recorder.Code)
+	}
+}
+
+func TestOldRelayEndpointRejected(t *testing.T) {
+	cfg := config.RelayServer{}
+	cfg.Server.ListenAddress = "127.0.0.1:0"
+	cfg.Server.UDPListenAddress = "127.0.0.1:0"
+	cfg.Security.TicketKey = "01234567890123456789012345678901"
+	app, err := New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.udpPair.Close() })
+	for _, path := range []string{"/relay/udp/v2", "/relay/v1"} {
+		recorder := httptest.NewRecorder()
+		app.server.Handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusNotFound {
+			t.Errorf("old endpoint %q status=%d, want 404", path, recorder.Code)
+		}
+	}
+	recorder := httptest.NewRecorder()
+	app.server.Handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/relay/udp", nil))
+	if recorder.Code != http.StatusUpgradeRequired {
+		t.Fatalf("canonical endpoint status=%d, want TLS requirement", recorder.Code)
 	}
 }
 
@@ -172,20 +201,24 @@ func TestRelayExplicitRangeSelectsStartupPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	port := probe.LocalAddr().(*net.UDPAddr).Port
+
 	_ = probe.Close()
 	cfg := config.RelayServer{}
 	cfg.Server.ListenAddress = "127.0.0.1:0"
 	cfg.Server.UDPListenAddress = "127.0.0.1:0"
 	cfg.Security.TicketKey = "01234567890123456789012345678901"
+
 	a, err := NewWithOptions(
 		cfg,
 		nil,
-		Options{UDPV2: relayruntime.UDPPairV2Config{PortMin: port, PortMax: port}},
+		Options{UDPPair: relayruntime.UDPPairConfig{PortMin: port, PortMax: port}},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	handler := a.server.Handler
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -203,17 +236,22 @@ func TestRelayExplicitRangeSelectsStartupPort(t *testing.T) {
 		select {
 		case err := <-done:
 			done <- err
+
 			t.Fatalf("explicit-range startup failed: %v", err)
 		default:
 		}
+
 		time.Sleep(time.Millisecond)
 	}
+
 	if readinessStatus(handler) != http.StatusOK {
 		t.Fatal("configured range never became ready")
 	}
+
 	occupied, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port})
 	if err == nil {
 		_ = occupied.Close()
+
 		t.Fatal("readiness did not own a socket in the configured range")
 	}
 }

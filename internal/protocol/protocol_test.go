@@ -7,12 +7,16 @@ import (
 
 func TestNegotiateSelectsCurrentVersion(t *testing.T) {
 	result, err := Negotiate(
-		Hello{Versions: []uint16{1}, Capabilities: []string{CapabilityRelay, CapabilityDirectUDP}},
+		Hello{
+			Versions:     []uint16{1},
+			Capabilities: []string{CapabilityUDPPair, CapabilityDirectUDP},
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Version != 1 || !result.Has(CapabilityRelay) {
+
+	if result.Version != 1 || !result.Has(CapabilityUDPPair) {
 		t.Fatalf("result = %#v", result)
 	}
 }

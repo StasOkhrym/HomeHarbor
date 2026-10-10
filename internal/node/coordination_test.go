@@ -125,6 +125,7 @@ func TestRunCoordinationLoopRetainsCursorAcrossReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	first, err := snapshot.Sign(
 		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
 		privateKey,
@@ -133,6 +134,7 @@ func TestRunCoordinationLoopRetainsCursorAcrossReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	second, err := snapshot.Sign(
 		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 2, PreviousHash: first.Hash},
 		privateKey,
@@ -141,22 +143,29 @@ func TestRunCoordinationLoopRetainsCursorAcrossReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var connections atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if serveCoordinationTestHistory(w, r, []snapshot.Envelope{first, second}) {
 			return
 		}
+
 		connection, acceptErr := websocket.Accept(w, r, nil)
 		if acceptErr != nil {
 			t.Errorf("accept: %v", acceptErr)
+
 			return
 		}
 		defer func() { _ = connection.CloseNow() }()
+
 		var hello controlprotocol.Hello
+
 		if readErr := wsjson.Read(r.Context(), connection, &hello); readErr != nil {
 			t.Errorf("hello: %v", readErr)
+
 			return
 		}
+
 		if writeErr := wsjson.Write(
 			r.Context(),
 			connection,
@@ -164,41 +173,51 @@ func TestRunCoordinationLoopRetainsCursorAcrossReconnect(t *testing.T) {
 				"type": "welcome",
 				"protocol": controlprotocol.Negotiated{
 					Version:      controlprotocol.CurrentVersion,
-					Capabilities: []string{controlprotocol.CapabilityRelay},
+					Capabilities: []string{controlprotocol.CapabilityUDPPair},
 				},
 			},
 		); writeErr != nil {
 			t.Errorf("welcome: %v", writeErr)
+
 			return
 		}
+
 		envelope := first
 		if connections.Add(1) > 1 {
 			envelope = second
 		}
+
 		payload, marshalErr := json.Marshal(envelope)
 		if marshalErr != nil {
 			t.Errorf("marshal envelope: %v", marshalErr)
+
 			return
 		}
+
 		if writeErr := wsjson.Write(
 			r.Context(),
 			connection,
 			controlprotocol.Message{Type: "network.snapshot", Payload: payload},
 		); writeErr != nil {
 			t.Errorf("snapshot: %v", writeErr)
+
 			return
 		}
+
 		if connections.Load() == 1 {
 			_ = connection.Close(websocket.StatusServiceRestart, "test reconnect")
 			return
 		}
+
 		consumeCoordinationTestPeer(r.Context(), connection)
 	}))
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+
 	recorder := &cursorRecorder{cancel: cancel}
+
 	err = RunCoordinationLoop(ctx, CoordinationConfig{
 		URL:              "ws" + server.URL[len("http"):],
 		Credential:       "credential",
@@ -211,6 +230,7 @@ func TestRunCoordinationLoopRetainsCursorAcrossReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got := recorder.revisions(); len(got) != 2 || got[0] != 1 || got[1] != 2 {
 		t.Fatalf("applied revisions=%v, want [1 2]", got)
 	}
@@ -244,7 +264,7 @@ func TestRunCoordinationPublishesCandidateUpdatesAfterWelcome(t *testing.T) {
 				"protocol": controlprotocol.Negotiated{
 					Version: controlprotocol.CurrentVersion,
 					Capabilities: []string{
-						controlprotocol.CapabilityRelay,
+						controlprotocol.CapabilityUDPPair,
 						controlprotocol.CapabilityDirectUDP,
 					},
 				},
@@ -343,7 +363,7 @@ func newCoordinationTestServer(t *testing.T, envelope snapshot.Envelope) *httpte
 				"type": "welcome",
 				"protocol": controlprotocol.Negotiated{
 					Version:      controlprotocol.CurrentVersion,
-					Capabilities: []string{controlprotocol.CapabilityRelay},
+					Capabilities: []string{controlprotocol.CapabilityUDPPair},
 				},
 			},
 		); err != nil {
@@ -369,20 +389,26 @@ func TestCandidatePublisherJoined(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	changes := make(chan struct{}, 1)
 	entered, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			t.Error(err)
+
 			return
 		}
 		defer func() { _ = c.CloseNow() }()
+
 		var hello controlprotocol.Hello
+
 		if err := wsjson.Read(r.Context(), c, &hello); err != nil {
 			t.Error(err)
+
 			return
 		}
+
 		err = wsjson.Write(
 			r.Context(),
 			c,
@@ -391,7 +417,7 @@ func TestCandidatePublisherJoined(t *testing.T) {
 				"protocol": controlprotocol.Negotiated{
 					Version: controlprotocol.CurrentVersion,
 					Capabilities: []string{
-						controlprotocol.CapabilityRelay,
+						controlprotocol.CapabilityUDPPair,
 						controlprotocol.CapabilityDirectUDP,
 					},
 				},
@@ -399,14 +425,18 @@ func TestCandidatePublisherJoined(t *testing.T) {
 		)
 		if err != nil {
 			t.Error(err)
+
 			return
 		}
+
 		<-entered
 		_ = c.CloseNow()
 	}))
 	defer server.Close()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	var calls atomic.Int32
 	done := make(chan error, 1)
 	go func() {
@@ -418,6 +448,7 @@ func TestCandidatePublisherJoined(t *testing.T) {
 					changes <- struct{}{}
 					return nil, nil
 				}
+
 				close(entered)
 				<-ctx.Done()
 				close(cancelled)
@@ -430,9 +461,11 @@ func TestCandidatePublisherJoined(t *testing.T) {
 	select {
 	case <-done:
 		close(release)
+
 		t.Fatal("session returned before publisher exited")
 	case <-time.After(100 * time.Millisecond):
 	}
+
 	close(release)
 	select {
 	case <-done:

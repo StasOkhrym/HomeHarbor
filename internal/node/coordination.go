@@ -307,8 +307,7 @@ func runCoordination(
 		return wsjson.Write(writeContext, connection, value)
 	}
 	capabilities := []string{
-		controlprotocol.CapabilityRelay,
-		controlprotocol.CapabilityUDPPairV2,
+		controlprotocol.CapabilityUDPPair,
 		controlprotocol.CapabilitySplitDNS,
 	}
 	if cfg.CandidateProvider != nil || cfg.CandidateHandler != nil {
@@ -336,7 +335,7 @@ func runCoordination(
 		return fmt.Errorf("read coordination welcome: %w", err)
 	}
 	if welcome.Type != "welcome" || welcome.Protocol.Version != controlprotocol.CurrentVersion ||
-		(!welcome.Protocol.Has(controlprotocol.CapabilityRelay) && !welcome.Protocol.Has(controlprotocol.CapabilityUDPPairV2)) {
+		!welcome.Protocol.Has(controlprotocol.CapabilityUDPPair) {
 		return errors.New("coordination protocol negotiation failed")
 	}
 	if (cfg.CandidateProvider != nil || cfg.CandidateHandler != nil) &&

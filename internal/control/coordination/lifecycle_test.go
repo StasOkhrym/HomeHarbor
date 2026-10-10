@@ -23,6 +23,7 @@ func TestCoordinationRuntimeJoinsHijackedWebSockets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	envelope, err := snapshot.Sign(
 		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
 		key,
@@ -31,6 +32,7 @@ func TestCoordinationRuntimeJoinsHijackedWebSockets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	h := NewHandler(
 		coordinationAuthStub{},
 		nil,
@@ -40,8 +42,10 @@ func TestCoordinationRuntimeJoinsHijackedWebSockets(t *testing.T) {
 	)
 	s := httptest.NewServer(h)
 	defer s.Close()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+
 	c, _, err := websocket.Dial(
 		ctx,
 		"ws"+strings.TrimPrefix(s.URL, "http"),
@@ -51,29 +55,34 @@ func TestCoordinationRuntimeJoinsHijackedWebSockets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = c.CloseNow() }()
+
 	if err := wsjson.Write(
 		ctx,
 		c,
 		controlprotocol.Hello{
 			DeviceID:     "device-1",
 			Versions:     []uint16{controlprotocol.CurrentVersion},
-			Capabilities: []string{controlprotocol.CapabilityUDPPairV2},
+			Capabilities: []string{controlprotocol.CapabilityUDPPair},
 		},
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	for range 2 {
 		var message map[string]any
+
 		if err := wsjson.Read(ctx, c, &message); err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	// net/http Shutdown does not own hijacked sockets. The coordination
 	// component must close and join them before App releases DB/Redis stores.
 	owner, ok := any(h).(interface{ Run(context.Context) error })
 	if !ok {
 		t.Fatal("coordination WebSockets have no runtime shutdown owner")
 	}
+
 	runtimeCtx, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- owner.Run(runtimeCtx) }()
@@ -86,19 +95,27 @@ func TestCoordinationRuntimeJoinsHijackedWebSockets(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("shutdown did not join active coordination handler")
 	}
+
 	h.hub.mu.Lock()
 	peers := len(h.hub.peers)
+
 	h.hub.mu.Unlock()
+
 	if peers != 0 {
 		t.Fatal("Run returned while a session remained registered")
 	}
+
 	var message map[string]any
+
 	if err := wsjson.Read(ctx, c, &message); err == nil {
 		t.Fatal("runtime left upgraded socket open")
 	}
+
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
+
 	h.ServeHTTP(w, r)
+
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("new session admitted after shutdown: %d", w.Code)
 	}

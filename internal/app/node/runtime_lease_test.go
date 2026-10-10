@@ -29,7 +29,7 @@ func TestRelayAdmissionReadsCurrentLease(t *testing.T) {
 		headers <- r.Header.Get("Authorization")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).
-			Encode(node.RelaySession{Ticket: "ticket", SessionID: "session", DestinationDeviceID: "destination", RelayURL: "wss://relay.test/relay/udp/v2", RelayTransport: protocol.CapabilityUDPPairV2})
+			Encode(node.RelaySession{Ticket: "ticket", SessionID: "session", DestinationDeviceID: "destination", RelayURL: "wss://relay.test/relay/udp", RelayTransport: protocol.CapabilityUDPPair})
 	}))
 	defer server.Close()
 	cfg := config.DefaultClient()

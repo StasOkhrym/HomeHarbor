@@ -70,7 +70,6 @@ type Server struct {
 	companionChallenges *companionChallengeStore
 	relayIssuer         RelaySessionIssuer
 	relayURL            string
-	relayUDPAddress     string
 	relayTTL            time.Duration
 	relayPeerAuthorizer RelayPeerAuthorizer
 	trustedProxy        []netip.Prefix

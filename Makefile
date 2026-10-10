@@ -49,7 +49,7 @@ security:
 	@case '$(SECURITY)' in all|fuzz|vulnerability) ;; *) echo 'Invalid SECURITY gate' >&2; exit 2;; esac
 ifneq ($(SECURITY),vulnerability)
 	cd "$(ROOT)" && go test ./internal/protocol -run '^$$' -fuzz '^FuzzCandidateUpdateJSON$$' -fuzztime=$(FUZZ_TIME)
-	cd "$(ROOT)" && go test ./internal/relay -run '^$$' -fuzz '^FuzzDecodePacket$$' -fuzztime=$(FUZZ_TIME)
+	cd "$(ROOT)" && go test ./internal/relay -run '^$$' -fuzz '^FuzzRelayTicketVerify$$' -fuzztime=$(FUZZ_TIME)
 	cd "$(ROOT)" && go test ./internal/snapshot -run '^$$' -fuzz '^FuzzDecodeSnapshot$$' -fuzztime=$(FUZZ_TIME)
 endif
 ifneq ($(SECURITY),fuzz)

@@ -22,9 +22,7 @@ session_ttl = "12h"
 ceremony_ttl = "5m"
 
 [relay]
-public_url = "wss://relay.example.com/relay/udp/v2"
-# Public host:port for the versioned UDP pair ingress. Leave empty while only
-# the WebSocket transport is exposed.
+public_url = "wss://relay.example.com/relay/udp"
 ticket_key_file = "/run/secrets/relay_ticket_key"
 ticket_ttl = "5m"
 

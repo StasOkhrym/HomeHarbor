@@ -14,6 +14,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/agent/dns"
 	"github.com/StasOkhrym/homeharbor/internal/node"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 // validateRuntime performs no enrollment, identity writes or endpoint discovery.
@@ -80,8 +81,7 @@ func validateRuntime(role Role, cfg config.Node) error {
 			return err
 		}
 	}
-	relayEnabled := cfg.Relay.WebSocketURL != "" || cfg.Relay.UDPAddress != "" ||
-		cfg.Relay.Ticket != ""
+	relayEnabled := cfg.Relay.WebSocketURL != "" || cfg.Relay.Ticket != ""
 	if !relayEnabled {
 		return nil
 	}
@@ -95,15 +95,10 @@ func validateRuntime(role Role, cfg config.Node) error {
 	if cfg.Relay.Ticket == "" && cfg.Identity.ControlURL == "" {
 		return errors.New("control URL is required to obtain relay admission")
 	}
-	relayURL, _ := url.Parse(cfg.Relay.WebSocketURL) // URL syntax was validated above.
-	v2 := relayURL != nil && relayURL.Path == "/relay/udp/v2"
-	if (v2 && relayURL.Scheme != "wss") || (cfg.Relay.UDPAddress != "" && !v2) {
-		return errors.New("legacy UDP ingress disabled; udp_pair_v2 TLS control required")
+	if err := protocol.ValidateRelayControlURL(cfg.Relay.WebSocketURL); err != nil {
+		return err
 	}
 	addresses := []string{cfg.Relay.ListenAddress, cfg.Relay.WireGuardAddress}
-	if cfg.Relay.UDPAddress != "" {
-		addresses = append(addresses, cfg.Relay.UDPAddress)
-	}
 	for _, address := range addresses {
 		// Syntax only: hostname resolution belongs to runtime and can fail
 		// transiently without turning construction into network discovery.

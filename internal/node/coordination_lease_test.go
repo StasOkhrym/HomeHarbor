@@ -33,6 +33,7 @@ func TestCoordinationReconnectReadsCurrentLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	leases := &changingLeases{
 		lease: protocol.CredentialLease{
 			DeviceID:   "device",
@@ -47,6 +48,7 @@ func TestCoordinationReconnectReadsCurrentLease(t *testing.T) {
 			return
 		}
 		defer func() { _ = c.CloseNow() }()
+
 		var hello protocol.Hello
 		if wsjson.Read(r.Context(), c, &hello) != nil {
 			return
@@ -58,23 +60,27 @@ func TestCoordinationReconnectReadsCurrentLease(t *testing.T) {
 				"type": "welcome",
 				"protocol": protocol.Negotiated{
 					Version:      protocol.CurrentVersion,
-					Capabilities: []string{protocol.CapabilityRelay},
+					Capabilities: []string{protocol.CapabilityUDPPair},
 				},
 			},
 		) != nil {
 			return
 		}
+
 		admissions <- r.Header.Get("Authorization")
 		var m any
+
 		_ = wsjson.Read(r.Context(), c, &m)
 	}))
 	defer server.Close()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
 		done <- RunCoordinationLoop(ctx, CoordinationConfig{URL: "ws" + server.URL[4:], Leases: leases, DeviceID: "device", NetworkID: "home", RootPublicKey: public, ReconnectInitial: time.Millisecond}, &snapshotRecorder{})
 	}()
 	defer func() { cancel(); <-done }()
+
 	select {
 	case first := <-admissions:
 		if first != "Bearer first" {
@@ -83,8 +89,10 @@ func TestCoordinationReconnectReadsCurrentLease(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("no initial admission")
 	}
+
 	leases.mu.Lock()
 	leases.lease.Credential = "second"
+
 	leases.mu.Unlock()
 	select {
 	case second := <-admissions:

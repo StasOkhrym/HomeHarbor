@@ -118,6 +118,7 @@ func TestEnrollmentAPIRequiresAdminAndEnrollsDevice(t *testing.T) {
 
 func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) {
 	deviceService := devices.NewService(memorydevices.NewRepository(), time.Now, nil)
+
 	tokenA, err := deviceService.IssueEnrollmentToken(
 		context.Background(),
 		devices.RoleClient,
@@ -126,6 +127,7 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	deviceA, err := deviceService.Enroll(
 		context.Background(),
 		validEnrollmentRequest(t, tokenA.Token, "a"),
@@ -133,6 +135,7 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	tokenB, err := deviceService.IssueEnrollmentToken(
 		context.Background(),
 		devices.RoleGateway,
@@ -141,6 +144,7 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	deviceB, err := deviceService.Enroll(
 		context.Background(),
 		validEnrollmentRequest(t, tokenB.Token, "b"),
@@ -148,14 +152,16 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	issuer := relay.TicketIssuer{Key: []byte("01234567890123456789012345678901")}
+
 	handler := newTestServer(
 		deviceService,
 		allowAuthorizer{},
 		Dependencies{
 			Relay: RelayDependencies{
 				Issuer: issuer,
-				URL:    "wss://relay.example.com/relay/udp/v2",
+				URL:    "wss://relay.example.com/relay/udp",
 				TTL:    time.Minute,
 			},
 		},
@@ -165,33 +171,40 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 		http.MethodPost,
 		"/api/v1/relay-sessions",
 		bytes.NewBufferString(
-			`{"session_id":"session-1","destination_device_id":"`+deviceB.ID+`","capabilities":["udp_pair_v2"]}`,
+			`{"session_id":"session-1","destination_device_id":"`+deviceB.ID+`","capabilities":["udp_pair"]}`,
 		),
 	)
 	request.Header.Set("Authorization", "Bearer "+deviceA.Credential)
 	recorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(recorder, request)
+
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
+
 	var response struct {
 		RelayURL        string `json:"relay_url"`
 		RelayUDPAddress string `json:"relay_udp_address"`
 		Ticket          string `json:"ticket"`
 		RelayTransport  string `json:"relay_transport"`
 	}
+
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 		t.Fatal(err)
 	}
-	if response.RelayURL != "wss://relay.example.com/relay/udp/v2" ||
+
+	if response.RelayURL != "wss://relay.example.com/relay/udp" ||
 		response.RelayUDPAddress != "" ||
-		response.RelayTransport != "udp_pair_v2" ||
+		response.RelayTransport != "udp_pair" ||
 		response.Ticket == "" {
 		t.Fatalf("incomplete relay response=%#v", response)
 	}
+
 	if claims, err := issuer.Verify(response.Ticket); err != nil || claims.DeviceID != deviceA.ID {
 		t.Fatalf("ticket claims=%#v error=%v", claims, err)
 	}
+
 	legacy := httptest.NewRecorder()
 	legacyRequest := httptest.NewRequest(
 		http.MethodPost,
@@ -200,12 +213,14 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 	)
 	legacyRequest.Header.Set("Authorization", "Bearer "+deviceA.Credential)
 	handler.ServeHTTP(legacy, legacyRequest)
+
 	if legacy.Code != http.StatusUpgradeRequired ||
 		!strings.Contains(legacy.Body.String(), protocol.ErrorUpgradeRequired) {
 		t.Fatalf("legacy ingress advertised: %d %s", legacy.Code, legacy.Body.String())
 	}
 
 	unauthorized := httptest.NewRecorder()
+
 	handler.ServeHTTP(
 		unauthorized,
 		httptest.NewRequest(
@@ -214,6 +229,7 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 			strings.NewReader(`{"session_id":"s","destination_device_id":"`+deviceB.ID+`"}`),
 		),
 	)
+
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized status=%d", unauthorized.Code)
 	}
@@ -221,6 +237,7 @@ func TestRelaySessionAPIRequiresDeviceAuthenticationAndActivePeer(t *testing.T) 
 
 func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
 	deviceService := devices.NewService(memorydevices.NewRepository(), time.Now, nil)
+
 	firstToken, err := deviceService.IssueEnrollmentToken(
 		context.Background(),
 		devices.RoleClient,
@@ -229,6 +246,7 @@ func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	first, err := deviceService.Enroll(
 		context.Background(),
 		validEnrollmentRequest(t, firstToken.Token, "first"),
@@ -236,6 +254,7 @@ func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	secondToken, err := deviceService.IssueEnrollmentToken(
 		context.Background(),
 		devices.RoleClient,
@@ -244,6 +263,7 @@ func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	second, err := deviceService.Enroll(
 		context.Background(),
 		validEnrollmentRequest(t, secondToken.Token, "second"),
@@ -251,14 +271,16 @@ func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	issuer := relay.TicketIssuer{Key: []byte("01234567890123456789012345678901")}
+
 	handler := newTestServer(
 		deviceService,
 		allowAuthorizer{},
 		Dependencies{
 			Relay: RelayDependencies{
 				Issuer: issuer,
-				URL:    "wss://relay.example.com/relay/v1",
+				URL:    "wss://relay.example.com/relay/udp",
 				TTL:    time.Minute,
 			},
 		},
@@ -270,7 +292,9 @@ func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
 	)
 	request.Header.Set("Authorization", "Bearer "+first.Credential)
 	recorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(recorder, request)
+
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("same-role relay status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -278,6 +302,7 @@ func TestRelaySessionRejectsSameRolePeer(t *testing.T) {
 
 func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
 	deviceService := devices.NewService(memorydevices.NewRepository(), time.Now, nil)
+
 	clientToken, err := deviceService.IssueEnrollmentToken(
 		context.Background(),
 		devices.RoleClient,
@@ -286,6 +311,7 @@ func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	client, err := deviceService.Enroll(
 		context.Background(),
 		validEnrollmentRequest(t, clientToken.Token, "client"),
@@ -293,6 +319,7 @@ func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	gatewayToken, err := deviceService.IssueEnrollmentToken(
 		context.Background(),
 		devices.RoleGateway,
@@ -301,6 +328,7 @@ func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	gateway, err := deviceService.Enroll(
 		context.Background(),
 		validEnrollmentRequest(t, gatewayToken.Token, "gateway"),
@@ -308,14 +336,16 @@ func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	issuer := relay.TicketIssuer{Key: []byte("01234567890123456789012345678901")}
+
 	handler := newTestServer(
 		deviceService,
 		allowAuthorizer{},
 		Dependencies{
 			Relay: RelayDependencies{
 				Issuer:         issuer,
-				URL:            "wss://relay.example.com/relay/v1",
+				URL:            "wss://relay.example.com/relay/udp",
 				TTL:            time.Minute,
 				PeerAuthorizer: func(context.Context, devices.Device, devices.Device) bool { return false },
 			},
@@ -328,7 +358,9 @@ func TestRelaySessionUsesConfiguredPeerAuthorizer(t *testing.T) {
 	)
 	request.Header.Set("Authorization", "Bearer "+client.Credential)
 	recorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(recorder, request)
+
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("unauthorized peer status=%d body=%s", recorder.Code, recorder.Body.String())
 	}

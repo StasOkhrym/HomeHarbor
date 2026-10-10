@@ -57,19 +57,19 @@ func TestInvalidRuntimeDoesNotCreateIdentityOrEnroll(t *testing.T) {
 		name   string
 		mutate func(*config.Node)
 	}{
-		{"relay pair", func(c *config.Node) { c.Relay.WebSocketURL = "wss://relay.localhost/relay/udp/v2" }},
+		{"relay pair", func(c *config.Node) { c.Relay.WebSocketURL = "wss://relay.localhost/relay/udp" }},
 		{"candidates", func(c *config.Node) { c.Direct.Candidates = "not-an-endpoint" }},
 		{"routes", func(c *config.Node) { c.WireGuard.Routes = "not-a-prefix" }},
 		{"control URL", func(c *config.Node) { c.Identity.ControlURL = ":invalid" }},
 		{"signed trust", func(c *config.Node) { c.WireGuard.InterfaceName = "wg-test" }},
 		{"relay listen", func(c *config.Node) {
-			c.Relay.WebSocketURL = "wss://relay.localhost/relay/udp/v2"
+			c.Relay.WebSocketURL = "wss://relay.localhost/relay/udp"
 			c.Relay.SessionID = "test-pair"
 			c.Relay.DestinationDevice = "test-peer"
 			c.Relay.ListenAddress = ""
 		}},
-		{"insecure v2", func(c *config.Node) {
-			c.Relay.WebSocketURL = "ws://relay.localhost/relay/udp/v2"
+		{"insecure relay", func(c *config.Node) {
+			c.Relay.WebSocketURL = "ws://relay.localhost/relay/udp"
 			c.Relay.SessionID = "test-pair"
 			c.Relay.DestinationDevice = "test-peer"
 		}},
@@ -99,14 +99,16 @@ func TestWhitespaceRelaySessionDoesNotCreateIdentityOrEnroll(t *testing.T) {
 	for _, sessionID := range []string{" ", "\t\n"} {
 		t.Run(sessionID, func(t *testing.T) {
 			cfg, calls := runtimeFixture(t)
-			cfg.Relay.WebSocketURL = "wss://relay.localhost/relay/udp/v2"
+			cfg.Relay.WebSocketURL = "wss://relay.localhost/relay/udp"
 			cfg.Relay.SessionID = sessionID
 			cfg.Relay.DestinationDevice = "test-peer"
 
 			app, err := NewRuntime(context.Background(), Client, cfg)
+
 			if err == nil || app != nil {
 				t.Error("whitespace relay session accepted before enrollment")
 			}
+
 			assertNoStartupEffects(t, cfg, calls)
 		})
 	}
@@ -340,24 +342,30 @@ func TestDenyPrecedesEnrollmentAndRelayAdmission(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+
 	cfg.Identity.ControlURL = server.URL
+
 	state, err := nodedomain.NewState()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	cfg.WireGuard.PeerPublicKey = state.WireGuard.PublicKey
 	cfg.WireGuard.ListenPort = 51820
 	cfg.WireGuard.OverlayAddress = "100.64.0.1/32"
-	cfg.Relay.WebSocketURL = "ws://127.0.0.1:1/relay"
+	cfg.Relay.WebSocketURL = "wss://127.0.0.1:1/relay/udp"
 	cfg.Relay.SessionID = "session"
 	cfg.Relay.DestinationDevice = "peer"
+
 	app, err := NewRuntime(context.Background(), Gateway, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := app.Run(context.Background()); err == nil {
 		t.Fatal("relay admission unexpectedly succeeded")
 	}
+
 	if enrollment.Load() != 1 || rotation.Load() != 1 || relay.Load() != 1 {
 		t.Fatalf(
 			"missing admission coverage: enroll=%d rotate=%d relay=%d",

@@ -16,7 +16,7 @@ import (
 	relayruntime "github.com/StasOkhrym/homeharbor/internal/relay"
 )
 
-func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
+func TestCanonicalRelayRoundTrip(t *testing.T) {
 	cfg := config.RelayServer{}
 	cfg.Server.ListenAddress = "127.0.0.1:0"
 	cfg.Server.UDPListenAddress = "127.0.0.1:0"
@@ -50,11 +50,12 @@ func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
 	waitForRelayReady(t, "https://"+tcpListener.Addr().String(), client)
 
 	const sessionID = "production-relay-acceptance"
-	ticketGateway, err := app.tickets.IssueForPeer(sessionID, "gateway", "client", time.Minute)
+	issuer := relayruntime.TicketIssuer{Key: []byte(cfg.Security.TicketKey)}
+	ticketGateway, err := issuer.IssueForPeer(sessionID, "gateway", "client", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ticketClient, err := app.tickets.IssueForPeer(sessionID, "client", "gateway", time.Minute)
+	ticketClient, err := issuer.IssueForPeer(sessionID, "client", "gateway", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,8 +67,8 @@ func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
 	bridgeErrors := make(chan error, 2)
 	go func() {
 		bridgeErrors <- node.RunRelayBridge(ctx, node.RelayBridgeConfig{
-			RelayURL:            "wss://" + tcpListener.Addr().String() + "/relay/udp/v2",
-			RelayTransport:      relayruntime.UDPPairV2Protocol,
+			RelayURL:            "wss://" + tcpListener.Addr().String() + "/relay/udp",
+			RelayTransport:      relayruntime.UDPPairProtocol,
 			RelayHTTPClient:     client,
 			Ticket:              ticketGateway,
 			SessionID:           sessionID,
@@ -79,8 +80,8 @@ func TestRelayAppBridgesTwoNodesThroughProductionListeners(t *testing.T) {
 	}()
 	go func() {
 		bridgeErrors <- node.RunRelayBridge(ctx, node.RelayBridgeConfig{
-			RelayURL:            "wss://" + tcpListener.Addr().String() + "/relay/udp/v2",
-			RelayTransport:      relayruntime.UDPPairV2Protocol,
+			RelayURL:            "wss://" + tcpListener.Addr().String() + "/relay/udp",
+			RelayTransport:      relayruntime.UDPPairProtocol,
 			RelayHTTPClient:     client,
 			Ticket:              ticketClient,
 			SessionID:           sessionID,

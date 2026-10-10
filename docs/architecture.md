@@ -65,7 +65,7 @@ whole update before changes; a tunnel-only deny guard covers runtime application
 A partial failure stays fail-closed, never claims a mixed revision is applied.
 Unrelated host forwarding must not be changed by tunnel policy.
 
-Relay v2 reserves peer-pair UDP ingress through authenticated WSS. Endpoint binding
+The relay reserves peer-pair UDP ingress through authenticated WSS. Endpoint binding
 requires reachability proof and authenticated confirmation. Datagrams do not
 contain bearer tickets. Rebinding requires authentication; ticket expiry alone
 does not tear down an already established active session during control outage.
@@ -129,7 +129,7 @@ The product is HomeHarbor and its Go module is `github.com/StasOkhrym/homeharbor
 Configuration overrides use `HOMEHARBOR_*`; container mounts use `/etc/homeharbor`.
 Cookies, Redis namespaces, database identity and nftables ownership use the same
 product namespace. Snapshot/invite/claim signatures use `homeharbor/...` domains;
-relay binding messages use `HHU2`. There are no previous-product aliases.
+relay binding messages use `HHUP` probes and `HHUC` challenges. There are no previous-product aliases.
 
 This is a deliberate breaking rename of a local experiment, not a rolling
 upgrade. Old signed state and credentials are not claimed compatible. Local

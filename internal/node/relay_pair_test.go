@@ -15,9 +15,10 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/relay"
 )
 
-func TestNodeRejectsLegacyUDPRelayAddress(t *testing.T) {
+func TestNodeRejectsOldRelayEndpointEvenWithCapability(t *testing.T) {
 	cfg := RelayBridgeConfig{
-		RelayUDPAddress:     "127.0.0.1:51820",
+		RelayURL:            "wss://relay.example/relay/udp/v2",
+		RelayTransport:      relay.UDPPairProtocol,
 		Ticket:              "ticket",
 		SessionID:           "s",
 		DeviceID:            "a",
@@ -25,9 +26,40 @@ func TestNodeRejectsLegacyUDPRelayAddress(t *testing.T) {
 		ListenAddress:       "127.0.0.1:0",
 		WireGuardAddress:    "127.0.0.1:9",
 	}
+
 	if err := validateRelayBridgeConfig(cfg); err == nil {
-		t.Fatal("node enabled legacy bearer UDP ingress without versioned TLS control")
+		t.Fatal("old relay endpoint accepted with current capability")
 	}
+
+	cfg.RelayURL = "wss://relay.example/relay/udp"
+
+	if err := validateRelayBridgeConfig(cfg); err != nil {
+		t.Fatalf("canonical relay endpoint rejected: %v", err)
+	}
+}
+
+func freeUDPAddress(t *testing.T) *net.UDPAddr {
+	t.Helper()
+	connection := listenUDP(t)
+	address := connection.LocalAddr().(*net.UDPAddr)
+
+	if err := connection.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	return address
+}
+
+func listenUDP(t *testing.T) *net.UDPConn {
+	t.Helper()
+
+	connection, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = connection.Close() })
+	return connection
 }
 
 type waitingRelayWorker struct{ started, cancelled, release, finished chan struct{} }
@@ -83,23 +115,28 @@ func TestKernelRelayPathOwnerAwaitsCancelledBridge(t *testing.T) {
 	}
 }
 
-func TestNodeUDPV2LoopPreservesSocketDuringRenewalAndControlFailure(t *testing.T) {
+func TestNodeUDPPairLoopPreservesSocketDuringRenewalAndControlFailure(t *testing.T) {
 	i := relay.TicketIssuer{Key: []byte("01234567890123456789012345678901")}
-	r, err := relay.NewUDPPairV2(
+	r, err := relay.NewUDPPair(
 		i,
-		relay.UDPPairV2Config{ListenIP: net.ParseIP("127.0.0.1"), MaxPeersPerDevice: 1},
+		relay.UDPPairConfig{ListenIP: net.ParseIP("127.0.0.1"), MaxPeersPerDevice: 1},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = r.Close() }()
+
 	s := httptest.NewTLSServer(r)
 	defer func() { s.Close() }()
+
 	wg := listenUDP(t)
+
 	local := freeUDPAddress(t)
+
 	ticket, _ := i.IssueForPeer("s", "a", "b", time.Minute)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	observed := make(chan netip.AddrPort, 16)
 	var calls atomic.Int32
 	var outage atomic.Bool
@@ -108,11 +145,12 @@ func TestNodeUDPV2LoopPreservesSocketDuringRenewalAndControlFailure(t *testing.T
 		if outage.Load() {
 			return "", errors.New("control unavailable")
 		}
+
 		return i.IssueForPeer("s", "a", "b", time.Minute)
 	}
 	cfg := RelayBridgeConfig{
-		RelayTransport:      relay.UDPPairV2Protocol,
-		RelayURL:            "wss" + strings.TrimPrefix(s.URL, "https"),
+		RelayTransport:      relay.UDPPairProtocol,
+		RelayURL:            "wss" + strings.TrimPrefix(s.URL, "https") + "/relay/udp",
 		RelayHTTPClient:     s.Client(),
 		Ticket:              ticket,
 		TicketLifetime:      80 * time.Millisecond,
@@ -140,8 +178,9 @@ func TestNodeUDPV2LoopPreservesSocketDuringRenewalAndControlFailure(t *testing.T
 	select {
 	case first = <-observed:
 	case <-time.After(2 * time.Second):
-		t.Fatal("node v2 did not bind")
+		t.Fatal("node UDP pair did not bind")
 	}
+
 	select {
 	case second := <-observed:
 		if first != second {
@@ -150,20 +189,24 @@ func TestNodeUDPV2LoopPreservesSocketDuringRenewalAndControlFailure(t *testing.T
 	case <-time.After(time.Second):
 		t.Fatal("node did not renew")
 	}
+
 	outage.Store(true)
 	before := calls.Load()
 	deadline := time.Now().Add(time.Second)
 	for calls.Load() <= before && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
+
 	if calls.Load() <= before {
 		t.Fatal("renewal provider not retried")
 	}
+
 	// Active packet-plane ownership must not release the fixed local endpoint
 	// simply because the ticket provider cannot contact control.
 	u, err := net.ListenUDP("udp", local)
 	if err == nil {
 		_ = u.Close()
+
 		t.Fatal("control outage released active local socket")
 	}
 }

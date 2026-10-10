@@ -36,9 +36,11 @@ func TestLoadControlResolvesFileSecretAndEnvironmentOverride(t *testing.T) {
 	signingKeyPath := filepath.Join(dir, "session-key")
 	ceremonyKeyPath := filepath.Join(dir, "ceremony-key")
 	relayKeyPath := filepath.Join(dir, "relay-key")
+
 	if err := os.WriteFile(secretPath, []byte("secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.WriteFile(
 		signingKeyPath,
 		[]byte("01234567890123456789012345678901\n"),
@@ -46,6 +48,7 @@ func TestLoadControlResolvesFileSecretAndEnvironmentOverride(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.WriteFile(
 		ceremonyKeyPath,
 		[]byte("abcdefghijklmnopqrstuvwxyzABCDEF\n"),
@@ -53,6 +56,7 @@ func TestLoadControlResolvesFileSecretAndEnvironmentOverride(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.WriteFile(
 		relayKeyPath,
 		[]byte("01234567890123456789012345678901\n"),
@@ -60,6 +64,7 @@ func TestLoadControlResolvesFileSecretAndEnvironmentOverride(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	configPath := filepath.Join(dir, "control.toml")
 	content := `[server]
 listen_address = ":8080"
@@ -75,7 +80,7 @@ ceremony_encryption_key_file = "` + ceremonyKeyPath + `"
 session_ttl = "12h"
 ceremony_ttl = "5m"
 [relay]
-public_url = "https://relay.example.com"
+public_url = "wss://relay.example.com/relay/udp"
 ticket_key_file = "` + relayKeyPath + `"
 ticket_ttl = "5m"
 [security]
@@ -83,15 +88,18 @@ root_public_key_file = "/run/secrets/root_public_key"
 [observability]
 metrics_address = ":9090"
 `
+
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	t.Setenv("HOMEHARBOR_SERVER_LISTEN_ADDRESS", ":8181")
 
 	cfg, err := LoadControl(Sources{File: configPath})
 	if err != nil {
 		t.Fatalf("LoadControl() error = %v", err)
 	}
+
 	if cfg.Server.ListenAddress != ":8181" {
 		t.Fatalf("listen address = %q", cfg.Server.ListenAddress)
 	}
@@ -141,7 +149,7 @@ func TestControlValidationRejectsUnsafeAuthenticationSettings(t *testing.T) {
 			CeremonyTTL:           "5m",
 		},
 		Relay: Relay{
-			PublicURL: "wss://relay.example.com",
+			PublicURL: "wss://relay.example.com/relay/udp",
 			TicketKey: "01234567890123456789012345678901",
 			TicketTTL: "5m",
 		},
@@ -162,7 +170,9 @@ func TestControlValidationRejectsUnsafeAuthenticationSettings(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := valid
+
 			test.mutate(&cfg)
+
 			if err := cfg.validate(); err == nil {
 				t.Fatal("validate() error = nil")
 			}
@@ -183,11 +193,12 @@ func TestControlValidationRequiresTrustedRootPublicKey(t *testing.T) {
 			CeremonyTTL:           "5m",
 		},
 		Relay: Relay{
-			PublicURL: "wss://relay.example.com",
+			PublicURL: "wss://relay.example.com/relay/udp",
 			TicketKey: "01234567890123456789012345678901",
 			TicketTTL: "5m",
 		},
 	}
+
 	if err := cfg.validate(); err == nil {
 		t.Fatal("validate() accepted control configuration without trusted root public key")
 	}
@@ -240,12 +251,15 @@ func TestLoadClientReadsTOMLAndFileReferences(t *testing.T) {
 	dir := t.TempDir()
 	tokenPath := filepath.Join(dir, "enrollment-token")
 	ticketPath := filepath.Join(dir, "relay-ticket")
+
 	if err := os.WriteFile(tokenPath, []byte("invite-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.WriteFile(ticketPath, []byte("relay-ticket\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	configPath := filepath.Join(dir, "client.toml")
 	content := `[node]
 state_path = "state/custom-client.json"
@@ -253,11 +267,9 @@ control_url = "https://control.example"
 enrollment_token_file = "` + tokenPath + `"
 name = "travel-client"
 [relay]
-websocket_url = "wss://relay.example/relay/v1"
-udp_address = "relay.example:51820"
+websocket_url = "wss://relay.example/relay/udp"
 ticket_file = "` + ticketPath + `"
 destination_device_id = "gateway"
-stun_server = "stun:stun.example:3478"
 [wireguard]
 interface = "wg0"
 listen_port = 51830
@@ -267,13 +279,16 @@ root_public_key_file = "state/root.pub"
 [direct]
 candidates = "203.0.113.2:51820"
 `
+
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	cfg, err := LoadClient(Sources{File: configPath})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if cfg.Identity.StatePath != "state/custom-client.json" ||
 		cfg.Identity.Token != "invite-token" ||
 		cfg.Relay.Ticket != "relay-ticket" ||

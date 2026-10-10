@@ -7,8 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
-	"strings"
 	"time"
+
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 // Dependencies separates transport assembly from domain service capabilities.
@@ -66,7 +67,6 @@ type RelayDependencies struct {
 	Issuer         RelaySessionIssuer
 	PeerAuthorizer RelayPeerAuthorizer
 	URL            string
-	UDPAddress     string
 	TTL            time.Duration
 }
 
@@ -108,7 +108,7 @@ func NewServer(deps Dependencies) (*Server, error) {
 		return nil, errors.New("activation challenge and claim must be configured together")
 	}
 	relay := deps.Relay
-	if relay.Issuer != nil || relay.URL != "" || relay.UDPAddress != "" ||
+	if relay.Issuer != nil || relay.URL != "" ||
 		relay.PeerAuthorizer != nil {
 		if relay.Issuer == nil || relay.PeerAuthorizer == nil || relay.URL == "" ||
 			relay.TTL <= 0 ||
@@ -116,6 +116,9 @@ func NewServer(deps Dependencies) (*Server, error) {
 			return nil, errors.New(
 				"relay issuance requires devices, peer authorization, URL and ticket lifetime",
 			)
+		}
+		if err := protocol.ValidateRelayControlURL(relay.URL); err != nil {
+			return nil, err
 		}
 	}
 	if len(security.RootPublicKey) != 0 && (len(security.RootPublicKey) != ed25519.PublicKeySize ||
@@ -162,8 +165,7 @@ func NewServer(deps Dependencies) (*Server, error) {
 		activationClaim:     deps.Activation.Claim,
 		relayIssuer:         relay.Issuer,
 		relayPeerAuthorizer: relay.PeerAuthorizer,
-		relayURL:            strings.TrimRight(relay.URL, "/"),
-		relayUDPAddress:     strings.TrimSpace(relay.UDPAddress),
+		relayURL:            relay.URL,
 		relayTTL:            relay.TTL,
 		coordination:        deps.Coordination,
 		snapshotHistory:     deps.SnapshotHistory,

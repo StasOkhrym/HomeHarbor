@@ -32,11 +32,52 @@ ceremony_encryption_key = "abcdefghijklmnopqrstuvwxyzABCDEF"
 session_ttl = "12h"
 ceremony_ttl = "5m"
 [relay]
-public_url = "https://relay.example"
+public_url = "wss://relay.example/relay/udp"
 ticket_key = "01234567890123456789012345678901"
 [security]
 root_public_key_file = "root.pub"
 ` + extra
+}
+
+func TestControlRejectsOldRelayEndpointAtStartup(t *testing.T) {
+	canonical := validControlFile("")
+
+	if _, err := LoadControl(Sources{File: writeConfig(t, canonical), Env: noEnv}); err != nil {
+		t.Fatalf("canonical relay endpoint rejected: %v", err)
+	}
+
+	old := strings.Replace(canonical, "/relay/udp\"", "/relay/udp/v2\"", 1)
+
+	if _, err := LoadControl(Sources{File: writeConfig(t, old), Env: noEnv}); err == nil {
+		t.Fatal("old relay endpoint accepted at startup")
+	}
+}
+
+func TestRemovedRelaySettingsAreRejected(t *testing.T) {
+	for _, setting := range []string{"udp_address", "stun_server"} {
+		t.Run("node "+setting, func(t *testing.T) {
+			path := writeConfig(t, "[relay]\n"+setting+" = 'obsolete'\n")
+
+			if _, err := LoadClient(Sources{File: path, Env: noEnv}); err == nil {
+				t.Fatal("obsolete node relay setting accepted")
+			}
+		})
+	}
+
+	t.Run("control public UDP", func(t *testing.T) {
+		body := strings.Replace(
+			validControlFile(""),
+			"[relay]\n",
+			"[relay]\npublic_udp_address = 'relay.example:51820'\n",
+			1,
+		)
+
+		path := writeConfig(t, body)
+
+		if _, err := LoadControl(Sources{File: path, Env: noEnv}); err == nil {
+			t.Fatal("obsolete control public UDP setting accepted")
+		}
+	})
 }
 
 func TestControlSelectedInlineSecretDoesNotOpenLowerFile(t *testing.T) {

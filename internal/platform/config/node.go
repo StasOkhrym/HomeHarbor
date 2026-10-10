@@ -29,13 +29,11 @@ type NodeIdentity struct {
 
 type NodeRelay struct {
 	WebSocketURL      string `toml:"websocket_url"`
-	UDPAddress        string `toml:"udp_address"`
 	TicketFile        string `toml:"ticket_file"`
 	SessionID         string `toml:"session_id"`
 	DestinationDevice string `toml:"destination_device_id"`
 	ListenAddress     string `toml:"listen_address"`
 	WireGuardAddress  string `toml:"wireguard_address"`
-	STUNServer        string `toml:"stun_server"`
 	Ticket            string `toml:"-"`
 }
 

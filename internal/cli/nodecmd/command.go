@@ -18,11 +18,11 @@ type runner func(context.Context, nodeapp.Role, config.Node) error
 var configKeys = map[string]string{
 	"state": "node.state_path", "control": "node.control_url", "token": "node.token",
 	"refresh": "node.refresh", "name": "node.name",
-	"relay": "relay.websocket_url", "relay-udp": "relay.udp_address",
+	"relay":        "relay.websocket_url",
 	"relay-ticket": "relay.ticket", "relay-session": "relay.session_id",
 	"relay-destination": "relay.destination_device_id", "bridge-listen": "relay.listen_address",
-	"wireguard-address": "relay.wireguard_address", "stun": "relay.stun_server",
-	"wg-interface": "wireguard.interface", "wg-port": "wireguard.listen_port",
+	"wireguard-address": "relay.wireguard_address",
+	"wg-interface":      "wireguard.interface", "wg-port": "wireguard.listen_port",
 	"wg-peer-key": "wireguard.peer_public_key", "wg-overlay": "wireguard.overlay_address",
 	"wg-allowed-prefixes": "wireguard.allowed_prefixes", "wg-routes": "wireguard.routes",
 	"coordination": "coordination.url", "root-public-key": "coordination.root_public_key_file",
@@ -107,12 +107,6 @@ func bindFlags(cmd *cobra.Command, cfg *config.Node, path *string) {
 		"authenticated relay control URL",
 	)
 	f.StringVar(
-		&cfg.Relay.UDPAddress,
-		"relay-udp",
-		cfg.Relay.UDPAddress,
-		"legacy UDP relay endpoint",
-	)
-	f.StringVar(
 		&cfg.Relay.Ticket,
 		"relay-ticket",
 		cfg.Relay.Ticket,
@@ -137,7 +131,6 @@ func bindFlags(cmd *cobra.Command, cfg *config.Node, path *string) {
 		cfg.Relay.WireGuardAddress,
 		"local WireGuard UDP endpoint",
 	)
-	f.StringVar(&cfg.Relay.STUNServer, "stun", cfg.Relay.STUNServer, "optional UDP STUN URI")
 	f.StringVar(
 		&cfg.WireGuard.InterfaceName,
 		"wg-interface",

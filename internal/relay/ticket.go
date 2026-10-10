@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -37,17 +38,16 @@ type TicketIssuer struct {
 	Now func() time.Time
 }
 
-func (i TicketIssuer) Issue(sessionID, deviceID string, ttl time.Duration) (string, error) {
-	return i.issue(sessionID, deviceID, "", ttl)
-}
-
 // IssueForPeer binds a relay credential to the exact peer it may reach. The
-// WebSocket transport still accepts legacy unbound tickets, while the UDP
-// pair transport requires this stronger claim before it can bind an address.
+// UDP pair transport requires this claim before it can bind an address.
 func (i TicketIssuer) IssueForPeer(
 	sessionID, deviceID, destinationDeviceID string,
 	ttl time.Duration,
 ) (string, error) {
+	if destinationDeviceID == "" {
+		return "", errors.New("relay destination is required")
+	}
+
 	return i.issue(sessionID, deviceID, destinationDeviceID, ttl)
 }
 
@@ -64,16 +64,21 @@ func (i TicketIssuer) issue(
 	if destinationDeviceID == deviceID {
 		return "", errors.New("relay destination must be a different device")
 	}
+
 	now := time.Now
 	if i.Now != nil {
 		now = i.Now
 	}
+
 	// A fresh admission/rebind must not replay a credential issued in the same
-	// second. Older transports can still verify claims without this field.
+	// second. Verification still accepts claims without this field, but UDP
+	// admission requires it.
 	var nonce [32]byte
+
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return "", fmt.Errorf("generate ticket ID: %w", err)
 	}
+
 	payload, err := json.Marshal(
 		TicketClaims{
 			TicketID:            base64.RawURLEncoding.EncodeToString(nonce[:]),
@@ -88,7 +93,9 @@ func (i TicketIssuer) issue(
 	if err != nil {
 		return "", err
 	}
+
 	encoded := base64.RawURLEncoding.EncodeToString(payload)
+
 	return encoded + "." + i.sign(encoded), nil
 }
 
@@ -156,4 +163,13 @@ func (c TicketClaims) ValidatePeer(sessionID, deviceID, destinationDeviceID stri
 	}
 
 	return nil
+}
+
+func relayTicketFromRequest(r *http.Request) string {
+	value := strings.TrimSpace(r.Header.Get("Authorization"))
+	if len(value) <= len("Bearer ") || !strings.EqualFold(value[:len("Bearer ")], "Bearer ") {
+		return ""
+	}
+
+	return strings.TrimSpace(value[len("Bearer "):])
 }

@@ -21,7 +21,7 @@ func TestRelayConfigurationErrorsNameCobraLongFlags(t *testing.T) {
 			cfg: config.Node{Relay: config.NodeRelay{
 				SessionID: "session", DestinationDevice: "peer", Ticket: "ticket",
 			}},
-			want: []string{"--relay", "--relay-udp", "--relay-ticket"},
+			want: []string{"--relay", "--relay-ticket"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

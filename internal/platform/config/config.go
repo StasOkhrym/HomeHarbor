@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 type Control struct {
@@ -80,11 +81,10 @@ func (a Auth) CeremonyDuration() time.Duration {
 }
 
 type Relay struct {
-	PublicURL        string `toml:"public_url"`
-	PublicUDPAddress string `toml:"public_udp_address"`
-	TicketKey        string `toml:"ticket_key"`
-	TicketKeyFile    string `toml:"ticket_key_file"`
-	TicketTTL        string `toml:"ticket_ttl"`
+	PublicURL     string `toml:"public_url"`
+	TicketKey     string `toml:"ticket_key"`
+	TicketKeyFile string `toml:"ticket_key_file"`
+	TicketTTL     string `toml:"ticket_ttl"`
 }
 
 type Networking struct {
@@ -348,13 +348,8 @@ func (c Control) validate() error {
 	if len(c.Relay.TicketKey) < 32 {
 		return errors.New("relay.ticket_key must be at least 32 bytes")
 	}
-	if address := strings.TrimSpace(c.Relay.PublicUDPAddress); address != "" {
-		host, port, splitErr := net.SplitHostPort(address)
-		portNumber, portErr := strconv.Atoi(port)
-		if splitErr != nil || strings.TrimSpace(host) == "" || portErr != nil || portNumber < 1 ||
-			portNumber > 65535 {
-			return errors.New("relay.public_udp_address must be a host:port with a valid port")
-		}
+	if err := protocol.ValidateRelayControlURL(c.Relay.PublicURL); err != nil {
+		return errors.New("relay.public_url must be a WSS origin with /relay/udp path")
 	}
 	if _, err := c.RelayDuration(); err != nil {
 		return err

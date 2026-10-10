@@ -79,7 +79,6 @@ type RelaySession struct {
 	DestinationDeviceID string `json:"destination_device_id"`
 	RelayURL            string `json:"relay_url"`
 	RelayTransport      string `json:"relay_transport"`
-	RelayUDPAddress     string `json:"relay_udp_address,omitempty"`
 	Ticket              string `json:"ticket"`
 	ExpiresInSeconds    int64  `json:"expires_in_seconds"`
 }
@@ -98,30 +97,32 @@ func IssueRelaySession(
 			"credential, session, and destination device are required",
 		)
 	}
+
 	client, err := controlclient.ForEndpoint(strings.TrimRight(controlURL, "/"), httpClient)
 	if err != nil {
 		return RelaySession{}, err
 	}
+
 	wire, err := client.IssueRelaySession(ctx, credential, protocol.RelaySessionRequest{
 		SessionID: sessionID, DestinationDeviceID: destinationDeviceID,
-		Capabilities: []string{protocol.CapabilityUDPPairV2},
+		Capabilities: []string{protocol.CapabilityUDPPair},
 	})
 	if err != nil {
 		return RelaySession{}, fmt.Errorf("issue relay session: %w", err)
 	}
+
 	session := RelaySession{
 		SessionID: wire.SessionID, DeviceID: wire.DeviceID,
 		DestinationDeviceID: wire.DestinationDeviceID, RelayURL: wire.RelayURL,
-		RelayTransport: wire.RelayTransport, RelayUDPAddress: wire.RelayUDPAddress,
-		Ticket: wire.Ticket, ExpiresInSeconds: wire.ExpiresInSeconds,
+		RelayTransport: wire.RelayTransport,
+		Ticket:         wire.Ticket, ExpiresInSeconds: wire.ExpiresInSeconds,
 	}
-	if session.Ticket == "" || !strings.HasPrefix(session.RelayURL, "wss://") ||
-		!strings.HasSuffix(session.RelayURL, "/relay/udp/v2") ||
-		session.RelayTransport != protocol.CapabilityUDPPairV2 ||
-		session.RelayUDPAddress != "" ||
+	if session.Ticket == "" || protocol.ValidateRelayControlURL(session.RelayURL) != nil ||
+		session.RelayTransport != protocol.CapabilityUDPPair ||
 		session.SessionID != sessionID ||
 		session.DestinationDeviceID != destinationDeviceID {
 		return RelaySession{}, errors.New("control plane returned incomplete relay session")
 	}
+
 	return session, nil
 }

@@ -208,8 +208,7 @@ func (p *WireGuardHandshakeProber) WaitForHandshake(
 }
 
 // ParseDirectCandidates parses the operator-provided candidate list used by
-// the Linux preview. Automatic STUN discovery can later populate the same
-// protocol candidates without changing coordination or endpoint ownership.
+// the Linux preview.
 func ParseDirectCandidates(value string) ([]controlprotocol.Candidate, error) {
 	if strings.TrimSpace(value) == "" {
 		return nil, nil

@@ -74,7 +74,6 @@ var envBindings = map[string]string{
 	"node.refresh":                      "HOMEHARBOR_NODE_REFRESH",
 	"node.name":                         "HOMEHARBOR_NODE_NAME",
 	"relay.websocket_url":               "HOMEHARBOR_NODE_RELAY_WEBSOCKET_URL",
-	"relay.udp_address":                 "HOMEHARBOR_NODE_RELAY_UDP_ADDRESS",
 	"relay.ticket_file":                 "HOMEHARBOR_NODE_RELAY_TICKET_FILE",
 	"coordination.url":                  "HOMEHARBOR_NODE_COORDINATION_URL",
 }

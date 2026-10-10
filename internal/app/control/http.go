@@ -176,10 +176,9 @@ func buildHTTP(
 		return nil, nil, nil, errors.Join(errors.New("configure relay sessions"), err)
 	}
 	deps.Relay = httpapi.RelayDependencies{
-		Issuer:     relay.TicketIssuer{Key: []byte(cfg.Relay.TicketKey)},
-		URL:        cfg.Relay.PublicURL,
-		UDPAddress: cfg.Relay.PublicUDPAddress,
-		TTL:        relayTTL,
+		Issuer: relay.TicketIssuer{Key: []byte(cfg.Relay.TicketKey)},
+		URL:    cfg.Relay.PublicURL,
+		TTL:    relayTTL,
 	}
 	trustedProxyCIDRs := make([]netip.Prefix, 0, len(cfg.Security.TrustedProxyCIDRs))
 	for _, value := range cfg.Security.TrustedProxyCIDRs {

@@ -63,8 +63,10 @@ func dialCredentialPeer(
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+
 	header := make(http.Header)
 	header.Set("Authorization", "Bearer "+credential)
+
 	c, _, err := websocket.Dial(
 		ctx,
 		"ws"+server.URL[4:],
@@ -73,25 +75,31 @@ func dialCredentialPeer(
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() { _ = c.CloseNow() })
+
 	if err := wsjson.Write(
 		ctx,
 		c,
 		protocol.Hello{
 			Versions:     []uint16{protocol.CurrentVersion},
-			Capabilities: []string{protocol.CapabilityRelay, protocol.CapabilityDirectUDP},
+			Capabilities: []string{protocol.CapabilityUDPPair, protocol.CapabilityDirectUDP},
 			DeviceID:     id,
 		},
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	var message any
+
 	if err := wsjson.Read(ctx, c, &message); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := wsjson.Read(ctx, c, &message); err != nil {
 		t.Fatal(err)
 	}
+
 	return c
 }
 

@@ -21,16 +21,14 @@ import (
 	relayruntime "github.com/StasOkhrym/homeharbor/internal/relay"
 )
 
-// App owns relay HTTP resources and the in-memory session hub. The relay does
+// App owns relay HTTP resources and the in-memory UDP pair. The relay does
 // not persist tunnel payloads; restarting it intentionally drops sessions.
 type App struct {
 	server          *http.Server
-	hub             *relayruntime.Hub
 	logger          *slog.Logger
 	udpListenAddr   string
-	tickets         relayruntime.TicketIssuer
 	ready           *atomic.Bool
-	udpV2           *relayruntime.UDPPairV2
+	udpPair         *relayruntime.UDPPair
 	shutdownTimeout time.Duration
 }
 
@@ -45,7 +43,7 @@ func New(cfg config.RelayServer, logger *slog.Logger) (*App, error) {
 // parent. TLSConfig must contain the serving certificate (or GetCertificate).
 // No proxy header substitutes for the TLS-authenticated control connection.
 type Options struct {
-	UDPV2     relayruntime.UDPPairV2Config
+	UDPPair   relayruntime.UDPPairConfig
 	TLSConfig *tls.Config
 }
 
@@ -54,58 +52,74 @@ func NewWithOptions(cfg config.RelayServer, logger *slog.Logger, options Options
 	if cfg.Runtime == (config.Runtime{}) {
 		cfg.Runtime = config.DefaultRuntime(true)
 	}
+
 	if err := cfg.Runtime.Validate(); err != nil {
 		return nil, err
 	}
-	if options.UDPV2.BindTimeout == 0 {
-		options.UDPV2.BindTimeout = cfg.Runtime.RelayBindTimeout
+
+	if options.UDPPair.BindTimeout == 0 {
+		options.UDPPair.BindTimeout = cfg.Runtime.RelayBindTimeout
 	}
-	if options.UDPV2.IdleTimeout == 0 {
-		options.UDPV2.IdleTimeout = cfg.Runtime.RelayIdleTimeout
+
+	if options.UDPPair.IdleTimeout == 0 {
+		options.UDPPair.IdleTimeout = cfg.Runtime.RelayIdleTimeout
 	}
-	if options.UDPV2.MaxPeers == 0 {
-		options.UDPV2.MaxPeers = cfg.Runtime.RelayMaxPeers
+
+	if options.UDPPair.MaxPeers == 0 {
+		options.UDPPair.MaxPeers = cfg.Runtime.RelayMaxPeers
 	}
-	if options.UDPV2.MaxPeersPerDevice == 0 {
-		options.UDPV2.MaxPeersPerDevice = cfg.Runtime.RelayMaxPeersPerDevice
+
+	if options.UDPPair.MaxPeersPerDevice == 0 {
+		options.UDPPair.MaxPeersPerDevice = cfg.Runtime.RelayMaxPeersPerDevice
 	}
-	if options.UDPV2.MaxAdmissions == 0 {
-		options.UDPV2.MaxAdmissions = cfg.Runtime.RelayMaxAdmissions
+
+	if options.UDPPair.MaxAdmissions == 0 {
+		options.UDPPair.MaxAdmissions = cfg.Runtime.RelayMaxAdmissions
 	}
+
 	if logger == nil {
 		logger = slog.Default()
 	}
-	hub := relayruntime.NewHub()
+
 	ready := &atomic.Bool{}
 	mux := http.NewServeMux()
 	tickets := relayruntime.TicketIssuer{Key: []byte(cfg.Security.TicketKey)}
+
 	udpAddress, err := net.ResolveUDPAddr("udp", cfg.Server.UDPListenAddress)
 	if err != nil {
 		return nil, fmt.Errorf("configure relay UDP address: %w", err)
 	}
-	if options.UDPV2.ListenIP == nil {
-		options.UDPV2.ListenIP = udpAddress.IP
+
+	if options.UDPPair.ListenIP == nil {
+		options.UDPPair.ListenIP = udpAddress.IP
 	}
-	if options.UDPV2.PortMin == 0 && options.UDPV2.PortMax == 0 && udpAddress.Port != 0 {
-		options.UDPV2.PortMin = udpAddress.Port
-		options.UDPV2.PortMax = min(udpAddress.Port+1023, 65535)
+
+	if options.UDPPair.PortMin == 0 && options.UDPPair.PortMax == 0 && udpAddress.Port != 0 {
+		options.UDPPair.PortMin = udpAddress.Port
+		options.UDPPair.PortMax = min(udpAddress.Port+1023, 65535)
 	}
+
 	port := udpAddress.Port
-	if options.UDPV2.PortMin != 0 {
-		port = options.UDPV2.PortMin
+	if options.UDPPair.PortMin != 0 {
+		port = options.UDPPair.PortMin
 	}
+
 	host := ""
-	if options.UDPV2.ListenIP != nil {
-		host = options.UDPV2.ListenIP.String()
+	if options.UDPPair.ListenIP != nil {
+		host = options.UDPPair.ListenIP.String()
 	}
+
 	udpListenAddr := net.JoinHostPort(host, strconv.Itoa(port))
-	udpV2, err := relayruntime.NewUDPPairV2(tickets, options.UDPV2)
+
+	udpPair, err := relayruntime.NewUDPPair(tickets, options.UDPPair)
 	if err != nil {
 		return nil, fmt.Errorf("configure relay UDP: %w", err)
 	}
-	if udpV2 != nil {
-		mux.Handle("/relay/udp/v2", udpV2)
+
+	if udpPair != nil {
+		mux.Handle("/relay/udp", udpPair)
 	}
+
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -114,16 +128,15 @@ func NewWithOptions(cfg config.RelayServer, logger *slog.Logger, options Options
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
+
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.Handle("GET /metrics", promhttp.Handler())
 	return &App{
-		hub:             hub,
 		logger:          logger,
 		udpListenAddr:   udpListenAddr,
-		tickets:         relayruntime.TicketIssuer{Key: []byte(cfg.Security.TicketKey)},
 		ready:           ready,
-		udpV2:           udpV2,
+		udpPair:         udpPair,
 		shutdownTimeout: cfg.Runtime.ShutdownTimeout,
 		server: &http.Server{
 			TLSConfig:         options.TLSConfig,
@@ -141,21 +154,25 @@ func NewWithOptions(cfg config.RelayServer, logger *slog.Logger, options Options
 // Run serves the relay until ctx is cancelled. The UDP pair owner closes
 // and joins upgraded WebSocket sessions; HTTP joins ordinary handlers.
 func (a *App) Run(ctx context.Context) error {
-	defer func() { _ = a.udpV2.Close() }()
+	defer func() { _ = a.udpPair.Close() }()
+
 	tcpListener, err := net.Listen("tcp", a.server.Addr)
 	if err != nil {
 		return fmt.Errorf("listen relay HTTP: %w", err)
 	}
+
 	udpAddress, err := net.ResolveUDPAddr("udp", a.udpListenAddr)
 	if err != nil {
 		_ = tcpListener.Close()
 		return err
 	}
+
 	udpConnection, err := net.ListenUDP("udp", udpAddress)
 	if err != nil {
 		_ = tcpListener.Close()
 		return err
 	}
+
 	return a.runWithListeners(ctx, tcpListener, udpConnection)
 }
 
@@ -171,22 +188,28 @@ func (a *App) runWithListeners(
 		if tcpListener != nil {
 			_ = tcpListener.Close()
 		}
+
 		if udpConnection != nil {
 			_ = udpConnection.Close()
 		}
+
 		return errors.New("relay listeners are required")
 	}
 	defer func() { _ = tcpListener.Close() }()
 	defer func() { _ = udpConnection.Close() }()
-	defer func() { _ = a.udpV2.Close() }()
-	if err := a.udpV2.AdoptListener(udpConnection); err != nil {
+	defer func() { _ = a.udpPair.Close() }()
+
+	if err := a.udpPair.AdoptListener(udpConnection); err != nil {
 		return err
 	}
+
 	if a.server.TLSConfig != nil {
 		tcpListener = tls.NewListener(tcpListener, a.server.TLSConfig.Clone())
 	}
+
 	a.ready.Store(true)
 	defer a.ready.Store(false)
+
 	return lifecycle.RunEssential(ctx,
 		lifecycle.Worker{Name: "http", Component: lifecycle.Func(func(ctx context.Context) error {
 			return httpserver.Serve(ctx, a.server, tcpListener, a.shutdownTimeout)
@@ -197,16 +220,19 @@ func (a *App) runWithListeners(
 			closed := make(chan struct{})
 			go func() {
 				defer close(closed)
+
 				select {
 				case <-ctx.Done():
-					_ = a.udpV2.Close()
+					_ = a.udpPair.Close()
 				case <-stopped:
 				}
 			}()
-			err := a.udpV2.Run(ctx)
+
+			err := a.udpPair.Run(ctx)
 			close(stopped)
 			<-closed
-			_ = a.udpV2.Close()
+			_ = a.udpPair.Close()
+
 			return err
 		})},
 	)

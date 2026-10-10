@@ -18,12 +18,12 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
-const UDPPairV2Protocol = "udp_pair_v2"
+const UDPPairProtocol = "udp_pair"
 
-// UDPPairV2Config bounds admission and packet-plane resources. Zero ports use
+// UDPPairConfig bounds admission and packet-plane resources. Zero ports use
 // the operating system's ephemeral allocator range, with MaxPeers as the hard
 // socket bound. A configured range is inclusive and never falls back to :0.
-type UDPPairV2Config struct {
+type UDPPairConfig struct {
 	ListenIP          net.IP
 	AdvertiseHost     string
 	PortMin           int
@@ -37,11 +37,11 @@ type UDPPairV2Config struct {
 	AllowedOrigins    []string
 }
 
-// UDPPairV2Message is the TLS control protocol. UDP uses only HHU2P + nonce
-// during admission and HHU2C + challenge for return-path validation. Following
+// UDPPairMessage is the TLS control protocol. UDP uses only HHUP + nonce
+// during admission and HHUC + challenge for return-path validation. Following
 // confirmation data datagrams are opaque. During authenticated renewal only
 // the exact outstanding probe nonce is reserved, not an arbitrary UDP prefix.
-type UDPPairV2Message struct {
+type UDPPairMessage struct {
 	Protocol            string `json:"protocol"`
 	Kind                string `json:"kind"`
 	SessionID           string `json:"session_id,omitempty"`
@@ -54,9 +54,9 @@ type UDPPairV2Message struct {
 }
 
 type (
-	v2PeerKey struct{ session, device string }
-	v2Peer    struct {
-		key                  v2PeerKey
+	peerKey struct{ session, device string }
+	peer    struct {
+		key                  peerKey
 		destination          string
 		udp                  *net.UDPConn
 		nonce, challenge     string
@@ -64,15 +64,15 @@ type (
 		deadline, lastSeen   time.Time
 		probes               int
 		bound                bool
-		probeParent, pending *v2Peer
+		probeParent, pending *peer
 	}
 )
 
-// UDPPairV2 owns every reserved UDP listener, control handshake, and worker.
+// UDPPair owns every reserved UDP listener, control handshake, and worker.
 // Close cancels and awaits them. Ticket verification is admission-only; the
 // established packet plane continues until idle expiry, replacement, or Close.
-type UDPPairV2 struct {
-	cfg       UDPPairV2Config
+type UDPPair struct {
+	cfg       UDPPairConfig
 	tickets   TicketIssuer
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -80,20 +80,20 @@ type UDPPairV2 struct {
 	closed    bool
 	started   bool
 	spare     *net.UDPConn
-	peers     map[v2PeerKey]*v2Peer
-	all       map[*v2Peer]struct{}
+	peers     map[peerKey]*peer
+	all       map[*peer]struct{}
 	used      map[[32]byte]int64
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 }
 
-func NewUDPPairV2(tickets TicketIssuer, cfg UDPPairV2Config) (*UDPPairV2, error) {
+func NewUDPPair(tickets TicketIssuer, cfg UDPPairConfig) (*UDPPair, error) {
 	if len(tickets.Key) < 32 {
-		return nil, errors.New("UDP v2 ticket key must be at least 32 bytes")
+		return nil, errors.New("UDP pair ticket key must be at least 32 bytes")
 	}
 	if cfg.PortMin < 0 || cfg.PortMax > 65535 || cfg.PortMax < cfg.PortMin ||
 		(cfg.PortMin == 0) != (cfg.PortMax == 0) {
-		return nil, errors.New("invalid UDP v2 port range")
+		return nil, errors.New("invalid UDP pair port range")
 	}
 	if cfg.BindTimeout == 0 {
 		cfg.BindTimeout = 10 * time.Second
@@ -118,24 +118,24 @@ func NewUDPPairV2(tickets TicketIssuer, cfg UDPPairV2Config) (*UDPPairV2, error)
 		cfg.MaxAdmissions < 1 ||
 		cfg.MaxDatagramBytes < 1 ||
 		cfg.MaxDatagramBytes > 65507 {
-		return nil, errors.New("invalid UDP v2 resource limits")
+		return nil, errors.New("invalid UDP pair resource limits")
 	}
 	cfg.ListenIP = append(net.IP(nil), cfg.ListenIP...)
 	cfg.AllowedOrigins = append([]string(nil), cfg.AllowedOrigins...)
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &UDPPairV2{
+	r := &UDPPair{
 		cfg:     cfg,
 		tickets: tickets,
 		ctx:     ctx,
 		cancel:  cancel,
-		peers:   make(map[v2PeerKey]*v2Peer),
-		all:     make(map[*v2Peer]struct{}),
+		peers:   make(map[peerKey]*peer),
+		all:     make(map[*peer]struct{}),
 		used:    make(map[[32]byte]int64),
 	}
 	return r, nil
 }
 
-func (r *UDPPairV2) Close() error {
+func (r *UDPPair) Close() error {
 	r.closeOnce.Do(func() {
 		r.mu.Lock()
 		r.closed = true
@@ -144,32 +144,37 @@ func (r *UDPPairV2) Close() error {
 			_ = r.spare.Close()
 			r.spare = nil
 		}
+
 		for p := range r.all {
 			r.removeLocked(p)
 		}
+
 		r.mu.Unlock()
 		r.wg.Wait()
 	})
 	return nil
 }
 
-func (r *UDPPairV2) Run(ctx context.Context) error {
+func (r *UDPPair) Run(ctx context.Context) error {
 	r.mu.Lock()
 	if !r.closed {
 		r.startLocked()
 	}
+
 	r.mu.Unlock()
 	select {
 	case <-ctx.Done():
 	case <-r.ctx.Done():
 	}
+
 	return r.Close()
 }
 
-func (r *UDPPairV2) startLocked() {
+func (r *UDPPair) startLocked() {
 	if r.started {
 		return
 	}
+
 	r.started = true
 	r.wg.Add(1)
 	go r.expire()
@@ -177,21 +182,25 @@ func (r *UDPPairV2) startLocked() {
 
 // AdoptListener transfers a startup/readiness socket to the allocator. It is
 // unread until a TLS-authenticated peer reserves it; UDP alone admits nobody.
-func (r *UDPPairV2) AdoptListener(udp *net.UDPConn) error {
+func (r *UDPPair) AdoptListener(udp *net.UDPConn) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	if udp == nil || r.closed || r.spare != nil || len(r.all) != 0 {
-		return errors.New("cannot adopt UDP v2 startup listener")
+		return errors.New("cannot adopt UDP pair startup listener")
 	}
+
 	port := udp.LocalAddr().(*net.UDPAddr).Port
 	if r.cfg.PortMin != 0 && (port < r.cfg.PortMin || port > r.cfg.PortMax) {
-		return errors.New("startup listener outside UDP v2 range")
+		return errors.New("startup listener outside UDP pair range")
 	}
+
 	r.spare = udp
+
 	return nil
 }
 
-func (r *UDPPairV2) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (r *UDPPair) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.TLS == nil {
 		http.Error(w, "TLS relay control required", http.StatusUpgradeRequired)
 		return
@@ -254,8 +263,8 @@ func (r *UDPPairV2) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	address := net.JoinHostPort(host, strconv.Itoa(p.udp.LocalAddr().(*net.UDPAddr).Port))
-	offer := UDPPairV2Message{
-		Protocol:            UDPPairV2Protocol,
+	offer := UDPPairMessage{
+		Protocol:            UDPPairProtocol,
 		Kind:                "offer",
 		SessionID:           claims.SessionID,
 		DeviceID:            claims.DeviceID,
@@ -266,7 +275,7 @@ func (r *UDPPairV2) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if err := wsjson.Write(ctx, c, offer); err != nil {
 		return
 	}
-	var confirm UDPPairV2Message
+	var confirm UDPPairMessage
 	if err := wsjson.Read(ctx, c, &confirm); err != nil {
 		return
 	}
@@ -276,7 +285,7 @@ func (r *UDPPairV2) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.mu.Lock()
 	_, alive := r.all[p]
 	valid := alive && !r.closed && time.Now().Before(p.deadline) && p.candidate != nil &&
-		confirm.Protocol == UDPPairV2Protocol &&
+		confirm.Protocol == UDPPairProtocol &&
 		confirm.Kind == "confirm" &&
 		subtle.ConstantTimeCompare([]byte(confirm.Challenge), []byte(p.challenge)) == 1
 	if !valid {
@@ -305,8 +314,8 @@ func (r *UDPPairV2) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	_ = wsjson.Write(
 		ctx,
 		c,
-		UDPPairV2Message{
-			Protocol:         UDPPairV2Protocol,
+		UDPPairMessage{
+			Protocol:         UDPPairProtocol,
 			Kind:             "bound",
 			ObservedEndpoint: observed,
 			UDPAddress:       boundAddress,
@@ -314,26 +323,32 @@ func (r *UDPPairV2) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	)
 }
 
-func (r *UDPPairV2) reserve(c TicketClaims, token string) (*v2Peer, int, error) {
+func (r *UDPPair) reserve(c TicketClaims, token string) (*peer, int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	if r.closed {
 		return nil, http.StatusServiceUnavailable, errors.New("relay stopped")
 	}
-	key := v2PeerKey{c.SessionID, c.DeviceID}
+
+	key := peerKey{c.SessionID, c.DeviceID}
 	fingerprint := sha256.Sum256([]byte(token))
 	r.pruneLocked(time.Now())
+
 	if _, ok := r.used[fingerprint]; ok {
 		return nil, http.StatusConflict, errors.New("ticket already consumed")
 	}
+
 	if len(r.all) >= r.cfg.MaxPeers || len(r.used) >= r.cfg.MaxAdmissions {
 		return nil, http.StatusTooManyRequests, errors.New("relay resource limit")
 	}
-	deviceSessions := make(map[v2PeerKey]struct{})
+
+	deviceSessions := make(map[peerKey]struct{})
 	for p := range r.all {
 		if p.key.device == c.DeviceID {
 			deviceSessions[p.key] = struct{}{}
 		}
+
 		if p.key.session == c.SessionID && p.key.device != c.DeviceID &&
 			(p.key.device != c.DestinationDeviceID || p.destination != c.DeviceID) {
 			return nil, http.StatusForbidden, errors.New("not a mutual peer pair")
@@ -342,18 +357,22 @@ func (r *UDPPairV2) reserve(c TicketClaims, token string) (*v2Peer, int, error) 
 			return nil, http.StatusConflict, errors.New("conflicting peer admission")
 		}
 	}
+
 	if _, existing := deviceSessions[key]; !existing &&
 		len(deviceSessions) >= r.cfg.MaxPeersPerDevice {
 		return nil, http.StatusTooManyRequests, errors.New("device session limit")
 	}
-	nonce, err := v2Random()
+
+	nonce, err := randomAdmissionNonce()
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	challenge, err := v2Random()
+
+	challenge, err := randomAdmissionNonce()
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
+
 	parent := r.peers[key]
 	var u *net.UDPConn
 	if parent != nil {
@@ -364,7 +383,8 @@ func (r *UDPPairV2) reserve(c TicketClaims, token string) (*v2Peer, int, error) 
 			return nil, http.StatusServiceUnavailable, err
 		}
 	}
-	p := &v2Peer{
+
+	p := &peer{
 		key:         key,
 		destination: c.DestinationDeviceID,
 		udp:         u,
@@ -384,38 +404,45 @@ func (r *UDPPairV2) reserve(c TicketClaims, token string) (*v2Peer, int, error) 
 		r.wg.Add(1)
 		go r.readPeer(p)
 	}
+
 	return p, 0, nil
 }
 
-func (r *UDPPairV2) listenLocked() (*net.UDPConn, error) {
+func (r *UDPPair) listenLocked() (*net.UDPConn, error) {
 	if r.spare != nil {
 		udp := r.spare
 		r.spare = nil
+
 		return udp, nil
 	}
 	if r.cfg.PortMin == 0 {
 		return net.ListenUDP("udp", &net.UDPAddr{IP: r.cfg.ListenIP})
 	}
+
 	for port := r.cfg.PortMin; port <= r.cfg.PortMax; port++ {
 		u, err := net.ListenUDP("udp", &net.UDPAddr{IP: r.cfg.ListenIP, Port: port})
 		if err == nil {
 			return u, nil
 		}
 	}
-	return nil, errors.New("UDP v2 listener range exhausted")
+
+	return nil, errors.New("UDP pair listener range exhausted")
 }
 
-func v2Random() (string, error) {
+func randomAdmissionNonce() (string, error) {
 	var nonce [32]byte
+
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return "", fmt.Errorf("UDP v2 nonce: %w", err)
+		return "", fmt.Errorf("UDP pair nonce: %w", err)
 	}
+
 	return base64.RawURLEncoding.EncodeToString(nonce[:]), nil
 }
 
-func (r *UDPPairV2) readPeer(p *v2Peer) {
+func (r *UDPPair) readPeer(p *peer) {
 	defer r.wg.Done()
 	defer func() { r.mu.Lock(); r.removeLocked(p); r.mu.Unlock() }()
+
 	// Read the entire datagram so oversize input is rejected, never truncated
 	// into an apparently valid WireGuard packet (or a binding probe).
 	buffer := make([]byte, 65535)
@@ -424,11 +451,14 @@ func (r *UDPPairV2) readPeer(p *v2Peer) {
 		if err != nil {
 			return
 		}
+
 		r.mu.Lock()
+
 		if _, alive := r.all[p]; !alive {
 			r.mu.Unlock()
 			return
 		}
+
 		if !p.bound {
 			r.probeLocked(p, buffer[:n], source)
 			r.mu.Unlock()
@@ -442,60 +472,70 @@ func (r *UDPPairV2) readPeer(p *v2Peer) {
 			r.mu.Unlock()
 			continue
 		}
+
 		p.lastSeen = time.Now()
-		target := r.peers[v2PeerKey{p.key.session, p.destination}]
+		target := r.peers[peerKey{p.key.session, p.destination}]
 		if target != nil && target.destination == p.key.device {
 			_ = target.udp.SetWriteDeadline(time.Now().Add(time.Second))
 			if _, err := target.udp.WriteToUDP(buffer[:n], target.endpoint); err == nil {
 				target.lastSeen = time.Now()
 			}
 		}
+
 		r.mu.Unlock()
 	}
 }
 
-func (r *UDPPairV2) probeLocked(p *v2Peer, data []byte, source *net.UDPAddr) bool {
-	if string(data) != "HHU2P"+p.nonce {
+func (r *UDPPair) probeLocked(p *peer, data []byte, source *net.UDPAddr) bool {
+	if string(data) != "HHUP"+p.nonce {
 		return false
 	}
+
 	if time.Now().Before(p.deadline) && p.probes < 4 &&
 		(p.candidate == nil || sameUDPAddr(p.candidate, source)) {
 		p.candidate = cloneUDPAddr(source)
 		p.probes++
 		_ = p.udp.SetWriteDeadline(time.Now().Add(time.Second))
-		_, _ = p.udp.WriteToUDP([]byte("HHU2C"+p.challenge), source)
+		_, _ = p.udp.WriteToUDP([]byte("HHUC"+p.challenge), source)
 	}
+
 	return true
 }
 
-func (r *UDPPairV2) removeLocked(p *v2Peer) {
+func (r *UDPPair) removeLocked(p *peer) {
 	delete(r.all, p)
 	if r.peers[p.key] == p {
 		delete(r.peers, p.key)
 	}
+
 	if p.probeParent != nil {
 		if p.probeParent.pending == p {
 			p.probeParent.pending = nil
 		}
+
 		return // Only the established parent owns the borrowed socket.
 	}
+
 	if p.pending != nil {
 		r.removeLocked(p.pending)
 	}
+
 	_ = p.udp.Close()
 }
 
-func (r *UDPPairV2) pruneLocked(now time.Time) {
+func (r *UDPPair) pruneLocked(now time.Time) {
 	for p := range r.all {
 		if (!p.bound && !now.Before(p.deadline)) ||
 			(p.bound && now.Sub(p.lastSeen) >= r.cfg.IdleTimeout) {
 			r.removeLocked(p)
 		}
 	}
+
 	ticketNow := now
 	if r.tickets.Now != nil {
 		ticketNow = r.tickets.Now()
 	}
+
 	for hash, expiry := range r.used {
 		if ticketNow.Unix() >= expiry {
 			delete(r.used, hash)
@@ -503,14 +543,17 @@ func (r *UDPPairV2) pruneLocked(now time.Time) {
 	}
 }
 
-func (r *UDPPairV2) expire() {
+func (r *UDPPair) expire() {
 	defer r.wg.Done()
+
 	interval := min(r.cfg.BindTimeout/4, r.cfg.IdleTimeout/4, time.Second)
 	if interval < time.Millisecond {
 		interval = time.Millisecond
 	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-r.ctx.Done():

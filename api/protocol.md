@@ -1,4 +1,21 @@
-# HomeHarbor credential leases
+# HomeHarbor protocol
+
+## Relay transport
+
+Control advertises the exact `wss://<relay-host>/relay/udp` endpoint and the
+`udp_pair` capability. The old `/relay/udp/v2` route and `udp_pair_v2` capability
+are rejected. Peer-bound relay tickets retain their signed payload schema:
+`v=1`, `aud=relay`, `jti`, `sid`, `did`, `dst`, and `exp`. The endpoint and
+capability are not embedded in those signed bytes.
+
+After authenticated WSS admission, the relay offers a dynamic UDP address and
+nonce. The client probes it with `HHUP` plus the 43-character nonce; the relay
+returns `HHUC` plus the 43-character challenge. The client confirms that
+challenge over WSS before opaque WireGuard datagrams may flow. A static relay
+UDP address is neither configured nor returned by control. Old clients must be
+updated together with the relay because the probe framing has changed.
+
+## Credential leases
 
 All endpoints use JSON under `/api/v1`. Plaintext credential responses carry
 `Cache-Control: no-store`. Credentials expire at their issuance timestamp plus

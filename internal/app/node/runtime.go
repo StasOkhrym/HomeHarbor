@@ -109,7 +109,7 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 	if leases != nil {
 		workers = append(workers, lifecycle.Worker{Name: "credentials", Component: leases})
 	}
-	if cfg.Relay.WebSocketURL != "" || cfg.Relay.UDPAddress != "" || cfg.Relay.Ticket != "" {
+	if cfg.Relay.WebSocketURL != "" || cfg.Relay.Ticket != "" {
 		relay, err := prepareRelay(ctx, cfg, state, source, peers, paths, candidates.set)
 		if err != nil {
 			return nil, err
@@ -245,19 +245,17 @@ func prepareRelay(
 			"--relay-session and --relay-destination are required for relay mode",
 		)
 	}
-	if cfg.Relay.WebSocketURL == "" && cfg.Relay.UDPAddress == "" && cfg.Relay.Ticket != "" {
-		return nil, errors.New("--relay or --relay-udp is required when --relay-ticket is supplied")
+	if cfg.Relay.WebSocketURL == "" && cfg.Relay.Ticket != "" {
+		return nil, errors.New("--relay is required when --relay-ticket is supplied")
 	}
 	bridge := node.RelayBridgeConfig{
 		RelayURL:            cfg.Relay.WebSocketURL,
-		RelayUDPAddress:     cfg.Relay.UDPAddress,
 		Ticket:              cfg.Relay.Ticket,
 		SessionID:           cfg.Relay.SessionID,
 		DeviceID:            state.DeviceID,
 		DestinationDeviceID: cfg.Relay.DestinationDevice,
 		ListenAddress:       cfg.Relay.ListenAddress,
 		WireGuardAddress:    cfg.Relay.WireGuardAddress,
-		STUNServer:          cfg.Relay.STUNServer,
 	}
 	bridge.OnObservedEndpoint = func(endpoint netip.AddrPort) {
 		if candidates != nil {
@@ -276,7 +274,7 @@ func prepareRelay(
 		if err != nil {
 			return nil, err
 		}
-		bridge.RelayURL, bridge.RelayUDPAddress, bridge.Ticket = session.RelayURL, session.RelayUDPAddress, session.Ticket
+		bridge.RelayURL, bridge.Ticket = session.RelayURL, session.Ticket
 		bridge.TicketLifetime = time.Duration(session.ExpiresInSeconds) * time.Second
 	}
 
