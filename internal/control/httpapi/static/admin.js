@@ -41,10 +41,14 @@ document.addEventListener("submit", async (event) => {
   }
 });
 
-document.addEventListener("htmx:afterSwap", () => {
+document.addEventListener("htmx:afterSwap", (event) => {
+  if (event.detail?.target?.id !== "admin-shell" && event.target?.id !== "admin-shell") return;
+
   enhancePolicyEditor();
+
   const heading = document.querySelector("#page-title");
   heading?.focus({ preventScroll: true });
+
   const navigation = document.querySelector(".mobile-nav");
   if (navigation) navigation.open = false;
 });

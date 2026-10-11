@@ -17,6 +17,9 @@ var adminCSS []byte
 //go:embed static/admin.js
 var adminScript []byte
 
+//go:embed static/activity.js
+var activityScript []byte
+
 //go:embed static/htmx-2.0.11.min.js
 var htmxScript []byte
 
@@ -25,7 +28,9 @@ var adminTemplate = template.Must(template.New("admin").Funcs(template.FuncMap{
 	"timeISO":          func(value time.Time) string { return value.UTC().Format(time.RFC3339) },
 	"actionLabel":      adminActionLabel,
 	"auditOutcome":     adminAuditOutcome,
+	"auditActor":       adminAuditActor,
 	"auditCorrelation": adminAuditCorrelation,
+	"auditRevision":    adminAuditRevision,
 }).ParseFS(adminViews, "templates/admin/*.html"))
 
 func (s *Server) renderAdmin(w http.ResponseWriter, status int, model adminPageModel) {

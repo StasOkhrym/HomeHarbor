@@ -142,6 +142,19 @@ func TestAdminHTMXIsSelfHosted(t *testing.T) {
 	}
 }
 
+func TestActivityScriptIsSelfHosted(t *testing.T) {
+	response := httptest.NewRecorder()
+
+	mustTestServer(nil, nil, Dependencies{}).Handler().ServeHTTP(response,
+		httptest.NewRequest(http.MethodGet, "/assets/activity.js", nil))
+
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Header().Get("Content-Type"), "javascript") ||
+		!strings.Contains(response.Body.String(), "class ActivityPoller") {
+		t.Fatalf("activity asset status=%d", response.Code)
+	}
+}
+
 func TestAdminActivityUsesReadableActions(t *testing.T) {
 	reader := &auditReaderStub{
 		events: []audit.Event{{Action: "device.revoked", OccurredAt: time.Now()}},
@@ -258,17 +271,22 @@ func TestActivityRendersOnlyApprovedMetadata(t *testing.T) {
 		Action: "invite.approved", OccurredAt: time.Now(),
 		ActorType: "unknown", TargetType: "invite", TargetID: "invite-1",
 		Metadata: map[string]any{
-			"outcome": "success", "correlation_id": "request-1", "secret": "DO-NOT-RENDER",
+			"outcome": "success", "correlation_id": "request-1",
+			"aggregate_revision": float64(3), "secret": "DO-NOT-RENDER",
 		},
 	}}}
+
 	handler := newTestServer(nil, allowAuthorizer{}, Dependencies{
 		Resources: ResourceDependencies{Audit: reader},
 	}).Handler()
 	response := httptest.NewRecorder()
+
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/activity", nil))
 	body := response.Body.String()
+
 	if response.Code != http.StatusOK || !strings.Contains(body, "Invite approved") ||
 		!strings.Contains(body, "Succeeded") || !strings.Contains(body, "request-1") ||
+		!strings.Contains(body, "Unknown actor") || !strings.Contains(body, "Aggregate revision") ||
 		strings.Contains(body, "DO-NOT-RENDER") {
 		t.Fatalf("activity status=%d body=%s", response.Code, body)
 	}

@@ -1,6 +1,6 @@
 {{define "activity"}}
   <section class="panel">
-    <form method="get" action="/admin/activity">
+    <form class="activity-filter" method="get" action="/admin/activity">
       <div class="field">
         <label for="activity-limit">Number of recent events</label>
         <input id="activity-limit"
@@ -29,7 +29,16 @@
       <button class="secondary" type="submit">Apply filters</button>
     </form>
   </section>
-  {{template "activity-feed" .}}
+  <div data-activity-live
+       data-before-id="{{.AuditBeforeID}}"
+       class="activity-live">
+    <div class="activity-watch" role="status" aria-live="polite">
+      <span class="activity-signal" aria-hidden="true"></span>
+      <span data-activity-status>Checking activity every 4 seconds</span>
+      <button class="secondary" data-activity-apply type="button" hidden></button>
+    </div>
+    {{template "activity-feed" .}}
+  </div>
 {{end}}
 {{define "activity-feed"}}
   <section class="panel" id="activity-feed" aria-label="Recent activity">
@@ -45,7 +54,11 @@
             <details class="advanced">
               <summary>Advanced · event identities</summary>
               <p>Action: <code>{{.Event.Action}}</code></p>
-              <p>{{.Event.ActorType}} / <code>{{.Event.ActorID}}</code> → {{.Event.TargetType}} / <code>{{.Event.TargetID}}</code></p>
+              <p>{{auditActor .Event}} → {{.Event.TargetType}} / <code>{{.Event.TargetID}}</code></p>
+              <p>Audit record: <code>{{.RecordID}}</code></p>
+              {{with auditRevision .Event}}
+                <p>Aggregate revision: <code>{{.}}</code></p>
+              {{end}}
               {{with auditCorrelation .Event}}
                 <p>Correlation: <code>{{.}}</code></p>
               {{end}}

@@ -45,6 +45,11 @@ func NewRouter(server *Server) http.Handler {
 		w.Header().Set("Cache-Control", "public, max-age=3600, immutable")
 		_, _ = w.Write(adminScript)
 	})
+	router.Get("/assets/activity.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=3600, immutable")
+		_, _ = w.Write(activityScript)
+	})
 	router.Get("/assets/htmx-2.0.11.min.js", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")

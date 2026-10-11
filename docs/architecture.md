@@ -40,6 +40,11 @@ changes. The control audit dispatcher projects each fact and marks its outbox
 row complete in one SQL transaction, on one connection. Stable event IDs make
 replay idempotent. There is no process-local event bus or external broker in
 the current runtime; Activity reads committed audit rows from PostgreSQL.
+The browser queries a bounded recent window and optional older history by
+storage row ID. While Activity is visible it checks a protected HTML fragment
+every four seconds, pauses in hidden tabs, and leaves older rows in place until
+the operator chooses to return to recent activity. A failed refresh retains the
+last displayed rows and marks them stale; it does not claim tunnel health.
 
 Audit readiness degrades when a delivery attempt fails, a row is quarantined,
 or the oldest pending fact is at least two minutes old. The age is measured
