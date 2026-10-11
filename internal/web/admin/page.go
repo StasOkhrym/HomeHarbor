@@ -54,7 +54,7 @@ func LoadCollection[T any](
 }
 
 // Page is the typed presentation contract shared by full pages and fragments.
-// The control HTTP adapter loads it; this package owns template-facing state.
+// The admin handler loads it; this package owns template-facing state.
 type Page struct {
 	Page          string
 	Title         string
