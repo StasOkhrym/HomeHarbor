@@ -1,19 +1,11 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 
-	"github.com/StasOkhrym/homeharbor/internal/acl"
-	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
-	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
-	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
 )
 
@@ -73,10 +65,10 @@ func (s *Server) loadAdminPage(r *http.Request, page string) (webadmin.Page, int
 		model.Routes.Error = "Routes are not configured"
 	}
 	if page == "access" {
-		s.loadAdminPolicy(ctx, &model)
+		webadmin.LoadPolicy(ctx, s.policy, &model)
 	}
 	if page == "overview" || page == "setup" || page == "security" {
-		s.loadAdminSignedState(ctx, &model)
+		webadmin.LoadSignedState(ctx, s.snapshots, &model)
 		if s.ready != nil {
 			model.Readiness = "Ready"
 			if err := s.ready(ctx); err != nil {
@@ -126,88 +118,7 @@ func (s *Server) loadAdminPage(r *http.Request, page string) (webadmin.Page, int
 	case "activity":
 		model.Activity, status = webadmin.LoadActivity(r.Context(), s.audit, r.URL.Query())
 	case "invites":
-		s.loadAdminInvite(r, &model)
+		webadmin.LoadInvite(ctx, r.URL.Query().Get("invite_id"), s.invites, &model)
 	}
 	return model, status
-}
-
-func (s *Server) loadAdminPolicy(ctx context.Context, model *webadmin.Page) {
-	model.PolicyError = "Policy is not configured"
-	if s.policy == nil {
-		return
-	}
-	value, err := s.policy.Latest(ctx)
-	if err != nil {
-		model.PolicyError = "Policy could not be loaded"
-		return
-	}
-	if value.Rules == nil {
-		value.Rules = []acl.Rule{}
-	}
-	encoded, err := json.MarshalIndent(value.Rules, "", "  ")
-	if err != nil {
-		model.PolicyError = "Policy could not be displayed"
-		return
-	}
-	model.Policy, model.PolicyJSON, model.PolicyReady = value, string(encoded), true
-	model.PolicyError = ""
-	model.Values.Set("rules", model.PolicyJSON)
-	for _, rule := range value.Rules {
-		model.PolicyRows = append(model.PolicyRows, webadmin.PolicyRow{
-			ID:          rule.ID,
-			Source:      rule.SourceDeviceID,
-			Destination: rule.Destination.String(),
-			Protocol:    string(rule.Protocol),
-			From:        strconv.Itoa(int(rule.PortFrom)),
-			To:          strconv.Itoa(int(rule.PortTo)),
-		})
-	}
-	model.PolicyRows = append(model.PolicyRows, webadmin.PolicyRow{Protocol: "tcp"})
-}
-
-func (s *Server) loadAdminSignedState(ctx context.Context, model *webadmin.Page) {
-	if s.snapshots == nil {
-		return
-	}
-	envelope, err := s.snapshots.Latest(ctx)
-	if errors.Is(err, controlsnapshots.ErrSnapshotUnavailable) {
-		model.SignedState = "No signed configuration has been published"
-		return
-	}
-	if err != nil {
-		model.SignedState = "Signed configuration could not be loaded"
-		return
-	}
-	value, err := snapshot.Decode(envelope)
-	if err != nil {
-		model.SignedState = "Signed configuration could not be displayed"
-		return
-	}
-	model.Signed = &value
-	model.SignedState = fmt.Sprintf("Signed revision %d · Published", value.Revision)
-}
-
-func (s *Server) loadAdminInvite(r *http.Request, model *webadmin.Page) {
-	id := strings.TrimSpace(r.URL.Query().Get("invite_id"))
-	model.Values.Set("invite_id", id)
-	if id == "" || s.invites == nil {
-		return
-	}
-	if len(id) > 128 {
-		model.InviteError = "Enter a valid invite ID, not an invite link or code."
-		return
-	}
-	record, err := s.invites.Get(r.Context(), id)
-	if errors.Is(err, controlinvites.ErrInviteNotFound) {
-		model.InviteError = "Invite not found. It may not have received a device proof yet."
-	} else if err != nil {
-		model.InviteError = "Invite status could not be loaded. Try again shortly."
-	} else {
-		model.Invite = &webadmin.Invite{
-			ID:        record.InviteID,
-			ProfileID: record.ProfileID,
-			DeviceID:  record.DeviceID,
-			Status:    record.Status,
-		}
-	}
 }

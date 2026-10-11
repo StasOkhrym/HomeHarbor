@@ -164,7 +164,7 @@ func TestAdminPolicyJSONEmptyIsArray(t *testing.T) {
 			},
 		},
 	)
-	server.loadAdminPolicy(context.Background(), &model)
+	webadmin.LoadPolicy(context.Background(), server.policy, &model)
 	var value any
 	if err := json.Unmarshal([]byte(model.PolicyJSON), &value); err != nil {
 		t.Fatal(err)
