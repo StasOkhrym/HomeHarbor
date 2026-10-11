@@ -1,74 +1,27 @@
 package httpapi
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
+
+	"github.com/StasOkhrym/homeharbor/internal/platform/httpresponse"
 )
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
-			return false
-		}
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return false
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
-			return false
-		}
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return false
-	}
-	return true
+	return httpresponse.DecodeJSON(w, r, destination)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+	httpresponse.WriteJSON(w, status, value)
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
-	writeErrorCode(w, status, errorCode(status), message)
+	httpresponse.WriteError(w, status, message)
 }
 
 func writeErrorCode(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]string{"code": code, "error": message})
-}
-
-func errorCode(status int) string {
-	switch status {
-	case http.StatusBadRequest:
-		return "bad_request"
-	case http.StatusUnauthorized:
-		return "unauthorized"
-	case http.StatusForbidden:
-		return "forbidden"
-	case http.StatusNotFound:
-		return "not_found"
-	case http.StatusConflict:
-		return "conflict"
-	case http.StatusRequestEntityTooLarge:
-		return "request_too_large"
-	case http.StatusTooManyRequests:
-		return "rate_limited"
-	case http.StatusServiceUnavailable:
-		return "unavailable"
-	default:
-		return "internal_error"
-	}
+	httpresponse.WriteErrorCode(w, status, code, message)
 }
 
 func recoverMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {

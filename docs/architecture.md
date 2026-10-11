@@ -29,11 +29,13 @@ Identity, devices, routes, policy, services, invites, snapshots, coordination an
 audit are vertical modules. Consumers declare small interfaces for the operations
 they actually need. There is no universal CRUD repository or god-service.
 Browser templates and same-origin CSS/JavaScript are embedded by
-`internal/web/assets`; the current HTTP adapter composes those assets with its
-browser handlers and JSON routes.
+`internal/web/assets`. `internal/web/auth` owns browser login, passkey and
+recovery HTTP flows; `internal/control/httpapi` mounts that sibling adapter
+alongside its control JSON API and protected admin routes.
 `internal/web/session` owns browser cookie, CSRF and review-proof cryptography;
 the control identity store remains the authority for whether an opaque session
-is live.
+is live. `internal/platform/httpresponse` shares strict JSON decoding and error
+responses between the two HTTP adapters.
 `internal/web/admin` owns the Activity page's bounded query/view model and
 allowlisted audit presentation; its protected route remains mounted by the
 control HTTP adapter.

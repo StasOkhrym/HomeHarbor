@@ -38,6 +38,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 	"github.com/StasOkhrym/homeharbor/internal/platform/redissecurity"
 	"github.com/StasOkhrym/homeharbor/internal/relay"
+	webauth "github.com/StasOkhrym/homeharbor/internal/web/auth"
 	"github.com/StasOkhrym/homeharbor/migrations"
 )
 
@@ -102,7 +103,7 @@ func buildHTTP(
 	if err != nil {
 		return nil, nil, nil, errors.Join(errors.New("configure passkeys"), err)
 	}
-	auth, err := httpapi.NewBrowserAuth(httpapi.BrowserAuthConfig{
+	auth, err := webauth.NewBrowserAuth(webauth.BrowserAuthConfig{
 		Origin:     cfg.Auth.RPOrigin,
 		SigningKey: []byte(cfg.Auth.SessionSigningKey),
 		SessionTTL: cfg.Auth.SessionDuration(),

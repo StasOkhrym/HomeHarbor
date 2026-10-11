@@ -16,6 +16,8 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
+	webauth "github.com/StasOkhrym/homeharbor/internal/web/auth"
+	websession "github.com/StasOkhrym/homeharbor/internal/web/session"
 )
 
 type failingAuthAuditor struct{}
@@ -26,7 +28,7 @@ func (failingAuthAuditor) RecordIdentity(context.Context, string, bool) error {
 
 func TestBrowserAuthUsesInjectedLoggerForFailedAudit(t *testing.T) {
 	var logs bytes.Buffer
-	auth, err := NewBrowserAuth(BrowserAuthConfig{
+	auth, err := webauth.NewBrowserAuth(webauth.BrowserAuthConfig{
 		Origin:     "https://tunnel.example.com",
 		SigningKey: bytes.Repeat([]byte("k"), 32),
 		SessionTTL: time.Hour,
@@ -106,7 +108,7 @@ func (fakePasskeys) FinishLogin(context.Context, string, []byte) (webauthn.Crede
 	return webauthn.Credential{}, nil
 }
 
-func newBrowserAuthTest(t *testing.T) (*BrowserAuth, *fakeSessions) {
+func newBrowserAuthTest(t *testing.T) (*webauth.BrowserAuth, *fakeSessions) {
 	t.Helper()
 	expires := time.Now().Add(time.Hour).UTC()
 	sessions := &fakeSessions{
@@ -114,8 +116,8 @@ func newBrowserAuthTest(t *testing.T) (*BrowserAuth, *fakeSessions) {
 		valid:    "opaque-session",
 		recovery: "recover-me",
 	}
-	auth, err := NewBrowserAuth(
-		BrowserAuthConfig{
+	auth, err := webauth.NewBrowserAuth(
+		webauth.BrowserAuthConfig{
 			Origin:     "https://tunnel.example.com",
 			SigningKey: []byte(strings.Repeat("k", 32)),
 			SessionTTL: time.Hour,
@@ -127,6 +129,27 @@ func newBrowserAuthTest(t *testing.T) (*BrowserAuth, *fakeSessions) {
 		t.Fatal(err)
 	}
 	return auth, sessions
+}
+
+func browserTestCodec(t *testing.T) *websession.Codec {
+	t.Helper()
+
+	codec, err := websession.NewCodec([]byte(strings.Repeat("k", 32)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return codec
+}
+
+func browserSessionCookie(t *testing.T, session identity.IssuedSession) *http.Cookie {
+	t.Helper()
+	return browserTestCodec(t).SessionCookie(session.Token, session.ExpiresAt)
+}
+
+func browserCSRFCookie(t *testing.T, session identity.IssuedSession) (*http.Cookie, error) {
+	t.Helper()
+	return browserTestCodec(t).CSRFCookie(session.Token, session.ExpiresAt)
 }
 
 func TestRecoveryLoginSetsHardenedCookies(t *testing.T) {
@@ -167,6 +190,7 @@ func TestBrowserSessionOutageReturns503WithoutIssuingCookies(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			auth, sessions := newBrowserAuthTest(t)
 			sessions.failure = identity.ErrSecurityStateUnavailable
+
 			server := mustTestServer(
 				nil,
 				auth,
@@ -184,11 +208,14 @@ func TestBrowserSessionOutageReturns503WithoutIssuingCookies(t *testing.T) {
 			if method == http.MethodPost {
 				path, body = "/api/v1/auth/login/finish", `{"ceremony_id":"id","response":{}}`
 			}
+
 			request := httptest.NewRequest(method, path, strings.NewReader(body))
 			request.Header.Set("Origin", "https://tunnel.example.com")
-			request.AddCookie(auth.sessionCookie(sessions.session))
+			request.AddCookie(browserSessionCookie(t, sessions.session))
 			response := httptest.NewRecorder()
+
 			server.Handler().ServeHTTP(response, request)
+
 			if response.Code != http.StatusServiceUnavailable ||
 				len(response.Result().Cookies()) != 0 {
 				t.Fatalf(
@@ -204,7 +231,7 @@ func TestBrowserSessionOutageReturns503WithoutIssuingCookies(t *testing.T) {
 
 func TestSignedSessionRejectsTamperingAndExpiry(t *testing.T) {
 	auth, sessions := newBrowserAuthTest(t)
-	cookie := auth.sessionCookie(sessions.session)
+	cookie := browserSessionCookie(t, sessions.session)
 	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
 	req.AddCookie(cookie)
 	if authorized, err := auth.IsAdmin(req.Context(), req); !authorized || err != nil {
@@ -217,7 +244,7 @@ func TestSignedSessionRejectsTamperingAndExpiry(t *testing.T) {
 		t.Fatal("tampered cookie accepted")
 	}
 	sessions.session.ExpiresAt = time.Now().Add(-time.Second)
-	cookie = auth.sessionCookie(sessions.session)
+	cookie = browserSessionCookie(t, sessions.session)
 	req = httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(cookie)
 	if authorized, err := auth.IsAdmin(req.Context(), req); authorized || err != nil {
@@ -227,28 +254,38 @@ func TestSignedSessionRejectsTamperingAndExpiry(t *testing.T) {
 
 func TestCSRFRejectsMismatchAndLogoutRevokesSession(t *testing.T) {
 	auth, sessions := newBrowserAuthTest(t)
-	sessionCookie := auth.sessionCookie(sessions.session)
-	csrfCookie, err := auth.csrfCookie(sessions.session.Token, sessions.session.ExpiresAt)
+
+	sessionCookie := browserSessionCookie(t, sessions.session)
+
+	csrfCookie, err := browserCSRFCookie(t, sessions.session)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+
 	req.AddCookie(sessionCookie)
 	req.AddCookie(csrfCookie)
 	req.Header.Set("Origin", "https://tunnel.example.com")
-	req.Header.Set(csrfHeaderName, "wrong")
+	req.Header.Set(websession.CSRFHeaderName, "wrong")
 	rec := httptest.NewRecorder()
+
 	auth.Handler().ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("mismatch status = %d", rec.Code)
 	}
+
 	req = httptest.NewRequest(http.MethodPost, "/logout", nil)
+
 	req.AddCookie(sessionCookie)
 	req.AddCookie(csrfCookie)
 	req.Header.Set("Origin", "https://tunnel.example.com")
-	req.Header.Set(csrfHeaderName, csrfCookie.Value)
+	req.Header.Set(websession.CSRFHeaderName, csrfCookie.Value)
 	rec = httptest.NewRecorder()
+
 	auth.Handler().ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusNoContent || sessions.revoked != sessions.session.Token {
 		t.Fatalf("logout status=%d revoked=%q", rec.Code, sessions.revoked)
 	}
@@ -256,11 +293,14 @@ func TestCSRFRejectsMismatchAndLogoutRevokesSession(t *testing.T) {
 
 func TestCSRFAcceptsSameOriginHTMLFormToken(t *testing.T) {
 	auth, sessions := newBrowserAuthTest(t)
-	sessionCookie := auth.sessionCookie(sessions.session)
-	csrfCookie, err := auth.csrfCookie(sessions.session.Token, sessions.session.ExpiresAt)
+
+	sessionCookie := browserSessionCookie(t, sessions.session)
+
+	csrfCookie, err := browserCSRFCookie(t, sessions.session)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	form := url.Values{"_csrf": {csrfCookie.Value}}
 	req := httptest.NewRequest(http.MethodPost, "/logout", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -268,7 +308,9 @@ func TestCSRFAcceptsSameOriginHTMLFormToken(t *testing.T) {
 	req.AddCookie(sessionCookie)
 	req.AddCookie(csrfCookie)
 	rec := httptest.NewRecorder()
+
 	auth.Handler().ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusNoContent || sessions.revoked != sessions.session.Token {
 		t.Fatalf("form logout status=%d revoked=%q", rec.Code, sessions.revoked)
 	}
@@ -307,34 +349,6 @@ func TestBootstrapReturnsRecoveryCodesOnlyOnce(t *testing.T) {
 
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "save-once") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestCSRFCookieCreationReturnsRandomnessFailure(t *testing.T) {
-	auth, _ := newBrowserAuthTest(t)
-	previous := readRandom
-	readRandom = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
-	t.Cleanup(func() { readRandom = previous })
-	if _, err := auth.csrfCookie("session", time.Now().Add(time.Hour)); err == nil {
-		t.Fatal("csrfCookie() error = nil")
-	}
-}
-
-func TestEstablishSessionRevokesSessionWhenCSRFSetupFails(t *testing.T) {
-	auth, sessions := newBrowserAuthTest(t)
-	previous := readRandom
-	readRandom = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
-	t.Cleanup(func() { readRandom = previous })
-
-	recorder := httptest.NewRecorder()
-	if err := auth.establishSession(recorder, context.Background()); err == nil {
-		t.Fatal("establishSession() error=nil")
-	}
-	if sessions.revoked != sessions.session.Token {
-		t.Fatalf("revoked session=%q, want %q", sessions.revoked, sessions.session.Token)
-	}
-	if cookies := recorder.Result().Cookies(); len(cookies) != 0 {
-		t.Fatalf("cookies=%#v, want none after failed setup", cookies)
 	}
 }
 

@@ -1,4 +1,4 @@
-package httpapi
+package auth
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
+	"github.com/StasOkhrym/homeharbor/internal/platform/httpresponse"
 	"github.com/StasOkhrym/homeharbor/internal/web/assets"
 	websession "github.com/StasOkhrym/homeharbor/internal/web/session"
 )
@@ -200,9 +201,10 @@ func (a *BrowserAuth) requireOrigin(next http.Handler) http.Handler {
 		// unauthenticated ceremony-start endpoints before a CSRF token exists.
 		if strings.TrimSuffix(r.Header.Get("Origin"), "/") != a.origin {
 			a.audit(r.Context(), "admin.auth", false)
-			writeError(w, http.StatusForbidden, "origin not allowed")
+			httpresponse.WriteError(w, http.StatusForbidden, "origin not allowed")
 			return
 		}
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -256,13 +258,15 @@ func (a *BrowserAuth) beginLogin(w http.ResponseWriter, r *http.Request) {
 func (a *BrowserAuth) writeBegin(w http.ResponseWriter, result identity.BeginCeremony, err error) {
 	if err != nil {
 		if errors.Is(err, identity.ErrSecurityStateUnavailable) {
-			writeError(w, http.StatusServiceUnavailable, "security state unavailable")
+			httpresponse.WriteError(w, http.StatusServiceUnavailable, "security state unavailable")
 			return
 		}
-		writeError(w, http.StatusUnauthorized, "ceremony unavailable")
+
+		httpresponse.WriteError(w, http.StatusUnauthorized, "ceremony unavailable")
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+
+	httpresponse.WriteJSON(w, http.StatusOK, result)
 }
 
 type finishCeremonyRequest struct {
@@ -272,7 +276,7 @@ type finishCeremonyRequest struct {
 
 func (a *BrowserAuth) finishBootstrap(w http.ResponseWriter, r *http.Request) {
 	var input finishCeremonyRequest
-	if !decodeJSON(w, r, &input) {
+	if !httpresponse.DecodeJSON(w, r, &input) {
 		return
 	}
 	if _, err := a.passkeys.FinishBootstrap(
@@ -281,11 +285,11 @@ func (a *BrowserAuth) finishBootstrap(w http.ResponseWriter, r *http.Request) {
 		input.Response,
 	); err != nil {
 		if errors.Is(err, identity.ErrSecurityStateUnavailable) {
-			writeError(w, http.StatusServiceUnavailable, "security state unavailable")
+			httpresponse.WriteError(w, http.StatusServiceUnavailable, "security state unavailable")
 			return
 		}
 		a.audit(r.Context(), "admin.bootstrap", false)
-		writeError(w, http.StatusUnauthorized, "invalid ceremony")
+		httpresponse.WriteError(w, http.StatusUnauthorized, "invalid ceremony")
 		return
 	}
 	codes, err := a.sessions.GenerateRecoveryCodes(r.Context(), 10)
@@ -300,7 +304,7 @@ func (a *BrowserAuth) finishBootstrap(w http.ResponseWriter, r *http.Request) {
 	a.audit(r.Context(), "admin.bootstrap", true)
 	// Recovery plaintext is deliberately returned only by this bootstrap
 	// response; the identity store persists hashes and cannot reconstruct it.
-	writeJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes})
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes})
 }
 
 // Registration already committed before these steps. Neither recovery storage
@@ -316,21 +320,27 @@ func (a *BrowserAuth) writeBootstrapFailure(
 	if errors.Is(err, identity.ErrSecurityStateUnavailable) {
 		status = http.StatusServiceUnavailable
 	}
-	writeErrorCode(w, status, code, "passkey saved; setup incomplete; reload and sign in")
+
+	httpresponse.WriteErrorCode(
+		w,
+		status,
+		code,
+		"passkey saved; setup incomplete; reload and sign in",
+	)
 }
 
 func (a *BrowserAuth) finishLogin(w http.ResponseWriter, r *http.Request) {
 	var input finishCeremonyRequest
-	if !decodeJSON(w, r, &input) {
+	if !httpresponse.DecodeJSON(w, r, &input) {
 		return
 	}
 	if _, err := a.passkeys.FinishLogin(r.Context(), input.CeremonyID, input.Response); err != nil {
 		if errors.Is(err, identity.ErrSecurityStateUnavailable) {
-			writeError(w, http.StatusServiceUnavailable, "security state unavailable")
+			httpresponse.WriteError(w, http.StatusServiceUnavailable, "security state unavailable")
 			return
 		}
 		a.audit(r.Context(), "admin.login", false)
-		writeError(w, http.StatusUnauthorized, "invalid credential")
+		httpresponse.WriteError(w, http.StatusUnauthorized, "invalid credential")
 		return
 	}
 	if err := a.establishSession(w, r.Context()); err != nil {
@@ -345,12 +355,12 @@ func (a *BrowserAuth) recoveryLogin(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Code string `json:"code"`
 	}
-	if !decodeJSON(w, r, &input) {
+	if !httpresponse.DecodeJSON(w, r, &input) {
 		return
 	}
 	if err := a.sessions.ConsumeRecoveryCode(r.Context(), input.Code); err != nil {
 		a.audit(r.Context(), "admin.recovery", false)
-		writeError(w, http.StatusUnauthorized, "invalid credential")
+		httpresponse.WriteError(w, http.StatusUnauthorized, "invalid credential")
 		return
 	}
 	if err := a.establishSession(w, r.Context()); err != nil {
@@ -364,16 +374,16 @@ func (a *BrowserAuth) recoveryLogin(w http.ResponseWriter, r *http.Request) {
 func (a *BrowserAuth) logout(w http.ResponseWriter, r *http.Request) {
 	token, ok := a.sessionToken(r)
 	if !ok || !a.validCSRF(r, token) {
-		writeError(w, http.StatusForbidden, "invalid CSRF token")
+		httpresponse.WriteError(w, http.StatusForbidden, "invalid CSRF token")
 		return
 	}
 	if err := a.sessions.RevokeSession(r.Context(), token); err != nil {
 		if errors.Is(err, identity.ErrSecurityStateUnavailable) {
-			writeError(w, http.StatusServiceUnavailable, "security state unavailable")
+			httpresponse.WriteError(w, http.StatusServiceUnavailable, "security state unavailable")
 			return
 		}
 		a.audit(r.Context(), "admin.logout", false)
-		writeError(w, http.StatusUnauthorized, "invalid session")
+		httpresponse.WriteError(w, http.StatusUnauthorized, "invalid session")
 		return
 	}
 	http.SetCookie(w, expiredCookie(sessionCookieName))
@@ -384,10 +394,10 @@ func (a *BrowserAuth) logout(w http.ResponseWriter, r *http.Request) {
 
 func (a *BrowserAuth) writeSessionError(w http.ResponseWriter, err error) {
 	if errors.Is(err, identity.ErrSecurityStateUnavailable) {
-		writeError(w, http.StatusServiceUnavailable, "security state unavailable")
+		httpresponse.WriteError(w, http.StatusServiceUnavailable, "security state unavailable")
 		return
 	}
-	writeError(w, http.StatusInternalServerError, "create session")
+	httpresponse.WriteError(w, http.StatusInternalServerError, "create session")
 }
 
 func (a *BrowserAuth) audit(ctx context.Context, action string, success bool) {

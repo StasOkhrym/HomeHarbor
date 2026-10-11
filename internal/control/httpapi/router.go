@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/StasOkhrym/homeharbor/internal/platform/httpresponse"
 )
 
 const (
-	maxRequestBodyBytes int64 = 1 << 20
+	maxRequestBodyBytes int64 = httpresponse.MaxBodyBytes
 	maxRequestIDLength        = 128
 )
 

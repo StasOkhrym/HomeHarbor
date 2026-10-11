@@ -14,6 +14,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	memoryidentity "github.com/StasOkhrym/homeharbor/internal/testutil/control/identity"
+	webauth "github.com/StasOkhrym/homeharbor/internal/web/auth"
 )
 
 // Only authenticator verification is doubled here. Registration exclusivity,
@@ -44,7 +45,7 @@ func (p *persistedPasskeys) FinishLogin(
 }
 
 type bootstrapSessions struct {
-	AdminSessions
+	webauth.AdminSessions
 	recoveryFailure error
 	sessionFailure  error
 	recoveryCalls   int
@@ -71,7 +72,7 @@ func (s *bootstrapSessions) CreateSession(
 	return s.AdminSessions.CreateSession(ctx, ttl)
 }
 
-func bootstrapFixture(t *testing.T) (*BrowserAuth, *persistedPasskeys, *bootstrapSessions) {
+func bootstrapFixture(t *testing.T) (*webauth.BrowserAuth, *persistedPasskeys, *bootstrapSessions) {
 	t.Helper()
 	store := memoryidentity.NewRepository()
 	service, err := identity.NewPasskeyService(identity.PasskeyConfig{
@@ -85,7 +86,7 @@ func bootstrapFixture(t *testing.T) (*BrowserAuth, *persistedPasskeys, *bootstra
 	}
 	passkeys := &persistedPasskeys{PasskeyService: service, store: store}
 	sessions := &bootstrapSessions{AdminSessions: identity.NewService(store, store, nil, nil)}
-	auth, err := NewBrowserAuth(BrowserAuthConfig{
+	auth, err := webauth.NewBrowserAuth(webauth.BrowserAuthConfig{
 		Origin:     "https://tunnel.example.com",
 		SigningKey: bytes.Repeat([]byte{8}, 32),
 		SessionTTL: time.Hour,
@@ -97,11 +98,12 @@ func bootstrapFixture(t *testing.T) (*BrowserAuth, *persistedPasskeys, *bootstra
 	return auth, passkeys, sessions
 }
 
-func bootstrapPost(auth *BrowserAuth, path string) *httptest.ResponseRecorder {
+func bootstrapPost(auth *webauth.BrowserAuth, path string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodPost, path,
 		strings.NewReader(`{"ceremony_id":"test","response":{}}`))
 	request.Header.Set("Origin", "https://tunnel.example.com")
 	response := httptest.NewRecorder()
+
 	auth.Handler().ServeHTTP(response, request)
 	return response
 }

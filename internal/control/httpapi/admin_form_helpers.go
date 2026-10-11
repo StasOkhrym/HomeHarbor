@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
+	websession "github.com/StasOkhrym/homeharbor/internal/web/session"
 )
 
 func parseBrowserForm(next http.Handler) http.Handler {
@@ -26,10 +27,11 @@ func parseBrowserForm(next http.Handler) http.Handler {
 }
 
 func csrfFormToken(request *http.Request) string {
-	cookie, err := request.Cookie(csrfCookieName)
+	cookie, err := request.Cookie(websession.CSRFCookieName)
 	if err != nil {
 		return ""
 	}
+
 	return cookie.Value
 }
 

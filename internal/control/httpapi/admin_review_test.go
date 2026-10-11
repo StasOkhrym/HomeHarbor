@@ -25,12 +25,20 @@ import (
 )
 
 func TestRecoveryFormCannotSubmitSecretsInURL(t *testing.T) {
+	auth := newSetupAuth(t, registeredSetupState{})
 	response := httptest.NewRecorder()
-	if err := loginTemplate.Execute(response, loginPageModel{}); err != nil {
-		t.Fatal(err)
+
+	auth.LoginHandler().
+		ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/login", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("registered login page status=%d", response.Code)
 	}
+
 	body := response.Body.String()
+
 	form := regexp.MustCompile(`<form\s+[^>]*id="recovery"[^>]*>`).FindString(body)
+
 	if !strings.Contains(form, `method="post"`) ||
 		!strings.Contains(form, `action="/admin/login"`) {
 		t.Fatalf("recovery needs a safe non-GET fallback: %s", form)

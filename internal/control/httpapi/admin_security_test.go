@@ -54,7 +54,7 @@ func TestAdminMutationsShareBrowserSecurityBoundary(t *testing.T) {
 					if scenario == "anonymous" {
 						status = http.StatusUnauthorized
 					} else {
-						request.AddCookie(auth.sessionCookie(sessions.session))
+						request.AddCookie(browserSessionCookie(t, sessions.session))
 					}
 					if scenario == "wrong-origin" {
 						request.Header.Set("Origin", "https://attacker.example")
@@ -176,10 +176,12 @@ func TestAdminPolicyJSONEmptyIsArray(t *testing.T) {
 
 func TestBrowserMutationRejectsForeignOriginWithValidCSRF(t *testing.T) {
 	auth, sessions := newBrowserAuthTest(t)
-	csrf, err := auth.csrfCookie(sessions.session.Token, sessions.session.ExpiresAt)
+
+	csrf, err := browserCSRFCookie(t, sessions.session)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/admin/services",
@@ -187,9 +189,11 @@ func TestBrowserMutationRejectsForeignOriginWithValidCSRF(t *testing.T) {
 	)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Origin", "https://attacker.example")
-	request.AddCookie(auth.sessionCookie(sessions.session))
+	request.AddCookie(browserSessionCookie(t, sessions.session))
 	request.AddCookie(csrf)
+
 	allowed, err := auth.AuthorizeMutation(context.Background(), request)
+
 	if err != nil || allowed {
 		t.Fatal("valid CSRF allowed a foreign-origin browser mutation")
 	}
