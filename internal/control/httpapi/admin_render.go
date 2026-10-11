@@ -21,10 +21,11 @@ var adminScript []byte
 var htmxScript []byte
 
 var adminTemplate = template.Must(template.New("admin").Funcs(template.FuncMap{
-	"timeLabel":    func(value time.Time) string { return value.UTC().Format("02 Jan 2006, 15:04 UTC") },
-	"timeISO":      func(value time.Time) string { return value.UTC().Format(time.RFC3339) },
-	"actionLabel":  adminActionLabel,
-	"auditOutcome": adminAuditOutcome,
+	"timeLabel":        func(value time.Time) string { return value.UTC().Format("02 Jan 2006, 15:04 UTC") },
+	"timeISO":          func(value time.Time) string { return value.UTC().Format(time.RFC3339) },
+	"actionLabel":      adminActionLabel,
+	"auditOutcome":     adminAuditOutcome,
+	"auditCorrelation": adminAuditCorrelation,
 }).ParseFS(adminViews, "templates/admin/*.html"))
 
 func (s *Server) renderAdmin(w http.ResponseWriter, status int, model adminPageModel) {
@@ -36,6 +37,28 @@ func (s *Server) renderAdmin(w http.ResponseWriter, status int, model adminPageM
 		http.Error(
 			w,
 			"The page could not be displayed. Please try again.",
+			http.StatusInternalServerError,
+		)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_, _ = w.Write(output.Bytes())
+}
+
+func (s *Server) renderAdminFragment(
+	w http.ResponseWriter,
+	status int,
+	name string,
+	model adminPageModel,
+) {
+	var output bytes.Buffer
+	if err := adminTemplate.ExecuteTemplate(&output, name, model); err != nil {
+		s.logger.Error("render admin fragment", "error", err, "template", name)
+		http.Error(
+			w,
+			"Activity could not be displayed. Please try again.",
 			http.StatusInternalServerError,
 		)
 		return

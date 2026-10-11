@@ -1020,11 +1020,29 @@ func (headerAuthorizer) IsAdmin(_ context.Context, request *http.Request) (bool,
 type auditReaderStub struct {
 	events []audit.Event
 	limit  int
+	query  audit.Query
 }
 
 func (reader *auditReaderStub) List(_ context.Context, limit int) ([]audit.Event, error) {
 	reader.limit = limit
 	return reader.events, nil
+}
+
+func (reader *auditReaderStub) ListRecords(
+	_ context.Context,
+	query audit.Query,
+) ([]audit.Record, error) {
+	reader.query = query
+	reader.limit = query.Limit
+	records := make([]audit.Record, 0, len(reader.events))
+	for index, event := range reader.events {
+		records = append(
+			records,
+			audit.Record{RecordID: int64(len(reader.events) - index), Event: event},
+		)
+	}
+
+	return records, nil
 }
 
 func validEnrollmentRequest(t *testing.T, token, name string) devices.EnrollRequest {

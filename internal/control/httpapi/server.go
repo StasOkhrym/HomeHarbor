@@ -91,6 +91,7 @@ type RouteService interface {
 // an admin request from rewriting its own history.
 type AuditReader interface {
 	List(context.Context, int) ([]audit.Event, error)
+	ListRecords(context.Context, audit.Query) ([]audit.Record, error)
 }
 
 // RelaySessionIssuer mints a short-lived ticket bound to one device, one peer,

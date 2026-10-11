@@ -164,3 +164,112 @@ func TestAdminActivityUsesReadableActions(t *testing.T) {
 		t.Fatalf("activity status=%d limit=%d", response.Code, reader.limit)
 	}
 }
+
+type activityDeviceSpy struct {
+	DeviceService
+	listCalls int
+}
+
+func (spy *activityDeviceSpy) List(context.Context) ([]devices.Device, error) {
+	spy.listCalls++
+	return nil, errors.New("activity must not query devices")
+}
+
+func TestActivityDoesNotQueryDevices(t *testing.T) {
+	devicesSpy := &activityDeviceSpy{}
+	reader := &auditReaderStub{
+		events: []audit.Event{{Action: "admin.login", OccurredAt: time.Now()}},
+	}
+
+	handler := newTestServer(devicesSpy, allowAuthorizer{}, Dependencies{
+		Resources: ResourceDependencies{Audit: reader},
+	}).Handler()
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/activity", nil))
+
+	if response.Code != http.StatusOK || devicesSpy.listCalls != 0 {
+		t.Fatalf("activity status=%d device list calls=%d", response.Code, devicesSpy.listCalls)
+	}
+}
+
+func TestActivityFragmentRequiresSessionAndNoStore(t *testing.T) {
+	reader := &auditReaderStub{
+		events: []audit.Event{{Action: "admin.login", OccurredAt: time.Now()}},
+	}
+
+	handler := newTestServer(nil, headerAuthorizer{}, Dependencies{
+		Resources: ResourceDependencies{Audit: reader},
+	}).Handler()
+	path := "/admin/activity/fragment?limit=999&action=admin.login&target_id=session-1"
+	unauthorized := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	request.Header.Set("HX-Request", "true")
+	handler.ServeHTTP(unauthorized, request)
+
+	if unauthorized.Code != http.StatusUnauthorized ||
+		unauthorized.Header().Get("HX-Redirect") != "/admin/login" {
+		t.Fatalf("fragment auth status=%d redirect=%q", unauthorized.Code,
+			unauthorized.Header().Get("HX-Redirect"))
+	}
+
+	authorized := httptest.NewRecorder()
+	request.Header.Set("X-Test-Admin", "true")
+	handler.ServeHTTP(authorized, request)
+
+	if authorized.Code != http.StatusOK || authorized.Header().Get("Cache-Control") != "no-store" ||
+		!strings.Contains(authorized.Body.String(), `data-record-id="1"`) ||
+		strings.Contains(authorized.Body.String(), "<html") ||
+		reader.query.Limit != maxAuditLimit || reader.query.Action != "admin.login" ||
+		reader.query.TargetID != "session-1" {
+		t.Fatalf("fragment response status=%d query=%+v body=%s", authorized.Code,
+			reader.query, authorized.Body.String())
+	}
+}
+
+func TestActivityQueryValidatesCursorBeforeReading(t *testing.T) {
+	reader := &auditReaderStub{}
+	handler := newTestServer(nil, allowAuthorizer{}, Dependencies{
+		Resources: ResourceDependencies{Audit: reader},
+	}).Handler()
+	for _, path := range []string{
+		"/admin/activity?before_id=0",
+		"/admin/activity/fragment?before_id=-4",
+		"/admin/activity/fragment?before_id=bogus",
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusBadRequest || reader.query.Limit != 0 {
+			t.Fatalf("%s status=%d query=%+v", path, response.Code, reader.query)
+		}
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(
+		http.MethodGet, "/admin/activity?before_id=42&action=invite.approved", nil,
+	))
+	if response.Code != http.StatusOK || reader.query.BeforeID != 42 ||
+		reader.query.Action != "invite.approved" || reader.query.Limit != defaultActivityLimit {
+		t.Fatalf("history status=%d query=%+v", response.Code, reader.query)
+	}
+}
+
+func TestActivityRendersOnlyApprovedMetadata(t *testing.T) {
+	reader := &auditReaderStub{events: []audit.Event{{
+		Action: "invite.approved", OccurredAt: time.Now(),
+		ActorType: "unknown", TargetType: "invite", TargetID: "invite-1",
+		Metadata: map[string]any{
+			"outcome": "success", "correlation_id": "request-1", "secret": "DO-NOT-RENDER",
+		},
+	}}}
+	handler := newTestServer(nil, allowAuthorizer{}, Dependencies{
+		Resources: ResourceDependencies{Audit: reader},
+	}).Handler()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/activity", nil))
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, "Invite approved") ||
+		!strings.Contains(body, "Succeeded") || !strings.Contains(body, "request-1") ||
+		strings.Contains(body, "DO-NOT-RENDER") {
+		t.Fatalf("activity status=%d body=%s", response.Code, body)
+	}
+}

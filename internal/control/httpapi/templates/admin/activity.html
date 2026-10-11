@@ -10,27 +10,54 @@
                max="200"
                value="{{.AuditLimit}}">
       </div>
-      <button class="secondary" type="submit">Refresh activity</button>
+      <div class="field">
+        <label for="activity-action">Action</label>
+        <input id="activity-action"
+               name="action"
+               maxlength="128"
+               value="{{.AuditAction}}"
+               placeholder="All actions">
+      </div>
+      <div class="field">
+        <label for="activity-target">Target ID</label>
+        <input id="activity-target"
+               name="target_id"
+               maxlength="128"
+               value="{{.AuditTargetID}}"
+               placeholder="All targets">
+      </div>
+      <button class="secondary" type="submit">Apply filters</button>
     </form>
   </section>
-  <section class="panel">
+  {{template "activity-feed" .}}
+{{end}}
+{{define "activity-feed"}}
+  <section class="panel" id="activity-feed" aria-label="Recent activity">
     <h2>Recent events</h2>
-    {{if .Audit.Ready}}
+    {{if .Error}}
+      <p class="alert alert-error" role="alert">{{.Error}}</p>
+    {{else if .Audit.Ready}}
       <ul class="resource-list">
         {{range .Audit.Items}}
-          <li>
-            <div class="resource-row"><strong>{{actionLabel .Action}}</strong>{{with auditOutcome .}}<span class="badge">{{.}}</span>{{end}}</div>
-            <p><time datetime="{{timeISO .OccurredAt}}">{{timeLabel .OccurredAt}}</time></p>
+          <li data-record-id="{{.RecordID}}">
+            <div class="resource-row"><strong>{{actionLabel .Event.Action}}</strong><span class="badge">{{auditOutcome .Event}}</span></div>
+            <p><time datetime="{{timeISO .Event.OccurredAt}}">{{timeLabel .Event.OccurredAt}}</time></p>
             <details class="advanced">
               <summary>Advanced · event identities</summary>
-              <p>Action: <code>{{.Action}}</code></p>
-              <p>{{.ActorType}} / <code>{{.ActorID}}</code> → {{.TargetType}} / <code>{{.TargetID}}</code></p>
+              <p>Action: <code>{{.Event.Action}}</code></p>
+              <p>{{.Event.ActorType}} / <code>{{.Event.ActorID}}</code> → {{.Event.TargetType}} / <code>{{.Event.TargetID}}</code></p>
+              {{with auditCorrelation .Event}}
+                <p>Correlation: <code>{{.}}</code></p>
+              {{end}}
             </details>
           </li>
         {{else}}
           <li class="empty-state">No audit events yet.</li>
         {{end}}
       </ul>
+      {{if .AuditOlderID}}
+        <a href="/admin/activity?limit={{.AuditLimit}}&amp;action={{.AuditAction | urlquery}}&amp;target_id={{.AuditTargetID | urlquery}}&amp;before_id={{.AuditOlderID}}">Older events</a>
+      {{end}}
     {{else}}
       <p class="alert alert-error" role="alert">{{.Audit.Error}}</p>
     {{end}}
