@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"html/template"
@@ -16,9 +15,10 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	"github.com/StasOkhrym/homeharbor/internal/web/assets"
+	websession "github.com/StasOkhrym/homeharbor/internal/web/session"
 )
 
-const sessionCookieName = "__Host-homeharbor_admin"
+const sessionCookieName = websession.CookieName
 
 var (
 	loginPage   = assets.HTML("login.html")
@@ -63,10 +63,11 @@ type AuthAuditor interface {
 	RecordIdentity(context.Context, string, bool) error
 }
 
-// BrowserAuth owns browser credential transport, cookies, Origin checks, and CSRF.
+// BrowserAuth coordinates passkey transport, session liveness and Origin checks.
+// Browser cookie and CSRF proof mechanics live in web/session.
 type BrowserAuth struct {
 	origin     string
-	signingKey []byte
+	codec      *websession.Codec
 	sessionTTL time.Duration
 	passkeys   PasskeyCeremonies
 	sessions   AdminSessions
@@ -81,8 +82,11 @@ func NewBrowserAuth(
 	passkeys PasskeyCeremonies,
 	sessions AdminSessions,
 ) (*BrowserAuth, error) {
-	if len(config.SigningKey) < 32 {
-		return nil, errors.New("session signing key must be at least 32 bytes")
+	codec, err := websession.NewCodec(config.SigningKey, func(value []byte) (int, error) {
+		return readRandom(value)
+	})
+	if err != nil {
+		return nil, err
 	}
 	if config.SessionTTL <= 0 {
 		return nil, errors.New("session TTL must be positive")
@@ -96,7 +100,7 @@ func NewBrowserAuth(
 	}
 	return &BrowserAuth{
 		origin:     strings.TrimSuffix(config.Origin, "/"),
-		signingKey: append([]byte(nil), config.SigningKey...),
+		codec:      codec,
 		sessionTTL: config.SessionTTL,
 		passkeys:   passkeys,
 		sessions:   sessions,
@@ -165,34 +169,11 @@ func (a *BrowserAuth) AuthorizeMutation(ctx context.Context, request *http.Reque
 }
 
 func (a *BrowserAuth) sessionToken(request *http.Request) (string, bool) {
-	cookie, err := request.Cookie(sessionCookieName)
-	if err != nil {
-		return "", false
-	}
-	parts := strings.Split(cookie.Value, ".")
-	if len(parts) != 2 {
-		return "", false
-	}
-	expected := a.sign("session." + parts[0])
-	// Constant-time comparison avoids leaking a useful prefix of the signature
-	// when an attacker repeatedly submits modified cookies.
-	if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) != 1 {
-		return "", false
-	}
-	return parts[0], true
+	return a.codec.SessionToken(request)
 }
 
 func (a *BrowserAuth) sessionCookie(session identity.IssuedSession) *http.Cookie {
-	value := session.Token + "." + a.sign("session."+session.Token)
-	return &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    value,
-		Path:     "/",
-		Expires:  session.ExpiresAt,
-		Secure:   true,
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-	}
+	return a.codec.SessionCookie(session.Token, session.ExpiresAt)
 }
 
 func (a *BrowserAuth) establishSession(w http.ResponseWriter, ctx context.Context) error {

@@ -31,6 +31,9 @@ they actually need. There is no universal CRUD repository or god-service.
 Browser templates and same-origin CSS/JavaScript are embedded by
 `internal/web/assets`; the current HTTP adapter composes those assets with its
 browser handlers and JSON routes.
+`internal/web/session` owns browser cookie, CSRF and review-proof cryptography;
+the control identity store remains the authority for whether an opaque session
+is live.
 
 Module `storage.Repository` adapters implement durable ports using PostgreSQL.
 The domain does not import pgx, Redis, Chi or HTTP. Neutral names separate domain
