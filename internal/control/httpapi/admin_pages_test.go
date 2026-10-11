@@ -13,6 +13,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
+	"github.com/StasOkhrym/homeharbor/internal/control/profiles"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
@@ -203,6 +204,118 @@ func TestActivityDoesNotQueryDevices(t *testing.T) {
 
 	if response.Code != http.StatusOK || devicesSpy.listCalls != 0 {
 		t.Fatalf("activity status=%d device list calls=%d", response.Code, devicesSpy.listCalls)
+	}
+}
+
+type pageDeviceSpy struct {
+	DeviceService
+	listCalls int
+}
+
+func (spy *pageDeviceSpy) List(context.Context) ([]devices.Device, error) {
+	spy.listCalls++
+	return nil, nil
+}
+
+type pageServiceSpy struct {
+	ServiceCatalog
+	listCalls int
+}
+
+func (spy *pageServiceSpy) List(context.Context) ([]controlservices.Service, error) {
+	spy.listCalls++
+	return nil, nil
+}
+
+type pageProfileSpy struct {
+	ProfileService
+	listCalls int
+}
+
+func (spy *pageProfileSpy) List(context.Context) ([]profiles.AccessProfile, error) {
+	spy.listCalls++
+	return nil, nil
+}
+
+type pageRouteSpy struct {
+	RouteService
+	listCalls int
+}
+
+func (spy *pageRouteSpy) List(context.Context) ([]controlroutes.Advertisement, error) {
+	spy.listCalls++
+	return nil, nil
+}
+
+func TestAdminPagesOnlyReadTheirOwnCollections(t *testing.T) {
+	for _, tc := range []struct {
+		page     string
+		devices  int
+		services int
+		profiles int
+		routes   int
+	}{
+		{"overview", 1, 1, 1, 1},
+		{"setup", 1, 0, 0, 1},
+		{"devices", 1, 0, 0, 0},
+		{"services", 0, 1, 0, 0},
+		{"access", 1, 1, 1, 0},
+		{"network", 1, 0, 0, 1},
+		{"invites", 1, 0, 0, 0},
+		{"activity", 0, 0, 0, 0},
+		{"security", 0, 0, 0, 0},
+	} {
+		t.Run(tc.page, func(t *testing.T) {
+			deviceSpy := &pageDeviceSpy{}
+			serviceSpy := &pageServiceSpy{}
+			profileSpy := &pageProfileSpy{}
+			routeSpy := &pageRouteSpy{}
+			handler := newTestServer(deviceSpy, allowAuthorizer{}, Dependencies{
+				Resources: ResourceDependencies{
+					Services: serviceSpy,
+					Profiles: profileSpy,
+					Routes:   routeSpy,
+				},
+			}).Handler()
+			response := httptest.NewRecorder()
+			path := "/admin/" + tc.page
+			if tc.page == "overview" {
+				path = "/admin/"
+			}
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			if deviceSpy.listCalls != tc.devices || serviceSpy.listCalls != tc.services ||
+				profileSpy.listCalls != tc.profiles || routeSpy.listCalls != tc.routes {
+				t.Fatalf(
+					"status=%d queries: devices=%d services=%d profiles=%d routes=%d; want %d/%d/%d/%d",
+					response.Code,
+					deviceSpy.listCalls,
+					serviceSpy.listCalls,
+					profileSpy.listCalls,
+					routeSpy.listCalls,
+					tc.devices,
+					tc.services,
+					tc.profiles,
+					tc.routes,
+				)
+			}
+		})
+	}
+}
+
+func TestAccessProfilesRemainAvailableWhenCatalogIsMissing(t *testing.T) {
+	profileSpy := &pageProfileSpy{}
+
+	handler := newTestServer(&pageDeviceSpy{}, allowAuthorizer{}, Dependencies{
+		Resources: ResourceDependencies{Profiles: profileSpy},
+	}).Handler()
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/access", nil))
+
+	if response.Code != http.StatusOK || profileSpy.listCalls != 1 ||
+		strings.Contains(response.Body.String(), "Access profiles are not configured") {
+		t.Fatalf("access status=%d profile queries=%d body=%s",
+			response.Code, profileSpy.listCalls, response.Body.String())
 	}
 }
 

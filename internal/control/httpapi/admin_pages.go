@@ -178,24 +178,33 @@ func (s *Server) loadAdminPage(r *http.Request, page string) (adminPageModel, in
 		InvitesReady:  s.invites != nil,
 	}
 	ctx := r.Context()
-	if s.devices != nil && page != "activity" {
-		model.Devices = loadAdminCollection(ctx, "Devices", s.devices.List)
-	} else {
-		model.Devices.Error = "Devices are not configured"
+	needsDevices := page == "overview" || page == "setup" || page == "devices" ||
+		page == "access" || page == "network" || page == "invites"
+	needsServices := page == "overview" || page == "services" || page == "access"
+	needsProfiles := page == "overview" || page == "access"
+	needsRoutes := page == "overview" || page == "setup" || page == "network"
+	if needsDevices {
+		if s.devices != nil {
+			model.Devices = loadAdminCollection(ctx, "Devices", s.devices.List)
+		} else {
+			model.Devices.Error = "Devices are not configured"
+		}
 	}
-	if s.services != nil &&
-		(page == "overview" || page == "setup" || page == "services" || page == "access" || page == "invites") {
-		model.Services = loadAdminCollection(ctx, "Services", s.services.List)
+	if needsServices {
+		if s.services != nil {
+			model.Services = loadAdminCollection(ctx, "Services", s.services.List)
+		} else {
+			model.Services.Error = "Services are not configured"
+		}
+	}
+	if needsProfiles {
 		if s.profiles != nil {
 			model.Profiles = loadAdminCollection(ctx, "Access profiles", s.profiles.List)
 		} else {
 			model.Profiles.Error = "Access profiles are not configured"
 		}
-	} else if s.services == nil {
-		model.Services.Error = "Services are not configured"
-		model.Profiles.Error = "Access profiles are not configured"
 	}
-	if s.routes != nil && (page == "overview" || page == "setup" || page == "network") {
+	if needsRoutes && s.routes != nil {
 		model.Routes = loadAdminCollection(ctx, "Routes", s.routes.List)
 		if model.Routes.Ready {
 			count := 0
@@ -206,7 +215,7 @@ func (s *Server) loadAdminPage(r *http.Request, page string) (adminPageModel, in
 			}
 			model.PendingRoutes = strconv.Itoa(count)
 		}
-	} else if s.routes == nil {
+	} else if needsRoutes {
 		model.Routes.Error = "Routes are not configured"
 	}
 	if page == "access" {
