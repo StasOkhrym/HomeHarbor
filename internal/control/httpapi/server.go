@@ -47,6 +47,7 @@ type Server struct {
 	authorizer          Authorizer
 	mutationAuthorizer  func(context.Context, *http.Request) (bool, error)
 	browserAPI          http.Handler
+	browserAdmin        http.Handler
 	loginPage           http.Handler
 	loginAsset          http.Handler
 	logger              *slog.Logger
@@ -73,7 +74,6 @@ type Server struct {
 	relayTTL            time.Duration
 	relayPeerAuthorizer RelayPeerAuthorizer
 	trustedProxy        []netip.Prefix
-	actionConfirmation  BrowserActionConfirmation
 }
 
 type RouteService interface {

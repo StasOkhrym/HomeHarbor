@@ -35,6 +35,7 @@ import (
 	memoryroutes "github.com/StasOkhrym/homeharbor/internal/testutil/control/routes"
 	memoryservices "github.com/StasOkhrym/homeharbor/internal/testutil/control/services"
 	memorysnapshots "github.com/StasOkhrym/homeharbor/internal/testutil/control/snapshots"
+	websession "github.com/StasOkhrym/homeharbor/internal/web/session"
 )
 
 func TestEnrollmentAPIRequiresAdminAndEnrollsDevice(t *testing.T) {
@@ -1002,11 +1003,16 @@ type allowAuthorizer struct{}
 
 // Test handlers opt into mutation authorization explicitly. Production uses
 // BrowserAuth's Origin/CSRF checks instead of this test-only admin predicate.
-func newTestServer(service DeviceService, auth Authorizer, deps Dependencies) *Server {
+func newTestServer(
+	service DeviceService,
+	auth Authorizer,
+	deps Dependencies,
+	confirmations ...websession.ActionConfirmation,
+) *Server {
 	if deps.Browser.MutationAuthorizer == nil {
 		deps.Browser.MutationAuthorizer = auth.IsAdmin
 	}
-	return mustTestServer(service, auth, deps)
+	return mustTestServer(service, auth, deps, confirmations...)
 }
 
 func (allowAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) { return true, nil }

@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,11 +16,11 @@ import (
 	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
 	memorypolicy "github.com/StasOkhrym/homeharbor/internal/testutil/control/policy"
 	memoryservices "github.com/StasOkhrym/homeharbor/internal/testutil/control/services"
-	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
 )
 
 func TestAdminMutationsShareBrowserSecurityBoundary(t *testing.T) {
 	auth, sessions := newBrowserAuthTest(t)
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		auth,
@@ -35,9 +34,9 @@ func TestAdminMutationsShareBrowserSecurityBoundary(t *testing.T) {
 				LoginPage:          auth.LoginHandler(),
 				LoginAsset:         auth.LoginAssetHandler(),
 				MutationAuthorizer: auth.AuthorizeMutation,
-				ActionConfirmation: auth,
 			},
 		},
+		auth,
 	).Handler()
 	for _, path := range []string{"services", "access-profiles", "enrollment-tokens", "policy/preview", "policy", "devices/device-a/revoke"} {
 		t.Run(path, func(t *testing.T) {
@@ -56,22 +55,54 @@ func TestAdminMutationsShareBrowserSecurityBoundary(t *testing.T) {
 					} else {
 						request.AddCookie(browserSessionCookie(t, sessions.session))
 					}
+
 					if scenario == "wrong-origin" {
 						request.Header.Set("Origin", "https://attacker.example")
 					}
+
 					if scenario == "expired" {
 						sessions.session.ExpiresAt = time.Now().Add(-time.Minute)
 						status = http.StatusUnauthorized
 					}
+
 					response := httptest.NewRecorder()
+
 					handler.ServeHTTP(response, request)
 					sessions.session.ExpiresAt = time.Now().Add(time.Hour)
+
 					if response.Code != status {
 						t.Errorf("status=%d want=%d", response.Code, status)
 					}
 				})
 			}
 		})
+	}
+}
+
+func TestMalformedAdminFormRejectedBeforeMutationAuthorization(t *testing.T) {
+	authorizationCalls := 0
+
+	handler := newTestServer(nil, allowAuthorizer{}, Dependencies{
+		Browser: BrowserDependencies{
+			MutationAuthorizer: func(context.Context, *http.Request) (bool, error) {
+				authorizationCalls++
+				return true, nil
+			},
+		},
+	}).Handler()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/services",
+		strings.NewReader("name=%ZZ"),
+	)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest || authorizationCalls != 0 {
+		t.Fatalf("malformed form status=%d authorization calls=%d",
+			response.Code, authorizationCalls)
 	}
 }
 
@@ -96,12 +127,16 @@ func TestAdminCredentialRevokeRequiresDeviceScopedProof(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+
 	auth, _ := newBrowserAuthTest(t)
+
 	handler := newTestServer(
 		service,
-		allowAuthorizer{}, Dependencies{Browser: BrowserDependencies{ActionConfirmation: auth}},
+		allowAuthorizer{}, Dependencies{},
+		auth,
 	).Handler()
 	page := httptest.NewRecorder()
+
 	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/admin/devices/device-a", nil))
 	proof := htmlInput(t, page.Body.String(), "proof")
 	values := url.Values{"confirmed": {"yes"}, "proof": {proof}}
@@ -112,7 +147,9 @@ func TestAdminCredentialRevokeRequiresDeviceScopedProof(t *testing.T) {
 	).Code; got != http.StatusForbidden {
 		t.Fatalf("substitution status=%d", got)
 	}
+
 	values.Del("confirmed")
+
 	if got := postAdminForm(
 		handler,
 		"/admin/devices/device-a/revoke",
@@ -120,7 +157,9 @@ func TestAdminCredentialRevokeRequiresDeviceScopedProof(t *testing.T) {
 	).Code; got != http.StatusUnprocessableEntity {
 		t.Fatalf("unconfirmed status=%d", got)
 	}
+
 	values.Set("confirmed", "yes")
+
 	if got := postAdminForm(
 		handler,
 		"/admin/devices/device-a/revoke",
@@ -128,8 +167,11 @@ func TestAdminCredentialRevokeRequiresDeviceScopedProof(t *testing.T) {
 	).Code; got != http.StatusSeeOther {
 		t.Fatalf("confirmed status=%d", got)
 	}
+
 	a, _ := store.Device(context.Background(), "device-a")
+
 	b, _ := store.Device(context.Background(), "device-b")
+
 	if a.Status != devices.StatusRevoked || b.Status != devices.StatusActive {
 		t.Fatalf("wrong devices revoked: %s/%s", a.Status, b.Status)
 	}
@@ -137,6 +179,7 @@ func TestAdminCredentialRevokeRequiresDeviceScopedProof(t *testing.T) {
 
 func TestAdminPolicyPreviewRequiresArray(t *testing.T) {
 	auth, _ := newBrowserAuthTest(t)
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
@@ -144,33 +187,14 @@ func TestAdminPolicyPreviewRequiresArray(t *testing.T) {
 			Resources: ResourceDependencies{
 				Policy: policy.NewService(memorypolicy.NewRepository(), acl.Compiler{}),
 			},
-			Browser: BrowserDependencies{ActionConfirmation: auth},
 		},
+		auth,
 	).Handler()
+
 	response := postAdminForm(handler, "/admin/policy/preview", url.Values{"rules": {"null"}})
+
 	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatal("null must not silently clear every allow rule")
-	}
-}
-
-func TestAdminPolicyJSONEmptyIsArray(t *testing.T) {
-	model := webadmin.Page{Values: url.Values{}}
-	server := mustTestServer(
-		nil,
-		nil,
-		Dependencies{
-			Resources: ResourceDependencies{
-				Policy: policy.NewService(memorypolicy.NewRepository(), acl.Compiler{}),
-			},
-		},
-	)
-	webadmin.LoadPolicy(context.Background(), server.policy, &model)
-	var value any
-	if err := json.Unmarshal([]byte(model.PolicyJSON), &value); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := value.([]any); !ok {
-		t.Fatalf("empty editor=%s", model.PolicyJSON)
 	}
 }
 

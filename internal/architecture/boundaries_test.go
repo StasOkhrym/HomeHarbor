@@ -44,6 +44,56 @@ func TestDomainModulesDoNotImportAdapters(t *testing.T) {
 	}
 }
 
+// Browser and JSON transports are composed by app/control. Keeping their
+// imports separate prevents a presentation change from expanding the API
+// adapter's dependency graph or forcing browser handlers back into it.
+func TestBrowserAndJSONAdaptersAreSiblings(t *testing.T) {
+	const module = "github.com/StasOkhrym/homeharbor/internal/"
+	for _, item := range []struct {
+		folder    string
+		forbidden string
+	}{
+		{"control/httpapi", module + "web/admin"},
+		{"control/httpapi", module + "web/auth"},
+		{"web/admin", module + "control/httpapi"},
+		{"web/auth", module + "control/httpapi"},
+	} {
+		t.Run(item.folder+"-to-"+item.forbidden, func(t *testing.T) {
+			folder := filepath.Join("..", "..", "internal", item.folder)
+
+			entries, err := os.ReadDir(folder)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for _, entry := range entries {
+				if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") ||
+					strings.HasSuffix(entry.Name(), "_test.go") {
+					continue
+				}
+
+				path := filepath.Join(folder, entry.Name())
+
+				file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				for _, spec := range file.Imports {
+					importPath, err := strconv.Unquote(spec.Path.Value)
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					if importPath == item.forbidden {
+						t.Errorf("%s imports sibling adapter %s", path, importPath)
+					}
+				}
+			}
+		})
+	}
+}
+
 // Follow local imports too: a domain helper must not hide an adapter dependency.
 func checkDomainImports(t *testing.T, repositoryRoot, packagePath string, visited map[string]bool) {
 	t.Helper()

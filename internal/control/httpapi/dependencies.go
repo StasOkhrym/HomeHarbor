@@ -43,10 +43,10 @@ type ResourceDependencies struct {
 // BrowserDependencies binds login rendering and mutation checks explicitly.
 type BrowserDependencies struct {
 	API                http.Handler
+	Admin              http.Handler
 	LoginPage          http.Handler
 	LoginAsset         http.Handler
 	MutationAuthorizer func(context.Context, *http.Request) (bool, error)
-	ActionConfirmation BrowserActionConfirmation
 }
 
 // SecurityDependencies does not select fallback authorities on store failure.
@@ -97,7 +97,8 @@ func NewServer(deps Dependencies) (*Server, error) {
 	}
 	browser := deps.Browser
 	if browser.API != nil || browser.LoginPage != nil || browser.LoginAsset != nil {
-		if browser.API == nil || browser.LoginPage == nil || browser.LoginAsset == nil ||
+		if browser.API == nil || browser.Admin == nil || browser.LoginPage == nil ||
+			browser.LoginAsset == nil ||
 			browser.MutationAuthorizer == nil {
 			return nil, errors.New(
 				"browser handlers and mutation authorization must be configured together",
@@ -157,10 +158,10 @@ func NewServer(deps Dependencies) (*Server, error) {
 		trustedProxy:        append([]netip.Prefix(nil), security.TrustedProxyCIDRs...),
 		companionRoot:       append(ed25519.PublicKey(nil), security.RootPublicKey...),
 		browserAPI:          browser.API,
+		browserAdmin:        browser.Admin,
 		loginPage:           browser.LoginPage,
 		loginAsset:          browser.LoginAsset,
 		mutationAuthorizer:  browser.MutationAuthorizer,
-		actionConfirmation:  browser.ActionConfirmation,
 		activationChallenge: deps.Activation.Challenge,
 		activationClaim:     deps.Activation.Claim,
 		relayIssuer:         relay.Issuer,

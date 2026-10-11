@@ -36,10 +36,10 @@ alongside its control JSON API and protected admin routes.
 the control identity store remains the authority for whether an opaque session
 is live. `internal/platform/httpresponse` shares strict JSON decoding and error
 responses between the two HTTP adapters.
-`internal/web/admin` owns the Activity fragment handler, bounded query/view
-model, allowlisted audit presentation and page-specific read models for policy,
-signed state and invites. The control HTTP adapter mounts protected routes and
-composes browser mutations.
+`internal/web/admin` owns protected pages and forms, the Activity fragment,
+bounded read models and allowlisted audit presentation. The control HTTP
+adapter mounts it as an opaque handler behind shared session, CSRF, body and
+rate-limit middleware; neither adapter imports the other.
 
 Module `storage.Repository` adapters implement durable ports using PostgreSQL.
 The domain does not import pgx, Redis, Chi or HTTP. Neutral names separate domain

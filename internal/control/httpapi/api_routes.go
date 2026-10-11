@@ -5,7 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
+	websession "github.com/StasOkhrym/homeharbor/internal/web/session"
 )
 
 func (s *Server) registerAPI(api chi.Router) {
@@ -160,26 +160,10 @@ func (s *Server) registerBrowserAdmin(admin chi.Router) {
 		admin.Handle("/login", s.loginPage)
 	}
 	admin.Group(func(protected chi.Router) {
-		protected.Use(parseBrowserForm)
+		protected.Use(websession.ParseForm)
 		protected.Use(s.requireAdmin)
-		protected.Get("/", s.adminDashboard)
-		for _, page := range []string{"setup", "devices", "services", "access", "network", "invites", "activity", "security"} {
-			protected.Get("/"+page, s.adminView(page))
+		if s.browserAdmin != nil {
+			protected.Mount("/", s.browserAdmin)
 		}
-		protected.Get("/activity/fragment", webadmin.ActivityFragment(s.audit, s.logger))
-		protected.Get("/devices/{id}", s.adminView("devices"))
-		protected.Post("/enrollment-tokens", s.issueEnrollmentTokenForm)
-		protected.Post("/devices/{id}/revoke", s.revokeDeviceForm)
-		if s.routes != nil {
-			protected.Post("/routes", s.createRouteForm)
-			protected.Post("/routes/approve", s.approveRouteForm)
-			protected.Post("/routes/reject", s.rejectRouteForm)
-			protected.Post("/routes/{id}/approve", s.approveRouteForm)
-			protected.Post("/routes/{id}/reject", s.rejectRouteForm)
-		}
-		protected.Post("/services", s.createServiceForm)
-		protected.Post("/access-profiles", s.createProfileForm)
-		protected.Post("/policy", s.replacePolicyForm)
-		protected.Post("/policy/preview", s.previewPolicyForm)
 	})
 }

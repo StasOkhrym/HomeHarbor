@@ -1,4 +1,4 @@
-package httpapi
+package admin
 
 import (
 	"crypto/rand"
@@ -8,23 +8,8 @@ import (
 	"net/url"
 	"strings"
 
-	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
 	websession "github.com/StasOkhrym/homeharbor/internal/web/session"
 )
-
-func parseBrowserForm(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			// FormValue silently discards ParseForm errors. Reject malformed
-			// bodies before authentication or field validation uses those values.
-			if err := r.ParseForm(); err != nil {
-				writeError(w, http.StatusBadRequest, "invalid form body")
-				return
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
-}
 
 func csrfFormToken(request *http.Request) string {
 	cookie, err := request.Cookie(websession.CSRFCookieName)
@@ -112,7 +97,7 @@ func safeFormValues(r *http.Request) url.Values {
 	return values
 }
 
-func (s *Server) adminFormError(
+func (s *Handler) adminFormError(
 	w http.ResponseWriter,
 	r *http.Request,
 	page string,
@@ -123,9 +108,11 @@ func (s *Server) adminFormError(
 	for key, values := range safeFormValues(r) {
 		model.Values[key] = values
 	}
+
 	if page == "access" && r.FormValue("editor") == "structured" {
-		model.PolicyRows = webadmin.SubmittedPolicyRows(model.Values)
+		model.PolicyRows = SubmittedPolicyRows(model.Values)
 	}
+
 	model.FieldErrors[field] = message
 	model.Error = "Your changes were not saved. " + message
 	s.renderAdmin(w, status, model)

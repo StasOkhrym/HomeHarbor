@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
+	websession "github.com/StasOkhrym/homeharbor/internal/web/session"
 )
 
 type denyAuthorizer struct{}
@@ -15,7 +17,12 @@ func (denyAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) { re
 
 // Test fixtures choose their memory authority explicitly; production NewServer
 // has no knowledge of these defaults or permissive peer predicates.
-func mustTestServer(service DeviceService, auth Authorizer, deps Dependencies) *Server {
+func mustTestServer(
+	service DeviceService,
+	auth Authorizer,
+	deps Dependencies,
+	confirmations ...websession.ActionConfirmation,
+) *Server {
 	defaults := explicitTestDependencies()
 	deps.Resources.Devices = service
 	if auth != nil {
@@ -38,6 +45,21 @@ func mustTestServer(service DeviceService, auth Authorizer, deps Dependencies) *
 	}
 	if deps.Relay.Issuer != nil && deps.Relay.PeerAuthorizer == nil {
 		deps.Relay.PeerAuthorizer = func(context.Context, devices.Device, devices.Device) bool { return true }
+	}
+	if deps.Browser.Admin == nil {
+		var confirmation websession.ActionConfirmation
+		if len(confirmations) > 0 {
+			confirmation = confirmations[0]
+		}
+		deps.Browser.Admin = webadmin.NewHandler(webadmin.Dependencies{
+			Devices: deps.Resources.Devices, Routes: deps.Resources.Routes,
+			Services: deps.Resources.Services, Profiles: deps.Resources.Profiles,
+			Policy: deps.Resources.Policy, Invites: deps.Resources.Invites,
+			Snapshots: deps.Resources.Snapshots, Audit: deps.Resources.Audit,
+			Ready:              deps.Observability.Ready,
+			ActionConfirmation: confirmation,
+			InvalidateDevice:   deps.Resources.InvalidateDevice,
+		}).Routes()
 	}
 	server, err := NewServer(deps)
 	if err != nil {

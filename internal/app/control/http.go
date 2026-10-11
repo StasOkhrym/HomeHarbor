@@ -38,6 +38,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 	"github.com/StasOkhrym/homeharbor/internal/platform/redissecurity"
 	"github.com/StasOkhrym/homeharbor/internal/relay"
+	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
 	webauth "github.com/StasOkhrym/homeharbor/internal/web/auth"
 	"github.com/StasOkhrym/homeharbor/migrations"
 )
@@ -136,7 +137,6 @@ func buildHTTP(
 			LoginPage:          auth.LoginHandler(),
 			LoginAsset:         auth.LoginAssetHandler(),
 			MutationAuthorizer: auth.AuthorizeMutation,
-			ActionConfirmation: auth,
 		},
 		Security: httpapi.SecurityDependencies{
 			Authorizer: auth,
@@ -267,6 +267,14 @@ func buildHTTP(
 	deps.Coordination = coordinationHandler
 	deps.SnapshotHistory = http.HandlerFunc(coordinationHandler.ServeHistory)
 	deps.Relay.PeerAuthorizer = peerAuthorization
+	deps.Browser.Admin = webadmin.NewHandler(webadmin.Dependencies{
+		Devices: deps.Resources.Devices, Routes: deps.Resources.Routes,
+		Services: deps.Resources.Services, Profiles: deps.Resources.Profiles,
+		Policy: deps.Resources.Policy, Invites: deps.Resources.Invites,
+		Snapshots: deps.Resources.Snapshots, Audit: deps.Resources.Audit,
+		Ready: deps.Observability.Ready, ActionConfirmation: auth,
+		InvalidateDevice: deps.Resources.InvalidateDevice, Logger: logger,
+	}).Routes()
 	httpServer, err := httpapi.NewServer(deps)
 	if err != nil {
 		return nil, nil, nil, errors.Join(errors.New("configure HTTP dependencies"), err)

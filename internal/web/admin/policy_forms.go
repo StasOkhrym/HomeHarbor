@@ -1,4 +1,4 @@
-package httpapi
+package admin
 
 import (
 	"encoding/json"
@@ -11,7 +11,6 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
-	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
 )
 
 type browserAction struct {
@@ -89,7 +88,7 @@ func policyFormRules(r *http.Request) ([]acl.Rule, error) {
 	return rules, nil
 }
 
-func (s *Server) previewPolicyForm(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) previewPolicyForm(w http.ResponseWriter, r *http.Request) {
 	if s.policy == nil {
 		s.adminFormError(
 			w,
@@ -101,6 +100,7 @@ func (s *Server) previewPolicyForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	current, err := s.policy.Latest(r.Context())
 	if err != nil {
 		s.adminFormError(
@@ -113,6 +113,7 @@ func (s *Server) previewPolicyForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	rules, err := policyFormRules(r)
 	if err != nil {
 		s.adminFormError(
@@ -125,6 +126,7 @@ func (s *Server) previewPolicyForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	proposed, err := (acl.Compiler{}).Compile(current.Revision+1, rules)
 	if err != nil {
 		s.adminFormError(
@@ -137,9 +139,11 @@ func (s *Server) previewPolicyForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	if proposed.Rules == nil {
 		proposed.Rules = []acl.Rule{}
 	}
+
 	model, _ := s.loadAdminPage(r, "access")
 	if s.actionConfirmation == nil {
 		s.adminFormError(
@@ -152,6 +156,7 @@ func (s *Server) previewPolicyForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	payload, _ := json.Marshal(
 		browserAction{
 			Operation: "replace-policy",
@@ -161,18 +166,18 @@ func (s *Server) previewPolicyForm(w http.ResponseWriter, r *http.Request) {
 	)
 	before, _ := json.MarshalIndent(current.Rules, "", "  ")
 	after, _ := json.MarshalIndent(proposed.Rules, "", "  ")
-	model.Preview = &webadmin.PolicyPreview{
+	model.Preview = &PolicyPreview{
 		Before:    string(before),
 		After:     string(after),
 		RulesJSON: string(after),
 		Revision:  current.Revision,
 		Proof:     s.actionConfirmation.SignAction(csrfFormToken(r), payload),
-		Changes:   webadmin.PolicyChanges(current.Rules, proposed.Rules),
+		Changes:   PolicyChanges(current.Rules, proposed.Rules),
 	}
 	s.renderAdmin(w, http.StatusOK, model)
 }
 
-func (s *Server) replacePolicyForm(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) replacePolicyForm(w http.ResponseWriter, r *http.Request) {
 	if r.FormValue("confirmed") != "yes" {
 		s.adminFormError(
 			w,
@@ -195,6 +200,7 @@ func (s *Server) replacePolicyForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	revision, err := strconv.ParseUint(r.FormValue("revision"), 10, 64)
 	if err != nil {
 		s.adminFormError(
@@ -207,6 +213,7 @@ func (s *Server) replacePolicyForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	rules, err := policyFormRules(r)
 	if err != nil {
 		s.adminFormError(
@@ -219,6 +226,7 @@ func (s *Server) replacePolicyForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	compiled, err := (acl.Compiler{}).Compile(revision+1, rules)
 	if err != nil {
 		s.adminFormError(
@@ -231,6 +239,7 @@ func (s *Server) replacePolicyForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	payload, _ := json.Marshal(
 		browserAction{Operation: "replace-policy", Revision: revision, Rules: compiled.Rules},
 	)
@@ -245,18 +254,21 @@ func (s *Server) replacePolicyForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	if _, err = s.policy.ReplaceIfRevision(r.Context(), revision, compiled.Rules); err != nil {
 		status, message := http.StatusServiceUnavailable, "The policy could not be saved. Try again shortly."
 		if errors.Is(err, policy.ErrRevisionConflict) {
 			status, message = http.StatusConflict, "Policy changed after your preview. Review the current policy and preview again."
 		}
+
 		s.adminFormError(w, r, "access", status, "rules", message)
 		return
 	}
+
 	redirectAdmin(w, r, "policy-updated")
 }
 
-func (s *Server) revokeDeviceForm(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) revokeDeviceForm(w http.ResponseWriter, r *http.Request) {
 	if r.FormValue("confirmed") != "yes" {
 		s.adminFormError(
 			w,
@@ -279,6 +291,7 @@ func (s *Server) revokeDeviceForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	payload, _ := json.Marshal(browserAction{Operation: "revoke-device", Target: r.PathValue("id")})
 	if !s.actionConfirmation.VerifyAction(csrfFormToken(r), payload, r.FormValue("proof")) {
 		s.adminFormError(
@@ -291,6 +304,7 @@ func (s *Server) revokeDeviceForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	if err := s.devices.Revoke(r.Context(), r.PathValue("id")); err != nil {
 		s.adminFormError(
 			w,
@@ -302,8 +316,10 @@ func (s *Server) revokeDeviceForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	if s.invalidateDevice != nil {
 		s.invalidateDevice(r.PathValue("id"))
 	}
+
 	redirectAdmin(w, r, "device-revoked")
 }

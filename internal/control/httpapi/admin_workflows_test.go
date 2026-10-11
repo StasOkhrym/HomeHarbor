@@ -171,25 +171,31 @@ func TestAdminMissingServiceRejectsPostWithoutPanic(t *testing.T) {
 
 func TestAdminPolicyPreviewDoesNotPersist(t *testing.T) {
 	service := policy.NewService(memorypolicy.NewRepository(), acl.Compiler{})
+
 	auth, _ := newBrowserAuthTest(t)
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{Policy: service},
-			Browser:   BrowserDependencies{ActionConfirmation: auth},
 		},
+		auth,
 	).Handler()
+
 	response := postAdminForm(handler, "/admin/policy/preview", url.Values{
 		"rules": {
 			`[{"id":"ssh","source_device_id":"client-a","destination":"192.168.50.0/24","protocol":"tcp","port_from":22,"port_to":22}]`,
 		},
 	})
+
 	if response.Code != http.StatusOK ||
 		!strings.Contains(response.Body.String(), "Review policy replacement") {
 		t.Fatalf("preview status=%d body=%s", response.Code, response.Body.String())
 	}
+
 	value, _ := service.Latest(context.Background())
+
 	if value.Revision != 0 || len(value.Rules) != 0 {
 		t.Fatal("preview mutated policy")
 	}
@@ -280,15 +286,18 @@ func TestAdminServiceInvalidURLIsFieldError(t *testing.T) {
 
 func TestAdminPolicyPreviewRoundTripAndReplay(t *testing.T) {
 	service := policy.NewService(memorypolicy.NewRepository(), acl.Compiler{})
+
 	auth, _ := newBrowserAuthTest(t)
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{Policy: service},
-			Browser:   BrowserDependencies{ActionConfirmation: auth},
 		},
+		auth,
 	).Handler()
+
 	preview := postAdminForm(handler, "/admin/policy/preview", url.Values{
 		"editor":           {"structured"},
 		"rule_id":          {"ssh"},
@@ -300,12 +309,14 @@ func TestAdminPolicyPreviewRoundTripAndReplay(t *testing.T) {
 		"port_from": {"22"},
 		"port_to":   {"22"},
 	})
+
 	if preview.Code != http.StatusOK {
 		t.Fatalf("preview status=%d", preview.Code)
 	}
 	if !strings.Contains(preview.Body.String(), "Added") {
 		t.Fatal("preview has no added-rule diff")
 	}
+
 	values := url.Values{
 		"confirmed": {"yes"}, "revision": {htmlInput(t, preview.Body.String(), "revision")},
 		"proof": {htmlInput(t, preview.Body.String(), "proof")},
@@ -314,11 +325,14 @@ func TestAdminPolicyPreviewRoundTripAndReplay(t *testing.T) {
 	if got := postAdminForm(handler, "/admin/policy", values).Code; got != http.StatusSeeOther {
 		t.Fatalf("confirmed status=%d", got)
 	}
+
 	value, _ := service.Latest(context.Background())
+
 	if value.Revision != 1 || len(value.Rules) != 1 ||
 		value.Rules[0].Destination.String() != "192.168.50.0/24" {
 		t.Fatalf("round-trip policy=%v", value)
 	}
+
 	if got := postAdminForm(handler, "/admin/policy", values).Code; got != http.StatusConflict {
 		t.Fatalf("replay status=%d", got)
 	}
@@ -326,17 +340,22 @@ func TestAdminPolicyPreviewRoundTripAndReplay(t *testing.T) {
 
 func TestAdminPolicyRejectsTamperedConfirmation(t *testing.T) {
 	service := policy.NewService(memorypolicy.NewRepository(), acl.Compiler{})
+
 	auth, _ := newBrowserAuthTest(t)
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{Policy: service},
-			Browser:   BrowserDependencies{ActionConfirmation: auth},
 		},
+		auth,
 	).Handler()
+
 	preview := postAdminForm(handler, "/admin/policy/preview", url.Values{"rules": {"[]"}})
+
 	proof := htmlInput(t, preview.Body.String(), "proof")
+
 	response := postAdminForm(handler, "/admin/policy", url.Values{
 		"confirmed": {"yes"},
 		"revision":  {"0"},
@@ -345,10 +364,13 @@ func TestAdminPolicyRejectsTamperedConfirmation(t *testing.T) {
 			`[{"id":"ssh","source_device_id":"client-a","destination":"192.168.50.0/24","protocol":"tcp","port_from":22,"port_to":22}]`,
 		},
 	})
+
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("tampered status=%d", response.Code)
 	}
+
 	value, _ := service.Latest(context.Background())
+
 	if value.Revision != 0 {
 		t.Fatal("tampered preview was saved")
 	}
@@ -368,19 +390,23 @@ func TestBrowserConfirmationBindsSessionAndAction(t *testing.T) {
 
 func TestAdminStructuredPolicyPreservesInvalidRow(t *testing.T) {
 	service := policy.NewService(memorypolicy.NewRepository(), acl.Compiler{})
+
 	auth, _ := newBrowserAuthTest(t)
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{Policy: service},
-			Browser:   BrowserDependencies{ActionConfirmation: auth},
 		},
+		auth,
 	).Handler()
+
 	response := postAdminForm(handler, "/admin/policy/preview", url.Values{
 		"editor": {"structured"}, "rule_id": {"ssh"}, "source_device_id": {"client-a"},
 		"destination": {"not-a-cidr"}, "protocol": {"tcp"}, "port_from": {"22"}, "port_to": {"22"},
 	})
+
 	if response.Code != http.StatusUnprocessableEntity ||
 		!strings.Contains(response.Body.String(), `value="not-a-cidr"`) {
 		t.Fatal("invalid structured row was lost")
@@ -390,6 +416,7 @@ func TestAdminStructuredPolicyPreservesInvalidRow(t *testing.T) {
 func TestAdminPolicyDiffIncludesRemovalAndModification(t *testing.T) {
 	service := policy.NewService(memorypolicy.NewRepository(), acl.Compiler{})
 	var rules []acl.Rule
+
 	if err := json.Unmarshal(
 		[]byte(
 			`[{"id":"ssh","source_device_id":"client-a","destination":"192.168.50.0/24","protocol":"tcp","port_from":22,"port_to":22}]`,
@@ -398,17 +425,20 @@ func TestAdminPolicyDiffIncludesRemovalAndModification(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := service.Replace(context.Background(), rules); err != nil {
 		t.Fatal(err)
 	}
+
 	auth, _ := newBrowserAuthTest(t)
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
 		Dependencies{
 			Resources: ResourceDependencies{Policy: service},
-			Browser:   BrowserDependencies{ActionConfirmation: auth},
 		},
+		auth,
 	).Handler()
 	for _, test := range []struct{ rules, label string }{
 		{"[]", "Removed"},
@@ -419,6 +449,7 @@ func TestAdminPolicyDiffIncludesRemovalAndModification(t *testing.T) {
 			"/admin/policy/preview",
 			url.Values{"rules": {test.rules}},
 		)
+
 		if !strings.Contains(response.Body.String(), test.label) {
 			t.Errorf("missing %s diff", test.label)
 		}

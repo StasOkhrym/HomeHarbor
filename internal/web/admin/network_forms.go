@@ -1,4 +1,4 @@
-package httpapi
+package admin
 
 import (
 	"errors"
@@ -9,7 +9,7 @@ import (
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 )
 
-func (s *Server) createRouteForm(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) createRouteForm(w http.ResponseWriter, r *http.Request) {
 	if s.routes == nil {
 		s.adminFormError(
 			w,
@@ -21,6 +21,7 @@ func (s *Server) createRouteForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(r.FormValue("prefix")))
 	if err != nil || prefix.Bits() == 0 {
 		s.adminFormError(
@@ -33,6 +34,7 @@ func (s *Server) createRouteForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	resolver, err := netip.ParseAddr(strings.TrimSpace(r.FormValue("resolver")))
 	if err != nil || !prefix.Contains(resolver) {
 		s.adminFormError(
@@ -45,12 +47,14 @@ func (s *Server) createRouteForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	id, err := browserFormID(r)
 	if err != nil {
 		status, message := browserIDError(err)
 		s.adminFormError(w, r, "network", status, "id", message)
 		return
 	}
+
 	item := controlroutes.AdvertisementRequest{
 		ID:              id,
 		GatewayDeviceID: strings.TrimSpace(r.FormValue("gateway_device_id")),
@@ -63,21 +67,23 @@ func (s *Server) createRouteForm(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, controlroutes.ErrInvalidAdvertisement) {
 			status, field, message = http.StatusUnprocessableEntity, "domain_suffix", "Check the gateway, resolver and concrete private DNS suffix."
 		}
+
 		s.adminFormError(w, r, "network", status, field, message)
 		return
 	}
+
 	redirectAdmin(w, r, "route-created")
 }
 
-func (s *Server) approveRouteForm(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) approveRouteForm(w http.ResponseWriter, r *http.Request) {
 	s.setRouteApproval(w, r, true)
 }
 
-func (s *Server) rejectRouteForm(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) rejectRouteForm(w http.ResponseWriter, r *http.Request) {
 	s.setRouteApproval(w, r, false)
 }
 
-func (s *Server) setRouteApproval(w http.ResponseWriter, r *http.Request, approve bool) {
+func (s *Handler) setRouteApproval(w http.ResponseWriter, r *http.Request, approve bool) {
 	if s.routes == nil {
 		s.adminFormError(
 			w,
@@ -89,6 +95,7 @@ func (s *Server) setRouteApproval(w http.ResponseWriter, r *http.Request, approv
 		)
 		return
 	}
+
 	var err error
 	id := r.PathValue("id")
 	if id == "" {
@@ -96,17 +103,20 @@ func (s *Server) setRouteApproval(w http.ResponseWriter, r *http.Request, approv
 		// cannot change their target. Path aliases keep their existing contract.
 		id = r.FormValue("route_id")
 	}
+
 	notice := "route-rejected"
 	if approve {
 		err, notice = s.routes.Approve(r.Context(), id), "route-approved"
 	} else {
 		err = s.routes.Reject(r.Context(), id)
 	}
+
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		if errors.Is(err, controlroutes.ErrAdvertisementNotFound) {
 			status = http.StatusNotFound
 		}
+
 		s.adminFormError(
 			w,
 			r,
@@ -117,5 +127,6 @@ func (s *Server) setRouteApproval(w http.ResponseWriter, r *http.Request, approv
 		)
 		return
 	}
+
 	redirectAdmin(w, r, notice)
 }

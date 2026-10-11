@@ -1,4 +1,4 @@
-package httpapi
+package admin
 
 import (
 	"errors"
@@ -10,7 +10,7 @@ import (
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 )
 
-func (s *Server) createServiceForm(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) createServiceForm(w http.ResponseWriter, r *http.Request) {
 	if s.services == nil {
 		s.adminFormError(
 			w,
@@ -22,6 +22,7 @@ func (s *Server) createServiceForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	name, kind := strings.TrimSpace(r.FormValue("name")), r.FormValue("kind")
 	if name == "" {
 		s.adminFormError(
@@ -45,11 +46,13 @@ func (s *Server) createServiceForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	for _, key := range []string{"url", "health_url", "native_url"} {
 		value := strings.TrimSpace(r.FormValue(key))
 		if value == "" && key != "url" {
 			continue
 		}
+
 		parsed, err := url.Parse(value)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil ||
 			parsed.Fragment != "" ||
@@ -66,12 +69,14 @@ func (s *Server) createServiceForm(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
 	id, err := browserFormID(r)
 	if err != nil {
 		status, message := browserIDError(err)
 		s.adminFormError(w, r, "services", status, "id", message)
 		return
 	}
+
 	item := controlservices.Service{
 		ID:          id,
 		Name:        name,
@@ -86,13 +91,15 @@ func (s *Server) createServiceForm(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, controlservices.ErrDuplicateID) {
 			status, field, message = http.StatusConflict, "id", "This service ID already exists. Check the catalog before submitting again."
 		}
+
 		s.adminFormError(w, r, "services", status, field, message)
 		return
 	}
+
 	redirectAdmin(w, r, "service-created")
 }
 
-func (s *Server) createProfileForm(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) createProfileForm(w http.ResponseWriter, r *http.Request) {
 	if s.profiles == nil {
 		s.adminFormError(
 			w,
@@ -115,6 +122,7 @@ func (s *Server) createProfileForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	serviceIDs := formSelections(r, "service_ids")
 	if len(serviceIDs) == 0 {
 		s.adminFormError(
@@ -127,12 +135,14 @@ func (s *Server) createProfileForm(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+
 	id, err := browserFormID(r)
 	if err != nil {
 		status, message := browserIDError(err)
 		s.adminFormError(w, r, "access", status, "id", message)
 		return
 	}
+
 	profile := profiles.AccessProfile{
 		ID:         id,
 		Name:       strings.TrimSpace(r.FormValue("name")),
@@ -149,9 +159,11 @@ func (s *Server) createProfileForm(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, profiles.ErrDeviceNotAllowed):
 			status, field, message = http.StatusUnprocessableEntity, "device_ids", "Choose only active registered devices."
 		}
+
 		s.adminFormError(w, r, "access", status, field, message)
 		return
 	}
+
 	redirectAdmin(w, r, "profile-created")
 }
 

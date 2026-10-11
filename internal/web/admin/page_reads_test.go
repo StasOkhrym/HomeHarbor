@@ -2,10 +2,12 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/invites"
 	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
@@ -23,6 +25,27 @@ func (reader *inviteReaderStub) Get(context.Context, string) (invites.Record, er
 }
 
 type snapshotReaderStub struct{ err error }
+
+type emptyPolicyReader struct{}
+
+func (emptyPolicyReader) Latest(context.Context) (acl.Snapshot, error) {
+	return acl.Snapshot{}, nil
+}
+
+func TestEmptyPolicyEditorUsesJSONArray(t *testing.T) {
+	model := NewPage("access", "", "")
+
+	LoadPolicy(t.Context(), emptyPolicyReader{}, &model)
+	var rules any
+
+	if err := json.Unmarshal([]byte(model.PolicyJSON), &rules); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := rules.([]any); !ok {
+		t.Fatalf("empty policy editor JSON=%q", model.PolicyJSON)
+	}
+}
 
 func (reader snapshotReaderStub) Latest(context.Context) (snapshot.Envelope, error) {
 	return snapshot.Envelope{}, reader.err

@@ -1,4 +1,4 @@
-package httpapi
+package admin
 
 import (
 	"encoding/json"
@@ -6,22 +6,21 @@ import (
 	"strconv"
 
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
-	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
 )
 
-func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) adminDashboard(w http.ResponseWriter, r *http.Request) {
 	s.adminView("overview")(w, r)
 }
 
-func (s *Server) adminView(page string) http.HandlerFunc {
+func (s *Handler) adminView(page string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		model, status := s.loadAdminPage(r, page)
 		s.renderAdmin(w, status, model)
 	}
 }
 
-func (s *Server) loadAdminPage(r *http.Request, page string) (webadmin.Page, int) {
-	model := webadmin.NewPage(page, csrfFormToken(r), r.URL.Query().Get("notice"))
+func (s *Handler) loadAdminPage(r *http.Request, page string) (Page, int) {
+	model := NewPage(page, csrfFormToken(r), r.URL.Query().Get("notice"))
 	model.InvitesReady = s.invites != nil
 	ctx := r.Context()
 	needsDevices := page == "overview" || page == "setup" || page == "devices" ||
@@ -31,27 +30,27 @@ func (s *Server) loadAdminPage(r *http.Request, page string) (webadmin.Page, int
 	needsRoutes := page == "overview" || page == "setup" || page == "network"
 	if needsDevices {
 		if s.devices != nil {
-			model.Devices = webadmin.LoadCollection(ctx, "Devices", s.devices.List)
+			model.Devices = LoadCollection(ctx, "Devices", s.devices.List)
 		} else {
 			model.Devices.Error = "Devices are not configured"
 		}
 	}
 	if needsServices {
 		if s.services != nil {
-			model.Services = webadmin.LoadCollection(ctx, "Services", s.services.List)
+			model.Services = LoadCollection(ctx, "Services", s.services.List)
 		} else {
 			model.Services.Error = "Services are not configured"
 		}
 	}
 	if needsProfiles {
 		if s.profiles != nil {
-			model.Profiles = webadmin.LoadCollection(ctx, "Access profiles", s.profiles.List)
+			model.Profiles = LoadCollection(ctx, "Access profiles", s.profiles.List)
 		} else {
 			model.Profiles.Error = "Access profiles are not configured"
 		}
 	}
 	if needsRoutes && s.routes != nil {
-		model.Routes = webadmin.LoadCollection(ctx, "Routes", s.routes.List)
+		model.Routes = LoadCollection(ctx, "Routes", s.routes.List)
 		if model.Routes.Ready {
 			count := 0
 			for _, route := range model.Routes.Items {
@@ -65,10 +64,10 @@ func (s *Server) loadAdminPage(r *http.Request, page string) (webadmin.Page, int
 		model.Routes.Error = "Routes are not configured"
 	}
 	if page == "access" {
-		webadmin.LoadPolicy(ctx, s.policy, &model)
+		LoadPolicy(ctx, s.policy, &model)
 	}
 	if page == "overview" || page == "setup" || page == "security" {
-		webadmin.LoadSignedState(ctx, s.snapshots, &model)
+		LoadSignedState(ctx, s.snapshots, &model)
 		if s.ready != nil {
 			model.Readiness = "Ready"
 			if err := s.ready(ctx); err != nil {
@@ -116,9 +115,9 @@ func (s *Server) loadAdminPage(r *http.Request, page string) (webadmin.Page, int
 			}
 		}
 	case "activity":
-		model.Activity, status = webadmin.LoadActivity(r.Context(), s.audit, r.URL.Query())
+		model.Activity, status = LoadActivity(r.Context(), s.audit, r.URL.Query())
 	case "invites":
-		webadmin.LoadInvite(ctx, r.URL.Query().Get("invite_id"), s.invites, &model)
+		LoadInvite(ctx, r.URL.Query().Get("invite_id"), s.invites, &model)
 	}
 	return model, status
 }
