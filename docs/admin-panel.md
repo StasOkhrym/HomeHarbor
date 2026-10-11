@@ -29,8 +29,15 @@ Control failures can therefore be distinguished from an unconfigured network.
 | Access      | Create profiles by names; structured or JSON ACL preview and replacement        |
 | Network     | Create LAN route/DNS settings; approve or reject saved advertisements           |
 | Invites     | Companion instructions, status by invite ID, separate legacy token issuance     |
-| Activity    | Read recent audit events with a limit of 1–200                                  |
+| Activity    | Filter recent audit events, inspect older history and follow live updates       |
 | Security    | Account/recovery guidance, signing trust and sign-out                           |
+
+Activity reads at most 200 committed audit rows at a time (100 by default).
+Action and target ID filters use exact matches. A protected fragment refreshes
+the recent window every four seconds while the tab is visible; failed reads
+leave the last rows visible and mark the view stale. Reading older history or
+opening an event holds the visible list in place and announces newly discovered
+records. Event details show only selected non-secret audit metadata.
 
 There is no edit/delete UI, global invite list, service health probe, passkey
 management or recovery-code regeneration: those application operations are not
@@ -97,8 +104,8 @@ navigation, error announcements and the 390/1440 px layouts. Use only disposable
 test records; do not revoke a real gateway for a UI smoke test.
 
 Run `make verify` and `make integration` for the automated gates, plus
-`node --test internal/control/httpapi/tests/browser.test.cjs` for the shipped
-scripts' recovery and history-error behavior. These script tests do not replace
+`node --test internal/web/assets/tests/browser.test.cjs` for the shipped
+scripts' Activity, recovery and history-error behavior. These tests do not replace
 visual or native passkey verification. SQL integration
 includes concurrent confirmed policy replacements. Successful UI checks do not
 prove the separate WireGuard, relay, DNS or network E2E milestone.

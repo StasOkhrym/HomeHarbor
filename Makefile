@@ -27,20 +27,20 @@ doctor:
 fmt:
 	cd "$(ROOT)" && golangci-lint fmt $(GO_PACKAGES)
 	cd "$(ROOT)" && ruff check --fix scripts && ruff format scripts
-	cd "$(ROOT)" && npm run format && djlint internal/control/httpapi/templates --reformat
+	cd "$(ROOT)" && npm run format && djlint internal/web/assets/templates --reformat
 	cd "$(ROOT)" && $(PYTHON) scripts/lint_files.py --format
 
 lint:
 	cd "$(ROOT)" && sh scripts/format-check.sh
 	cd "$(ROOT)" && golangci-lint run --fix=false $(GO_PACKAGES)
 	cd "$(ROOT)" && ruff check --no-cache scripts
-	cd "$(ROOT)" && npm run lint && djlint internal/control/httpapi/templates --lint
+	cd "$(ROOT)" && npm run lint && djlint internal/web/assets/templates --lint
 	cd "$(ROOT)" && $(PYTHON) scripts/lint_files.py
 
 test:
 	cd "$(ROOT)" && go test $(GO_PACKAGES) -count=1
 	cd "$(ROOT)" && $(PYTHON) -m unittest discover -s scripts/tests
-	cd "$(ROOT)" && node --test internal/control/httpapi/tests/browser.test.cjs
+	cd "$(ROOT)" && node --test internal/web/assets/tests/browser.test.cjs
 
 verify:
 	cd "$(ROOT)" && FULL=$(FULL) sh scripts/verify.sh

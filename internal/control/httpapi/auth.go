@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"crypto/subtle"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"html/template"
@@ -16,15 +15,15 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
+	"github.com/StasOkhrym/homeharbor/internal/web/assets"
 )
 
 const sessionCookieName = "__Host-homeharbor_admin"
 
-//go:embed templates/login.html
-var loginPage []byte
-
-//go:embed static/auth-ui.js
-var loginScript []byte
+var (
+	loginPage   = assets.HTML("login.html")
+	loginScript = assets.Static("auth-ui.js")
+)
 
 // PasskeyCeremonies is the HTTP layer's narrow view of WebAuthn state.
 type PasskeyCeremonies interface {

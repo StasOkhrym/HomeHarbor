@@ -44,20 +44,21 @@ def classify(paths: list[str], base_available: bool, full: bool) -> dict[str, bo
     enabled = set()
     if full or not base_available:
         return dict.fromkeys(GATES, True)
+
     for path in paths:
         if path == "README.md" or path.startswith("docs/") and path.endswith(".md"):
             continue
-        if path.startswith(
-            ("internal/control/httpapi/static/", "internal/control/httpapi/templates/")
-        ):
+        if path.startswith(("internal/web/assets/static/", "internal/web/assets/templates/")):
             enabled.add("fast")
             continue
+
         compose = path.startswith(("deploy/", ".github/workflows/"))
         migration = path.startswith("migrations/")
         protected = path.startswith(PROTECTED)
         if not (compose or migration or protected):
             # Shared tooling/dependencies and unclassified runtime files fail safe.
             return dict.fromkeys(GATES, True)
+
         enabled.add("fast")
         # Categories overlap: signed-state/session storage needs both durable
         # contracts and protected networking/security gates, never just one.
@@ -69,9 +70,12 @@ def classify(paths: list[str], base_available: bool, full: bool) -> dict[str, bo
             or path.startswith(("internal/control/workflows/", "internal/control/transactions/"))
         ):
             enabled.add("integration")
+
         if compose:
             enabled.add("compose")
+
         enabled.update(("network", "fuzz", "vulnerability"))
+
     return {gate: gate in enabled for gate in GATES}
 
 

@@ -42,7 +42,7 @@ class LanguageChecksTests(unittest.TestCase):
                     str(ROOT / "node_modules/.bin/stylelint"),
                     "--stdin",
                     "--stdin-filename",
-                    "internal/control/httpapi/static/negative.css",
+                    "internal/web/assets/static/negative.css",
                 ],
                 "body { color: red;",
             ),
@@ -57,4 +57,5 @@ class LanguageChecksTests(unittest.TestCase):
                 result = subprocess.run(
                     command, input=source, cwd=ROOT, capture_output=True, text=True
                 )
+
                 self.assertNotEqual(result.returncode, 0, "malformed source passed owned-code lint")

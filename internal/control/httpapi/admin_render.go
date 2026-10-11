@@ -2,28 +2,21 @@ package httpapi
 
 import (
 	"bytes"
-	"embed"
 	"html/template"
 	"net/http"
 	"time"
+
+	"github.com/StasOkhrym/homeharbor/internal/web/assets"
 )
 
-//go:embed templates/admin/*.html
-var adminViews embed.FS
+var (
+	adminCSS       = assets.Static("admin.css")
+	adminScript    = assets.Static("admin.js")
+	activityScript = assets.Static("activity.js")
+	htmxScript     = assets.Static("htmx-2.0.11.min.js")
+)
 
-//go:embed static/admin.css
-var adminCSS []byte
-
-//go:embed static/admin.js
-var adminScript []byte
-
-//go:embed static/activity.js
-var activityScript []byte
-
-//go:embed static/htmx-2.0.11.min.js
-var htmxScript []byte
-
-var adminTemplate = template.Must(template.New("admin").Funcs(template.FuncMap{
+var adminTemplate = template.Must(assets.AdminTemplate(template.FuncMap{
 	"timeLabel":        func(value time.Time) string { return value.UTC().Format("02 Jan 2006, 15:04 UTC") },
 	"timeISO":          func(value time.Time) string { return value.UTC().Format(time.RFC3339) },
 	"actionLabel":      adminActionLabel,
@@ -31,7 +24,7 @@ var adminTemplate = template.Must(template.New("admin").Funcs(template.FuncMap{
 	"auditActor":       adminAuditActor,
 	"auditCorrelation": adminAuditCorrelation,
 	"auditRevision":    adminAuditRevision,
-}).ParseFS(adminViews, "templates/admin/*.html"))
+}))
 
 func (s *Server) renderAdmin(w http.ResponseWriter, status int, model adminPageModel) {
 	// Buffer first: a template error must produce an error response, not a

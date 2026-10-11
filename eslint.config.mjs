@@ -14,12 +14,12 @@ export default [
   },
   {
     files: ["**/*.{js,mjs,cjs}"],
-    ignores: ["internal/control/httpapi/static/**"],
+    ignores: ["internal/web/assets/static/**"],
     ...js.configs.recommended,
     languageOptions: { globals: globals.node },
   },
   {
-    files: ["internal/control/httpapi/static/**/*.js"],
+    files: ["internal/web/assets/static/**/*.js"],
     ...js.configs.recommended,
     languageOptions: { sourceType: "script", globals: globals.browser },
   },

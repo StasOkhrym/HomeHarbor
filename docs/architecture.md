@@ -28,6 +28,9 @@ operations without modifying the Mac's home-network forwarding.
 Identity, devices, routes, policy, services, invites, snapshots, coordination and
 audit are vertical modules. Consumers declare small interfaces for the operations
 they actually need. There is no universal CRUD repository or god-service.
+Browser templates and same-origin CSS/JavaScript are embedded by
+`internal/web/assets`; the current HTTP adapter composes those assets with its
+browser handlers and JSON routes.
 
 Module `storage.Repository` adapters implement durable ports using PostgreSQL.
 The domain does not import pgx, Redis, Chi or HTTP. Neutral names separate domain

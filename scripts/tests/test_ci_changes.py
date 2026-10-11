@@ -24,7 +24,7 @@ class ChangeTests(unittest.TestCase):
     def test_classification(self):
         cases = (
             (["docs/architecture.md", "README.md"], set()),
-            (["docs/architecture.md", "internal/control/httpapi/static/admin.js"], {"fast"}),
+            (["docs/architecture.md", "internal/web/assets/static/admin.js"], {"fast"}),
             (
                 ["internal/control/devices/storage/repository.go"],
                 {"fast", "integration", "network", "fuzz", "vulnerability"},
@@ -48,6 +48,7 @@ class ChangeTests(unittest.TestCase):
         for paths, expected in cases:
             with self.subTest(paths=paths):
                 result = MODULE.classify(paths, True, False)
+
                 self.assertEqual({key for key, value in result.items() if value}, expected)
 
     def test_actual_workflow_path_runs_integration(self):

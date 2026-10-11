@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"bytes"
-	_ "embed"
 	"html/template"
 	"net/http"
 	"strconv"
@@ -10,10 +9,10 @@ import (
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/web/assets"
 )
 
-//go:embed templates/enrollment-token.html
-var enrollmentTokenPage []byte
+var enrollmentTokenPage = assets.HTML("enrollment-token.html")
 
 var enrollmentTokenTemplate = template.Must(
 	template.New("enrollment-token").Parse(string(enrollmentTokenPage)),

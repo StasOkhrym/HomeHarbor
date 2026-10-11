@@ -16,4 +16,4 @@ if test -s "$output"; then
 fi
 ruff format --no-cache --check scripts
 npm run format:check
-djlint internal/control/httpapi/templates --check
+djlint internal/web/assets/templates --check
