@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
 )
 
 func (s *Server) registerAPI(api chi.Router) {
@@ -164,7 +166,7 @@ func (s *Server) registerBrowserAdmin(admin chi.Router) {
 		for _, page := range []string{"setup", "devices", "services", "access", "network", "invites", "activity", "security"} {
 			protected.Get("/"+page, s.adminView(page))
 		}
-		protected.Get("/activity/fragment", s.adminActivityFragment)
+		protected.Get("/activity/fragment", webadmin.ActivityFragment(s.audit, s.logger))
 		protected.Get("/devices/{id}", s.adminView("devices"))
 		protected.Post("/enrollment-tokens", s.issueEnrollmentTokenForm)
 		protected.Post("/devices/{id}/revoke", s.revokeDeviceForm)

@@ -17,12 +17,3 @@ var (
 func (s *Server) renderAdmin(w http.ResponseWriter, status int, model webadmin.Page) {
 	webadmin.RenderPage(w, status, model, s.logger)
 }
-
-func (s *Server) renderAdminFragment(
-	w http.ResponseWriter,
-	status int,
-	name string,
-	model webadmin.Page,
-) {
-	webadmin.RenderFragment(w, status, name, model, s.logger)
-}
