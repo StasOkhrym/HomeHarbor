@@ -83,6 +83,7 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
   let activityVisible = true;
   let hidden = false;
   let replacements = 0;
+  const requests = [];
   const reused = [];
   function makeFeed(ids) {
     const rows = ids.map((id) => ({
@@ -107,6 +108,12 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
     };
   }
   const feed = makeFeed(options.initialIds || []);
+  feed.contains = () => Boolean(options.focusInFeed);
+  feed.querySelector = (selector) => {
+    if (selector === ".resource-list") return { querySelectorAll: () => feed.rows };
+    if (selector === "details[open]") return options.openDetails ? {} : null;
+    return null;
+  };
   let incomingFeed = makeFeed([]);
   const status = { textContent: "", dataset: {} };
   let applyClick;
@@ -127,6 +134,7 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
     },
   };
   const document = {
+    activeElement: {},
     get hidden() {
       return hidden;
     },
@@ -164,7 +172,10 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
     URL,
     URLSearchParams,
     AbortController,
-    fetch: fetchImpl,
+    fetch(url, requestOptions) {
+      requests.push({ url, options: requestOptions });
+      return fetchImpl(url, requestOptions);
+    },
     DOMParser: class {
       parseFromString() {
         return { querySelector: () => incomingFeed };
@@ -191,6 +202,7 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
     apply,
     feed,
     reused,
+    requests,
     navigations,
     get replacements() {
       return replacements;
@@ -215,6 +227,10 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
     },
     readAt(scrollY) {
       browserWindow.scrollY = scrollY;
+    },
+    setReading({ focusInFeed = false, openDetails = false } = {}) {
+      options.focusInFeed = focusInFeed;
+      options.openDetails = openDetails;
     },
     setIncoming(ids) {
       incomingFeed = makeFeed(ids);
@@ -268,27 +284,53 @@ test("activity keeps one request in flight and retains old content on failure", 
         release = resolve;
       }),
   );
+
   page.fireTimer();
+
   assert.equal(calls, 1);
   assert.deepEqual(
     [...page.timers.values()].map((timer) => timer.delay),
     [10000],
   );
+
   release({ ok: false, status: 503 });
   await flush();
+
   assert.equal(page.replacements, 0);
   assert.match(page.status.textContent, /stale/i);
   assert.deepEqual(
     [...page.timers.values()].map((timer) => timer.delay),
     [4000],
   );
+
   page.fireTimer();
+
   assert.equal(calls, 2);
+
   release({ ok: false, status: 503 });
   await flush();
+
   assert.deepEqual(
     [...page.timers.values()].map((timer) => timer.delay),
     [8000],
+  );
+
+  page.fireTimer();
+  release({ ok: false, status: 503 });
+  await flush();
+
+  assert.deepEqual(
+    [...page.timers.values()].map((timer) => timer.delay),
+    [16000],
+  );
+
+  page.fireTimer();
+  release({ ok: false, status: 503 });
+  await flush();
+
+  assert.deepEqual(
+    [...page.timers.values()].map((timer) => timer.delay),
+    [32000],
   );
 });
 
@@ -390,6 +432,37 @@ test("activity history counts only entries since its first recent window", async
 
   assert.equal(page.replacements, 0);
   assert.match(page.apply.textContent, /1 new/);
+});
+
+test("activity retains filters and holds a focused or expanded feed in place", async () => {
+  const page = activityPage(
+    async () => ({ ok: true, status: 200, text: async () => "<section id='activity-feed'>" }),
+    { initialIds: ["5"], search: "?action=device.revoked&target_id=client-1&limit=25" },
+  );
+
+  page.setIncoming(["6", "5"]);
+  page.setReading({ focusInFeed: true });
+  page.fireTimer();
+  await flush();
+
+  assert.equal(page.replacements, 0);
+  assert.equal(page.apply.hidden, false);
+  assert.equal(
+    page.requests[0].url,
+    "/admin/activity/fragment?action=device.revoked&target_id=client-1&limit=25",
+  );
+  assert.equal(page.requests[0].options.cache, "no-store");
+
+  page.setReading({ openDetails: true });
+  page.fireTimer();
+  await flush();
+
+  assert.equal(page.replacements, 0);
+
+  page.setReading();
+  page.applyPending();
+
+  assert.equal(page.replacements, 1);
 });
 
 test("recovery enables secret entry only after intercepting submission", () => {
