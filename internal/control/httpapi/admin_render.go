@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
 	"github.com/StasOkhrym/homeharbor/internal/web/assets"
 )
 
@@ -19,11 +20,11 @@ var (
 var adminTemplate = template.Must(assets.AdminTemplate(template.FuncMap{
 	"timeLabel":        func(value time.Time) string { return value.UTC().Format("02 Jan 2006, 15:04 UTC") },
 	"timeISO":          func(value time.Time) string { return value.UTC().Format(time.RFC3339) },
-	"actionLabel":      adminActionLabel,
-	"auditOutcome":     adminAuditOutcome,
-	"auditActor":       adminAuditActor,
-	"auditCorrelation": adminAuditCorrelation,
-	"auditRevision":    adminAuditRevision,
+	"actionLabel":      webadmin.ActionLabel,
+	"auditOutcome":     webadmin.Outcome,
+	"auditActor":       webadmin.Actor,
+	"auditCorrelation": webadmin.Correlation,
+	"auditRevision":    webadmin.Revision,
 }))
 
 func (s *Server) renderAdmin(w http.ResponseWriter, status int, model adminPageModel) {

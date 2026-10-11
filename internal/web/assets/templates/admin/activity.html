@@ -8,14 +8,14 @@
                name="limit"
                min="1"
                max="200"
-               value="{{.AuditLimit}}">
+               value="{{.Activity.Limit}}">
       </div>
       <div class="field">
         <label for="activity-action">Action</label>
         <input id="activity-action"
                name="action"
                maxlength="128"
-               value="{{.AuditAction}}"
+               value="{{.Activity.Action}}"
                placeholder="All actions">
       </div>
       <div class="field">
@@ -23,14 +23,14 @@
         <input id="activity-target"
                name="target_id"
                maxlength="128"
-               value="{{.AuditTargetID}}"
+               value="{{.Activity.TargetID}}"
                placeholder="All targets">
       </div>
       <button class="secondary" type="submit">Apply filters</button>
     </form>
   </section>
   <div data-activity-live
-       data-before-id="{{.AuditBeforeID}}"
+       data-before-id="{{.Activity.BeforeID}}"
        class="activity-live">
     <div class="activity-watch" role="status" aria-live="polite">
       <span class="activity-signal" aria-hidden="true"></span>
@@ -43,11 +43,9 @@
 {{define "activity-feed"}}
   <section class="panel" id="activity-feed" aria-label="Recent activity">
     <h2>Recent events</h2>
-    {{if .Error}}
-      <p class="alert alert-error" role="alert">{{.Error}}</p>
-    {{else if .Audit.Ready}}
+    {{if .Activity.Ready}}
       <ul class="resource-list">
-        {{range .Audit.Items}}
+        {{range .Activity.Records}}
           <li data-record-id="{{.RecordID}}">
             <div class="resource-row"><strong>{{actionLabel .Event.Action}}</strong><span class="badge">{{auditOutcome .Event}}</span></div>
             <p><time datetime="{{timeISO .Event.OccurredAt}}">{{timeLabel .Event.OccurredAt}}</time></p>
@@ -68,11 +66,11 @@
           <li class="empty-state">No audit events yet.</li>
         {{end}}
       </ul>
-      {{if .AuditOlderID}}
-        <a href="/admin/activity?limit={{.AuditLimit}}&amp;action={{.AuditAction | urlquery}}&amp;target_id={{.AuditTargetID | urlquery}}&amp;before_id={{.AuditOlderID}}">Older events</a>
+      {{if .Activity.OlderID}}
+        <a href="/admin/activity?limit={{.Activity.Limit}}&amp;action={{.Activity.Action | urlquery}}&amp;target_id={{.Activity.TargetID | urlquery}}&amp;before_id={{.Activity.OlderID}}">Older events</a>
       {{end}}
     {{else}}
-      <p class="alert alert-error" role="alert">{{.Audit.Error}}</p>
+      <p class="alert alert-error" role="alert">{{.Activity.Error}}</p>
     {{end}}
   </section>
 {{end}}

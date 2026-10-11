@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/StasOkhrym/homeharbor/internal/acl"
-	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
 	"github.com/StasOkhrym/homeharbor/internal/control/profiles"
@@ -19,6 +18,7 @@ import (
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
+	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
 )
 
 // A failed read is not an empty collection. Keeping availability alongside
@@ -50,7 +50,7 @@ type adminPageModel struct {
 	Services      adminCollection[controlservices.Service]
 	Profiles      adminCollection[profiles.AccessProfile]
 	Routes        adminCollection[controlroutes.Advertisement]
-	Audit         adminCollection[audit.Record]
+	Activity      webadmin.Activity
 	Device        *devices.Device
 	Policy        acl.Snapshot
 	PolicyReady   bool
@@ -63,11 +63,6 @@ type adminPageModel struct {
 	Invite        *adminInviteModel
 	InviteError   string
 	InvitesReady  bool
-	AuditLimit    int
-	AuditAction   string
-	AuditTargetID string
-	AuditBeforeID int64
-	AuditOlderID  int64
 	Preview       *adminPolicyPreview
 	RevokeProof   string
 	PolicyRows    []adminPolicyRow
@@ -180,7 +175,6 @@ func (s *Server) loadAdminPage(r *http.Request, page string) (adminPageModel, in
 		PendingRoutes: "—",
 		SignedState:   "Signed configuration is not configured",
 		Readiness:     "Readiness check is not configured",
-		AuditLimit:    defaultActivityLimit,
 		InvitesReady:  s.invites != nil,
 	}
 	ctx := r.Context()
@@ -267,7 +261,7 @@ func (s *Server) loadAdminPage(r *http.Request, page string) (adminPageModel, in
 			}
 		}
 	case "activity":
-		status = s.loadAdminAudit(r, &model)
+		model.Activity, status = webadmin.LoadActivity(r.Context(), s.audit, r.URL.Query())
 	case "invites":
 		s.loadAdminInvite(r, &model)
 	}
@@ -353,53 +347,6 @@ func (s *Server) loadAdminInvite(r *http.Request, model *adminPageModel) {
 			Status:    record.Status,
 		}
 	}
-}
-
-func (s *Server) loadAdminAudit(r *http.Request, model *adminPageModel) int {
-	query := r.URL.Query()
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		limit, err := strconv.Atoi(raw)
-		if err != nil || limit < 1 {
-			model.Error = "Choose a positive number of audit events."
-			return http.StatusBadRequest
-		}
-		model.AuditLimit = min(limit, maxAuditLimit)
-	}
-	model.AuditAction = strings.TrimSpace(query.Get("action"))
-	model.AuditTargetID = strings.TrimSpace(query.Get("target_id"))
-	if len(model.AuditAction) > 128 || len(model.AuditTargetID) > 128 {
-		model.Error = "Activity filters are too long."
-		return http.StatusBadRequest
-	}
-	if raw := query.Get("before_id"); raw != "" {
-		beforeID, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || beforeID < 1 {
-			model.Error = "Choose a valid activity cursor."
-			return http.StatusBadRequest
-		}
-		model.AuditBeforeID = beforeID
-	}
-	if s.audit == nil {
-		model.Audit.Error = "Activity is not configured"
-		return http.StatusServiceUnavailable
-	}
-	model.Audit = loadAdminCollection(
-		r.Context(),
-		"Activity",
-		func(ctx context.Context) ([]audit.Record, error) {
-			return s.audit.ListRecords(ctx, audit.Query{
-				Limit: model.AuditLimit, BeforeID: model.AuditBeforeID,
-				Action: model.AuditAction, TargetID: model.AuditTargetID,
-			})
-		},
-	)
-	if !model.Audit.Ready {
-		return http.StatusServiceUnavailable
-	}
-	if len(model.Audit.Items) == model.AuditLimit && len(model.Audit.Items) > 0 {
-		model.AuditOlderID = model.Audit.Items[len(model.Audit.Items)-1].RecordID
-	}
-	return http.StatusOK
 }
 
 var adminNotices = map[string]string{

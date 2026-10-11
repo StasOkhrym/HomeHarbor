@@ -82,10 +82,10 @@ func (s *Repository) List(ctx context.Context, limit int) ([]audit.Event, error)
 func (s *Repository) ListRecords(ctx context.Context, query audit.Query) ([]audit.Record, error) {
 	limit := query.Limit
 	if limit < 1 {
-		limit = 100
+		limit = audit.DefaultQueryLimit
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > audit.MaxQueryLimit {
+		limit = audit.MaxQueryLimit
 	}
 	statement := `SELECT id,event_id,occurred_at,actor_type,actor_id,action,target_type,target_id,metadata
  FROM audit_events WHERE true`

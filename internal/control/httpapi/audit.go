@@ -4,11 +4,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 )
 
 const (
 	defaultAuditLimit = 50
-	maxAuditLimit     = 200
+	maxAuditLimit     = audit.MaxQueryLimit
 )
 
 func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {

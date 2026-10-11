@@ -242,6 +242,7 @@ func TestActivityFragmentRequiresSessionAndNoStore(t *testing.T) {
 
 func TestActivityQueryValidatesCursorBeforeReading(t *testing.T) {
 	reader := &auditReaderStub{}
+
 	handler := newTestServer(nil, allowAuthorizer{}, Dependencies{
 		Resources: ResourceDependencies{Audit: reader},
 	}).Handler()
@@ -251,17 +252,22 @@ func TestActivityQueryValidatesCursorBeforeReading(t *testing.T) {
 		"/admin/activity/fragment?before_id=bogus",
 	} {
 		response := httptest.NewRecorder()
+
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+
 		if response.Code != http.StatusBadRequest || reader.query.Limit != 0 {
 			t.Fatalf("%s status=%d query=%+v", path, response.Code, reader.query)
 		}
 	}
+
 	response := httptest.NewRecorder()
+
 	handler.ServeHTTP(response, httptest.NewRequest(
 		http.MethodGet, "/admin/activity?before_id=42&action=invite.approved", nil,
 	))
+
 	if response.Code != http.StatusOK || reader.query.BeforeID != 42 ||
-		reader.query.Action != "invite.approved" || reader.query.Limit != defaultActivityLimit {
+		reader.query.Action != "invite.approved" || reader.query.Limit != audit.DefaultQueryLimit {
 		t.Fatalf("history status=%d query=%+v", response.Code, reader.query)
 	}
 }

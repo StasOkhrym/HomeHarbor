@@ -1,5 +1,10 @@
 package audit
 
+const (
+	DefaultQueryLimit = 100
+	MaxQueryLimit     = 200
+)
+
 // RecordID is the database identity of a committed audit row. Event.ID is a
 // separate optional delivery identity and may be empty for direct auth events.
 type Record struct {

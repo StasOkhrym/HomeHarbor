@@ -34,6 +34,9 @@ browser handlers and JSON routes.
 `internal/web/session` owns browser cookie, CSRF and review-proof cryptography;
 the control identity store remains the authority for whether an opaque session
 is live.
+`internal/web/admin` owns the Activity page's bounded query/view model and
+allowlisted audit presentation; its protected route remains mounted by the
+control HTTP adapter.
 
 Module `storage.Repository` adapters implement durable ports using PostgreSQL.
 The domain does not import pgx, Redis, Chi or HTTP. Neutral names separate domain
