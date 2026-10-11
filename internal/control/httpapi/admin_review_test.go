@@ -128,6 +128,7 @@ func TestMalformedURLNeverRetainsCredentials(t *testing.T) {
 			},
 		},
 	).Handler()
+
 	response := postAdminForm(handler, "/admin/services", url.Values{
 		"name": {
 			"Photos",
@@ -135,7 +136,8 @@ func TestMalformedURLNeverRetainsCredentials(t *testing.T) {
 		"kind": {"web"},
 		"url":  {"https://user:secret-review-password@example.com/%zz"},
 	})
-	if response.Code != http.StatusBadRequest ||
+
+	if response.Code != http.StatusUnprocessableEntity ||
 		strings.Contains(response.Body.String(), "secret-review-password") {
 		t.Fatal("malformed URL echoed credentials")
 	}
@@ -147,6 +149,7 @@ func TestPolicyErrorKeepsUnrelatedProfileID(t *testing.T) {
 	profileOwner := controlprofiles.NewService(
 		memoryprofiles.NewRepository(serviceStore), catalog, time.Now, nil,
 	)
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{},
@@ -158,8 +161,11 @@ func TestPolicyErrorKeepsUnrelatedProfileID(t *testing.T) {
 			},
 		},
 	).Handler()
+
 	response := postAdminForm(handler, "/admin/policy/preview", url.Values{"rules": {"not JSON"}})
-	if response.Code != http.StatusBadRequest || htmlInput(t, response.Body.String(), "id") == "" {
+
+	if response.Code != http.StatusUnprocessableEntity ||
+		htmlInput(t, response.Body.String(), "id") == "" {
 		t.Fatal("ACL validation discarded the profile form ID")
 	}
 }

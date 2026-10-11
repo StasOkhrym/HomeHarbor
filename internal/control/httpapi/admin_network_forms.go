@@ -27,7 +27,7 @@ func (s *Server) createRouteForm(w http.ResponseWriter, r *http.Request) {
 			w,
 			r,
 			"network",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 			"prefix",
 			"Enter a non-default LAN CIDR, such as 192.168.50.0/24.",
 		)
@@ -39,7 +39,7 @@ func (s *Server) createRouteForm(w http.ResponseWriter, r *http.Request) {
 			w,
 			r,
 			"network",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 			"resolver",
 			"Enter a DNS resolver IP within the LAN CIDR.",
 		)
@@ -61,7 +61,7 @@ func (s *Server) createRouteForm(w http.ResponseWriter, r *http.Request) {
 	if _, err = s.routes.Advertise(r.Context(), item); err != nil {
 		status, field, message := http.StatusServiceUnavailable, "form", "The route could not be saved. Try again shortly."
 		if errors.Is(err, controlroutes.ErrInvalidAdvertisement) {
-			status, field, message = http.StatusBadRequest, "domain_suffix", "Check the gateway, resolver and concrete private DNS suffix."
+			status, field, message = http.StatusUnprocessableEntity, "domain_suffix", "Check the gateway, resolver and concrete private DNS suffix."
 		}
 		s.adminFormError(w, r, "network", status, field, message)
 		return

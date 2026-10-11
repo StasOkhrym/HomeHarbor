@@ -116,7 +116,7 @@ func TestAdminCredentialRevokeRequiresDeviceScopedProof(t *testing.T) {
 		handler,
 		"/admin/devices/device-a/revoke",
 		values,
-	).Code; got != http.StatusBadRequest {
+	).Code; got != http.StatusUnprocessableEntity {
 		t.Fatalf("unconfirmed status=%d", got)
 	}
 	values.Set("confirmed", "yes")
@@ -147,7 +147,7 @@ func TestAdminPolicyPreviewRequiresArray(t *testing.T) {
 		},
 	).Handler()
 	response := postAdminForm(handler, "/admin/policy/preview", url.Values{"rules": {"null"}})
-	if response.Code != http.StatusBadRequest {
+	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatal("null must not silently clear every allow rule")
 	}
 }

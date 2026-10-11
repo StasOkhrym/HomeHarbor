@@ -9,6 +9,20 @@ import (
 	"strings"
 )
 
+func parseBrowserForm(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			// FormValue silently discards ParseForm errors. Reject malformed
+			// bodies before authentication or field validation uses those values.
+			if err := r.ParseForm(); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid form body")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func csrfFormToken(request *http.Request) string {
 	cookie, err := request.Cookie(csrfCookieName)
 	if err != nil {
@@ -53,8 +67,9 @@ var errBrowserID = errors.New("use at most 128 letters, numbers, hyphens or unde
 
 func browserIDError(err error) (int, string) {
 	if errors.Is(err, errBrowserID) {
-		return http.StatusBadRequest, errBrowserID.Error()
+		return http.StatusUnprocessableEntity, errBrowserID.Error()
 	}
+
 	return http.StatusServiceUnavailable, "A record ID could not be generated. Try again."
 }
 

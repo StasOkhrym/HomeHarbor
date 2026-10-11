@@ -160,7 +160,7 @@ func (s *Server) previewPolicyForm(w http.ResponseWriter, r *http.Request) {
 			w,
 			r,
 			"access",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 			"rules",
 			"Check the rules: "+err.Error()+".",
 		)
@@ -172,7 +172,7 @@ func (s *Server) previewPolicyForm(w http.ResponseWriter, r *http.Request) {
 			w,
 			r,
 			"access",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 			"rules",
 			"Check rule IDs, source devices, non-default CIDRs, TCP/UDP and port ranges.",
 		)
@@ -219,7 +219,7 @@ func (s *Server) replacePolicyForm(w http.ResponseWriter, r *http.Request) {
 			w,
 			r,
 			"access",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 			"rules",
 			"Preview and confirm the policy replacement first.",
 		)
@@ -242,7 +242,7 @@ func (s *Server) replacePolicyForm(w http.ResponseWriter, r *http.Request) {
 			w,
 			r,
 			"access",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 			"rules",
 			"The preview revision is invalid.",
 		)
@@ -254,7 +254,7 @@ func (s *Server) replacePolicyForm(w http.ResponseWriter, r *http.Request) {
 			w,
 			r,
 			"access",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 			"rules",
 			"The preview rules are invalid.",
 		)
@@ -266,7 +266,7 @@ func (s *Server) replacePolicyForm(w http.ResponseWriter, r *http.Request) {
 			w,
 			r,
 			"access",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 			"rules",
 			"The preview rules are invalid.",
 		)
@@ -303,7 +303,7 @@ func (s *Server) revokeDeviceForm(w http.ResponseWriter, r *http.Request) {
 			w,
 			r,
 			"devices",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 			"form",
 			"Review the device details and confirm credential revoke first.",
 		)

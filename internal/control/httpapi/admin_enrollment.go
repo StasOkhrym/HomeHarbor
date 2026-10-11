@@ -26,7 +26,7 @@ func (s *Server) issueEnrollmentTokenForm(w http.ResponseWriter, r *http.Request
 			w,
 			r,
 			"invites",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 			"ttl_seconds",
 			"Choose a lifetime between 1 minute and 24 hours.",
 		)
@@ -37,7 +37,7 @@ func (s *Server) issueEnrollmentTokenForm(w http.ResponseWriter, r *http.Request
 			w,
 			r,
 			"invites",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 			"role",
 			"Choose Client or Home gateway.",
 		)

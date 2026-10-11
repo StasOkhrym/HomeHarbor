@@ -24,11 +24,25 @@ func (s *Server) createServiceForm(w http.ResponseWriter, r *http.Request) {
 	}
 	name, kind := strings.TrimSpace(r.FormValue("name")), r.FormValue("kind")
 	if name == "" {
-		s.adminFormError(w, r, "services", http.StatusBadRequest, "name", "Enter a service name.")
+		s.adminFormError(
+			w,
+			r,
+			"services",
+			http.StatusUnprocessableEntity,
+			"name",
+			"Enter a service name.",
+		)
 		return
 	}
 	if kind != "web" && kind != "native" {
-		s.adminFormError(w, r, "services", http.StatusBadRequest, "kind", "Choose Web or Native.")
+		s.adminFormError(
+			w,
+			r,
+			"services",
+			http.StatusUnprocessableEntity,
+			"kind",
+			"Choose Web or Native.",
+		)
 		return
 	}
 	for _, key := range []string{"url", "health_url", "native_url"} {
@@ -45,7 +59,7 @@ func (s *Server) createServiceForm(w http.ResponseWriter, r *http.Request) {
 				w,
 				r,
 				"services",
-				http.StatusBadRequest,
+				http.StatusUnprocessableEntity,
 				key,
 				"Enter a valid URL. Web and health URLs must use HTTPS.",
 			)
@@ -91,7 +105,14 @@ func (s *Server) createProfileForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(r.FormValue("name")) == "" {
-		s.adminFormError(w, r, "access", http.StatusBadRequest, "name", "Enter a profile name.")
+		s.adminFormError(
+			w,
+			r,
+			"access",
+			http.StatusUnprocessableEntity,
+			"name",
+			"Enter a profile name.",
+		)
 		return
 	}
 	serviceIDs := formSelections(r, "service_ids")
@@ -100,7 +121,7 @@ func (s *Server) createProfileForm(w http.ResponseWriter, r *http.Request) {
 			w,
 			r,
 			"access",
-			http.StatusBadRequest,
+			http.StatusUnprocessableEntity,
 			"service_ids",
 			"Choose at least one service.",
 		)
@@ -124,9 +145,9 @@ func (s *Server) createProfileForm(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, profiles.ErrDuplicateID):
 			status, field, message = http.StatusConflict, "id", "This profile ID already exists. Check the profiles before submitting again."
 		case errors.Is(err, profiles.ErrServiceNotFound):
-			status, field, message = http.StatusBadRequest, "service_ids", "A selected service is no longer available. Review your selection."
+			status, field, message = http.StatusUnprocessableEntity, "service_ids", "A selected service is no longer available. Review your selection."
 		case errors.Is(err, profiles.ErrDeviceNotAllowed):
-			status, field, message = http.StatusBadRequest, "device_ids", "Choose only active registered devices."
+			status, field, message = http.StatusUnprocessableEntity, "device_ids", "Choose only active registered devices."
 		}
 		s.adminFormError(w, r, "access", status, field, message)
 		return

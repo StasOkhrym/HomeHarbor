@@ -158,6 +158,7 @@ func (s *Server) registerBrowserAdmin(admin chi.Router) {
 		admin.Handle("/login", s.loginPage)
 	}
 	admin.Group(func(protected chi.Router) {
+		protected.Use(parseBrowserForm)
 		protected.Use(s.requireAdmin)
 		protected.Get("/", s.adminDashboard)
 		for _, page := range []string{"setup", "devices", "services", "access", "network", "invites", "activity", "security"} {

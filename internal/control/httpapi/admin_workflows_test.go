@@ -39,6 +39,66 @@ func postAdminForm(
 	return response
 }
 
+func TestAdminFormValidationReturnsUnprocessableEntity(t *testing.T) {
+	serviceStore := memoryservices.NewRepository()
+	catalog := controlservices.NewService(serviceStore, time.Now)
+
+	handler := newTestServer(
+		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
+		allowAuthorizer{},
+		Dependencies{Resources: ResourceDependencies{
+			Services: catalog,
+			Profiles: controlprofiles.NewService(
+				memoryprofiles.NewRepository(serviceStore), catalog, time.Now, nil,
+			),
+			Routes: controlroutes.NewService(memoryroutes.NewRepository(), time.Now),
+			Policy: policy.NewService(memorypolicy.NewRepository(), acl.Compiler{}),
+		}},
+	).Handler()
+	for _, tc := range []struct {
+		name   string
+		path   string
+		values url.Values
+	}{
+		{"service", "/admin/services", url.Values{"name": {""}}},
+		{"profile", "/admin/access-profiles", url.Values{"name": {""}}},
+		{"route", "/admin/routes", url.Values{"prefix": {"not-a-cidr"}}},
+		{"policy", "/admin/policy/preview", url.Values{"rules": {"not JSON"}}},
+		{"enrollment", "/admin/enrollment-tokens", url.Values{"ttl_seconds": {"invalid"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := postAdminForm(handler, tc.path, tc.values)
+
+			if response.Code != http.StatusUnprocessableEntity ||
+				!strings.Contains(response.Body.String(), "Your changes were not saved.") {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestAdminMalformedFormIsBadRequest(t *testing.T) {
+	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
+
+	handler := newTestServer(nil, allowAuthorizer{}, Dependencies{
+		Resources: ResourceDependencies{Services: catalog},
+	}).Handler()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/admin/services",
+		strings.NewReader("name=%ZZ"),
+	)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest ||
+		strings.Contains(response.Body.String(), "Your changes were not saved.") {
+		t.Fatalf("malformed form status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestAdminServiceFormGeneratesID(t *testing.T) {
 	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
 
@@ -64,10 +124,12 @@ func TestAdminServiceFormGeneratesID(t *testing.T) {
 
 func TestAdminServiceErrorPreservesEscapedValues(t *testing.T) {
 	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
+
 	response := postAdminForm(handler, "/admin/services", url.Values{
 		"name": {
 			`<script>alert('x')</script>`,
@@ -75,15 +137,20 @@ func TestAdminServiceErrorPreservesEscapedValues(t *testing.T) {
 		"kind": {"web"},
 		"url":  {"http://not-https.example"},
 	})
+
 	body := response.Body.String()
-	if response.Code != http.StatusBadRequest || !strings.Contains(body, "&lt;script&gt;") ||
+
+	if response.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(body, "&lt;script&gt;") ||
 		!strings.Contains(body, `aria-invalid="true"`) {
 		t.Fatalf("form error lost values or field state: status=%d body=%s", response.Code, body)
 	}
 	if strings.Contains(body, `<script>alert('x')</script>`) {
 		t.Fatal("unescaped submitted name")
 	}
+
 	items, _ := catalog.List(context.Background())
+
 	if len(items) != 0 {
 		t.Fatal("invalid form persisted a service")
 	}
@@ -130,15 +197,20 @@ func TestAdminPolicyPreviewDoesNotPersist(t *testing.T) {
 
 func TestAdminPolicyRequiresConfirmation(t *testing.T) {
 	service := policy.NewService(memorypolicy.NewRepository(), acl.Compiler{})
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Policy: service}},
 	).Handler()
+
 	response := postAdminForm(handler, "/admin/policy", url.Values{"rules": {"[]"}})
-	if response.Code != http.StatusBadRequest {
+
+	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("unconfirmed replacement status=%d", response.Code)
 	}
+
 	value, _ := service.Latest(context.Background())
+
 	if value.Revision != 0 {
 		t.Fatal("unconfirmed replacement persisted")
 	}
@@ -190,6 +262,7 @@ func TestAdminFormIDSurvivesRetry(t *testing.T) {
 
 func TestAdminServiceInvalidURLIsFieldError(t *testing.T) {
 	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
@@ -198,7 +271,8 @@ func TestAdminServiceInvalidURLIsFieldError(t *testing.T) {
 		response := postAdminForm(handler, "/admin/services", url.Values{
 			"name": {"Photos"}, "kind": {"web"}, "url": {value},
 		})
-		if response.Code != http.StatusBadRequest {
+
+		if response.Code != http.StatusUnprocessableEntity {
 			t.Errorf("URL %q status=%d", value, response.Code)
 		}
 	}
@@ -307,7 +381,7 @@ func TestAdminStructuredPolicyPreservesInvalidRow(t *testing.T) {
 		"editor": {"structured"}, "rule_id": {"ssh"}, "source_device_id": {"client-a"},
 		"destination": {"not-a-cidr"}, "protocol": {"tcp"}, "port_from": {"22"}, "port_to": {"22"},
 	})
-	if response.Code != http.StatusBadRequest ||
+	if response.Code != http.StatusUnprocessableEntity ||
 		!strings.Contains(response.Body.String(), `value="not-a-cidr"`) {
 		t.Fatal("invalid structured row was lost")
 	}
@@ -370,20 +444,24 @@ func TestAdminProfileSelectionsPersistAfterError(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{
 			Services: catalog, Profiles: profileOwner,
 		}},
 	).Handler()
+
 	response := postAdminForm(
 		handler,
 		"/admin/access-profiles",
 		url.Values{"name": {""}, "service_ids": {"photos", "cloud"}},
 	)
-	if response.Code != http.StatusBadRequest {
+
+	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status=%d", response.Code)
 	}
+
 	for _, id := range []string{"photos", "cloud"} {
 		if !regexp.MustCompile(`value="` + regexp.QuoteMeta(id) + `"\s+checked`).
 			MatchString(response.Body.String()) {
@@ -397,12 +475,14 @@ func TestAdminTokenValidationRetainsRole(t *testing.T) {
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{},
 	).Handler()
+
 	response := postAdminForm(
 		handler,
 		"/admin/enrollment-tokens",
 		url.Values{"role": {"gateway"}, "ttl_seconds": {"9223372036854775807"}},
 	)
-	if response.Code != http.StatusBadRequest ||
+
+	if response.Code != http.StatusUnprocessableEntity ||
 		!regexp.MustCompile(`value="gateway"\s+selected`).MatchString(response.Body.String()) {
 		t.Fatal("token validation lost chosen role or accepted overflow")
 	}
@@ -431,10 +511,12 @@ func TestAdminTokenPageIsOneTimeAndNoStore(t *testing.T) {
 
 func TestAdminRejectsUnsafeBrowserID(t *testing.T) {
 	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
+
 	response := postAdminForm(
 		handler,
 		"/admin/services",
@@ -445,7 +527,8 @@ func TestAdminRejectsUnsafeBrowserID(t *testing.T) {
 			"url":  {"https://photos.home.arpa"},
 		},
 	)
-	if response.Code != http.StatusBadRequest {
+
+	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("unsafe ID status=%d", response.Code)
 	}
 }
@@ -487,10 +570,12 @@ func TestAdminNetworkSupportsBothApprovalTransitions(t *testing.T) {
 
 func TestAdminErrorDoesNotRetainURLCredentials(t *testing.T) {
 	catalog := controlservices.NewService(memoryservices.NewRepository(), time.Now)
+
 	handler := newTestServer(
 		devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		allowAuthorizer{}, Dependencies{Resources: ResourceDependencies{Services: catalog}},
 	).Handler()
+
 	response := postAdminForm(
 		handler,
 		"/admin/services",
@@ -500,7 +585,8 @@ func TestAdminErrorDoesNotRetainURLCredentials(t *testing.T) {
 			"url":  {"https://user:never-retain-this@example.com"},
 		},
 	)
-	if response.Code != http.StatusBadRequest ||
+
+	if response.Code != http.StatusUnprocessableEntity ||
 		strings.Contains(response.Body.String(), "never-retain-this") {
 		t.Fatal("validation retained URL credentials")
 	}
