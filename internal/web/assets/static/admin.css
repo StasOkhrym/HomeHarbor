@@ -777,6 +777,10 @@ summary {
     margin-top: 12px;
   }
 
+  .mobile-nav summary {
+    color: #d3e4e3;
+  }
+
   .mobile-nav .nav-list {
     padding-top: 8px;
   }
