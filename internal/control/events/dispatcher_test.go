@@ -336,6 +336,76 @@ func TestDispatcherReadyRequiresActiveWorker(t *testing.T) {
 	}
 }
 
+func TestPostgresStalePendingAuditDegradesReadiness(t *testing.T) {
+	pool := deliveryDB(t, 1)
+	ctx := context.Background()
+	d := NewDispatcher(pool, auditstorage.New(pool), nil)
+
+	if err := d.Check(ctx); err != nil {
+		t.Fatalf("fresh pending event degraded readiness: %v", err)
+	}
+
+	if _, err := pool.Exec(
+		ctx,
+		`UPDATE event_outbox SET occurred_at=now()-interval '121 seconds'`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.Check(ctx); err == nil {
+		t.Fatal("stale unattempted audit event reported ready")
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE event_outbox SET occurred_at=now()`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.Check(ctx); err != nil {
+		t.Fatalf("fresh pending event did not recover readiness: %v", err)
+	}
+}
+
+func TestPostgresDeliveryStatusCountsDurableRows(t *testing.T) {
+	pool := deliveryDB(t, 1)
+	ctx := context.Background()
+
+	_, err := pool.Exec(ctx, `INSERT INTO event_outbox
+ (topic,payload,occurred_at,attempts,next_attempt_at,quarantined_at,published_at) VALUES
+ ('device.enrolled','{}',now()-interval '30 seconds',1,now()+interval '1 second',NULL,NULL),
+ ('device.enrolled','{}',now()-interval '1 hour',1,NULL,now(),NULL),
+ ('device.enrolled','{}',now()-interval '1 hour',1,NULL,NULL,now())`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := NewDispatcher(pool, auditstorage.New(pool), nil)
+
+	status, err := d.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if status.Pending != 2 || status.Failed != 1 || status.Quarantined != 1 ||
+		status.OldestPendingAge < 25*time.Second || status.OldestPendingAge > 35*time.Second {
+		t.Fatalf("unexpected durable delivery status: %+v", status)
+	}
+
+	if err := d.Check(ctx); err == nil {
+		t.Fatal("failed and quarantined rows reported ready")
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE event_outbox SET occurred_at=now()+interval '1 hour'
+ WHERE published_at IS NULL AND quarantined_at IS NULL`); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err = d.Status(ctx)
+
+	if err != nil || status.OldestPendingAge != 0 {
+		t.Fatalf("future timestamp must not produce negative age: status=%+v err=%v", status, err)
+	}
+}
+
 func TestDecodeRejectsDisguisedLegacyPayload(t *testing.T) {
 	for _, body := range []string{
 		`{"schema_version":null,"type":"device.enrolled","aggregate_id":"device-1","occurred_at":"2026-09-30T12:00:00Z"}`,

@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"log/slog"
 	"reflect"
 	"testing"
 
@@ -15,20 +14,23 @@ func TestControlRunConstructionFailureClosesAcquiredResources(t *testing.T) {
 	stores := &runtimeStores{closers: []func(){
 		func() { closed = append(closed, "redis") },
 		func() { closed = append(closed, "database") },
-		func() { closed = append(closed, "bus") },
 	}}
-	acquire := func(context.Context, config.Control, *slog.Logger) (*runtimeStores, error) { return stores, nil }
+	acquire := func(context.Context, config.Control) (*runtimeStores, error) { return stores, nil }
+
 	// Invalid passkey configuration fails after stores have been acquired,
 	// before any repository operation requires a real external database.
 	app, err := newWithStores(context.Background(), config.Control{}, nil, acquire)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := app.Run(context.Background()); err == nil {
 		t.Fatal("invalid passkeys were accepted")
 	}
+
 	stores.close()
-	if !reflect.DeepEqual(closed, []string{"bus", "database", "redis"}) {
+
+	if !reflect.DeepEqual(closed, []string{"database", "redis"}) {
 		t.Fatalf("acquired resources must close once in reverse order: %v", closed)
 	}
 }
@@ -57,15 +59,17 @@ func TestControlShutdownWaitsForAuditBeforeClosingStores(t *testing.T) {
 
 func TestControlNewDoesNotAcquireStores(t *testing.T) {
 	acquired := false
+
 	app, err := newWithStores(
 		context.Background(),
 		config.Control{},
 		nil,
-		func(context.Context, config.Control, *slog.Logger) (*runtimeStores, error) {
+		func(context.Context, config.Control) (*runtimeStores, error) {
 			acquired = true
 			return &runtimeStores{}, nil
 		},
 	)
+
 	if acquired {
 		t.Fatal("constructor acquired stores")
 	}

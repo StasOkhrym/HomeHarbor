@@ -20,7 +20,7 @@ import (
 // closed in reverse ownership order so consumers stop before their stores.
 type App struct {
 	cfg             config.Control
-	acquire         func(context.Context, config.Control, *slog.Logger) (*runtimeStores, error)
+	acquire         func(context.Context, config.Control) (*runtimeStores, error)
 	stores          *runtimeStores
 	server          *http.Server
 	metricsServer   *http.Server
@@ -43,14 +43,16 @@ func newWithStores(
 	_ context.Context,
 	cfg config.Control,
 	logger *slog.Logger,
-	acquire func(context.Context, config.Control, *slog.Logger) (*runtimeStores, error),
+	acquire func(context.Context, config.Control) (*runtimeStores, error),
 ) (*App, error) {
 	if cfg.Runtime == (config.Runtime{}) {
 		cfg.Runtime = config.DefaultRuntime(false)
 	}
+
 	if err := cfg.Runtime.Validate(); err != nil {
 		return nil, err
 	}
+
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -71,7 +73,7 @@ func (a *App) assemble(ctx context.Context) error {
 		)
 	}
 
-	stores, err := a.acquire(ctx, cfg, logger)
+	stores, err := a.acquire(ctx, cfg)
 	if err != nil {
 		return err
 	}

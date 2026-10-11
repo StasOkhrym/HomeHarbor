@@ -24,6 +24,17 @@ type Dispatcher struct {
 	running   atomic.Bool
 }
 
+const maxPendingAuditAge = 2 * time.Minute
+
+// DeliveryStatus describes durable outbox state. Failed is a subset of Pending;
+// Quarantined rows are counted separately because they will not be retried.
+type DeliveryStatus struct {
+	Pending          int64
+	Failed           int64
+	Quarantined      int64
+	OldestPendingAge time.Duration
+}
+
 func NewDispatcher(pool *pgxpool.Pool, projector AuditProjector, logger *slog.Logger) *Dispatcher {
 	if logger == nil {
 		logger = slog.Default()
@@ -174,21 +185,54 @@ func retrySeconds(failures int) int {
 	return seconds
 }
 
-// Check fails readiness for any critical audit row with failed delivery or
-// quarantine. A fresh pending row may still be in the normal dispatch window.
-func (d *Dispatcher) Check(ctx context.Context) error {
+// Status reads durable delivery state without relying on a process-local hint.
+// Age uses the database clock and outbox occurred_at; producer clock skew can
+// distort this diagnostic, so future timestamps are clamped to zero.
+func (d *Dispatcher) Status(ctx context.Context) (DeliveryStatus, error) {
 	if d.pool == nil {
-		return errors.New("audit dispatcher unavailable")
+		return DeliveryStatus{}, errors.New("audit dispatcher unavailable")
 	}
-	var degraded bool
-	err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM event_outbox
-  WHERE published_at IS NULL AND (attempts > 0 OR quarantined_at IS NOT NULL))`).Scan(&degraded)
+
+	var status DeliveryStatus
+	var databaseNow time.Time
+	var oldestPending *time.Time
+
+	// Subqueries keep the normal read on the small partial outbox indexes
+	// instead of scanning every historical completed row for filtered counts.
+	err := d.pool.QueryRow(ctx, `SELECT now(),
+ (SELECT count(*) FROM event_outbox
+  WHERE published_at IS NULL AND quarantined_at IS NULL),
+ (SELECT count(*) FROM event_outbox
+  WHERE published_at IS NULL AND quarantined_at IS NULL AND attempts > 0),
+ (SELECT count(*) FROM event_outbox
+  WHERE published_at IS NULL AND quarantined_at IS NOT NULL),
+ (SELECT min(occurred_at) FROM event_outbox
+  WHERE published_at IS NULL AND quarantined_at IS NULL)`).Scan(
+		&databaseNow, &status.Pending, &status.Failed, &status.Quarantined, &oldestPending,
+	)
 	if err != nil {
-		return errors.New("audit delivery state unavailable")
+		return DeliveryStatus{}, errors.New("audit delivery state unavailable")
 	}
-	if degraded {
+
+	if oldestPending != nil {
+		status.OldestPendingAge = max(0, databaseNow.Sub(*oldestPending))
+	}
+
+	return status, nil
+}
+
+// Check degrades readiness for failed, quarantined, or stalled critical audit
+// delivery. A fresh pending row remains within the normal dispatch window.
+func (d *Dispatcher) Check(ctx context.Context) error {
+	status, err := d.Status(ctx)
+	if err != nil {
+		return err
+	}
+	if status.Failed > 0 || status.Quarantined > 0 ||
+		(status.Pending > 0 && status.OldestPendingAge >= maxPendingAuditAge) {
 		return errors.New("audit delivery degraded")
 	}
+
 	return nil
 }
 

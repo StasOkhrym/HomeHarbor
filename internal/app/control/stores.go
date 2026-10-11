@@ -3,11 +3,8 @@ package control
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"sync"
 
-	"github.com/ThreeDotsLabs/watermill"
-	"github.com/ThreeDotsLabs/watermill/pubsub/gochannel"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
@@ -20,7 +17,6 @@ import (
 type runtimeStores struct {
 	pool    *pgxpool.Pool
 	redis   *redis.Client
-	bus     *gochannel.GoChannel
 	closers []func()
 	once    sync.Once
 }
@@ -41,7 +37,6 @@ func (s *runtimeStores) run(ctx context.Context, components ...lifecycle.Compone
 func openStores(
 	ctx context.Context,
 	cfg config.Control,
-	logger *slog.Logger,
 ) (*runtimeStores, error) {
 	stores := &runtimeStores{}
 	keep := false
@@ -50,16 +45,19 @@ func openStores(
 			stores.close()
 		}
 	}()
+
 	if cfg.Database.Driver != "" && cfg.Database.Driver != "postgres" {
 		return nil, errors.New("unsupported database driver")
 	}
 	if cfg.Redis.URL == "" || cfg.Redis.Password == "" {
 		return nil, errors.New("redis endpoint and resolved password are required")
 	}
+
 	redisOptions, err := redis.ParseURL(cfg.Redis.URL)
 	if err != nil {
 		return nil, errors.New("invalid Redis endpoint")
 	}
+
 	redisOptions.Password = cfg.Redis.Password
 	redisOptions.DialTimeout = cfg.Runtime.RedisTimeout
 	redisOptions.ReadTimeout = cfg.Runtime.RedisTimeout
@@ -70,31 +68,33 @@ func openStores(
 	redisClient := redis.NewClient(redisOptions)
 	stores.redis = redisClient
 	stores.closers = append(stores.closers, func() { _ = redisClient.Close() })
+
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		return nil, errors.New("redis security state unavailable")
 	}
+
 	poolConfig, err := pgxpool.ParseConfig(cfg.Database.URL)
 	if err != nil {
 		return nil, errors.Join(errors.New("parse database configuration"), err)
 	}
+
 	if cfg.Database.Password != "" {
 		poolConfig.ConnConfig.Password = cfg.Database.Password
 	}
+
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, errors.Join(errors.New("connect database"), err)
 	}
+
 	stores.pool = pool
 	stores.closers = append(stores.closers, pool.Close)
+
 	if err := pool.Ping(ctx); err != nil {
 		return nil, errors.Join(errors.New("ping database"), err)
 	}
-	bus := gochannel.NewGoChannel(
-		gochannel.Config{PreserveContext: true},
-		watermill.NewSlogLogger(logger),
-	)
-	stores.bus = bus
-	stores.closers = append(stores.closers, func() { _ = bus.Close() })
+
 	keep = true
+
 	return stores, nil
 }

@@ -35,9 +35,17 @@ contracts from adapters; they do not promise automatic SQL portability. TOML
 therefore truthfully selects `database.driver = "postgres"`.
 
 Cross-module enrollment/activation workflows share one SQL transaction. Each
-adapter writes only its own tables. Outbox events commit with durable changes;
-delivery is at least once, so consumers must be idempotent. Watermill GoChannel
-carries local events, not the primary synchronous transaction.
+adapter writes only its own tables. Typed outbox facts commit with durable
+changes. The control audit dispatcher projects each fact and marks its outbox
+row complete in one SQL transaction, on one connection. Stable event IDs make
+replay idempotent. There is no process-local event bus or external broker in
+the current runtime; Activity reads committed audit rows from PostgreSQL.
+
+Audit readiness degrades when a delivery attempt fails, a row is quarantined,
+or the oldest pending fact is at least two minutes old. The age is measured
+from the outbox event timestamp using the database clock; producer clock skew
+can distort it. A future asynchronous consumer needs its own persisted delivery
+progress and may use a private messaging adapter after the business commit.
 
 ## Storage authority
 

@@ -25,9 +25,11 @@ is unavailable, not an invalid identity. Application services and challenge
 repositories are constructor dependencies; there is no process-local production
 fallback or credential-in-approval compatibility path.
 
-Outbox IDs stay stable across retries. Events contain public aggregate/action/time,
-not credentials. Audit delivery acknowledges only after durable consumption;
-consumers are idempotent and dispatcher failure affects readiness. DB/Redis
+Outbox delivery IDs stay stable across retries. Versioned facts contain only
+allowlisted public action, aggregate, actor/target and outcome fields, never
+credentials. The audit record and outbox completion commit in one SQL
+transaction; failed attempts are persisted with bounded retry, while invalid
+facts are quarantined and degrade readiness. DB/Redis
 integration tests cover approval rollback, concurrent approval/claim, lost HTTP
 responses, replay and the single-active-credential invariant. These contracts do
 not prove the separate deployed Linux tunnel path.
