@@ -17,6 +17,7 @@ import (
 	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
 	memorypolicy "github.com/StasOkhrym/homeharbor/internal/testutil/control/policy"
 	memoryservices "github.com/StasOkhrym/homeharbor/internal/testutil/control/services"
+	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
 )
 
 func TestAdminMutationsShareBrowserSecurityBoundary(t *testing.T) {
@@ -153,7 +154,7 @@ func TestAdminPolicyPreviewRequiresArray(t *testing.T) {
 }
 
 func TestAdminPolicyJSONEmptyIsArray(t *testing.T) {
-	model := adminPageModel{Values: url.Values{}}
+	model := webadmin.Page{Values: url.Values{}}
 	server := mustTestServer(
 		nil,
 		nil,

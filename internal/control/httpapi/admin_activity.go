@@ -7,7 +7,7 @@ import (
 )
 
 func (s *Server) adminActivityFragment(w http.ResponseWriter, r *http.Request) {
-	model := adminPageModel{Page: "activity"}
+	model := webadmin.Page{Page: "activity"}
 	activity, status := webadmin.LoadActivity(r.Context(), s.audit, r.URL.Query())
 	model.Activity = activity
 	s.renderAdminFragment(w, status, "activity-feed", model)

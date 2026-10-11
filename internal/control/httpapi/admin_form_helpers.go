@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
 )
 
 func parseBrowserForm(next http.Handler) http.Handler {
@@ -120,31 +122,11 @@ func (s *Server) adminFormError(
 		model.Values[key] = values
 	}
 	if page == "access" && r.FormValue("editor") == "structured" {
-		model.PolicyRows = submittedPolicyRows(model.Values)
+		model.PolicyRows = webadmin.SubmittedPolicyRows(model.Values)
 	}
 	model.FieldErrors[field] = message
 	model.Error = "Your changes were not saved. " + message
 	s.renderAdmin(w, status, model)
-}
-
-type adminField struct {
-	Name     string
-	Label    string
-	Type     string
-	Value    string
-	Error    string
-	Required bool
-}
-
-func (m adminPageModel) Field(name, label, kind string, required bool) adminField {
-	return adminField{
-		Name:     name,
-		Label:    label,
-		Type:     kind,
-		Required: required,
-		Value:    m.Value(name),
-		Error:    m.FieldErrors[name],
-	}
 }
 
 func formSelections(r *http.Request, key string) []string {

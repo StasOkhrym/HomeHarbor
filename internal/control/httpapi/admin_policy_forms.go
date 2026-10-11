@@ -11,49 +11,8 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
+	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
 )
-
-type adminPolicyPreview struct {
-	Before    string
-	After     string
-	RulesJSON string
-	Revision  uint64
-	Proof     string
-	Changes   []adminPolicyChange
-}
-
-type adminPolicyChange struct {
-	Kind   string
-	Before *acl.Rule
-	After  *acl.Rule
-}
-
-func policyChanges(before, after []acl.Rule) []adminPolicyChange {
-	old := make(map[string]acl.Rule, len(before))
-	for _, rule := range before {
-		old[rule.ID] = rule
-	}
-	var changes []adminPolicyChange
-	for _, rule := range after {
-		previous, exists := old[rule.ID]
-		if !exists {
-			changes = append(changes, adminPolicyChange{Kind: "Added", After: &rule})
-		} else if previous != rule {
-			changes = append(
-				changes,
-				adminPolicyChange{Kind: "Modified", Before: &previous, After: &rule},
-			)
-		}
-		delete(old, rule.ID)
-	}
-	// Keep removals in stored order rather than random map iteration.
-	for _, rule := range before {
-		if _, exists := old[rule.ID]; exists {
-			changes = append(changes, adminPolicyChange{Kind: "Removed", Before: &rule})
-		}
-	}
-	return changes
-}
 
 type browserAction struct {
 	Operation string     `json:"operation"`
@@ -202,13 +161,13 @@ func (s *Server) previewPolicyForm(w http.ResponseWriter, r *http.Request) {
 	)
 	before, _ := json.MarshalIndent(current.Rules, "", "  ")
 	after, _ := json.MarshalIndent(proposed.Rules, "", "  ")
-	model.Preview = &adminPolicyPreview{
+	model.Preview = &webadmin.PolicyPreview{
 		Before:    string(before),
 		After:     string(after),
 		RulesJSON: string(after),
 		Revision:  current.Revision,
 		Proof:     s.actionConfirmation.SignAction(csrfFormToken(r), payload),
-		Changes:   policyChanges(current.Rules, proposed.Rules),
+		Changes:   webadmin.PolicyChanges(current.Rules, proposed.Rules),
 	}
 	s.renderAdmin(w, http.StatusOK, model)
 }
