@@ -180,7 +180,7 @@ func reconcileSnapshotHead(
 		return fmt.Errorf("%w: prepare: %w", ErrSnapshotState, err)
 	}
 	defer prepared.abort()
-	if err := applier.Apply(ctx, target); err != nil {
+	if err := applyVerifiedSnapshot(ctx, applier, envelope, target); err != nil {
 		return fmt.Errorf("apply snapshot revision %d: %w", target.Revision, err)
 	}
 	if err := prepared.commit(); err != nil {

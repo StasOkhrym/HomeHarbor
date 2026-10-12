@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -22,6 +23,28 @@ type stateApplier struct {
 	revisions []uint64
 	fail      error
 	hook      func()
+}
+
+type signedStateApplier struct {
+	envelopes [][]byte
+}
+
+func (*signedStateApplier) Apply(context.Context, snapshot.NetworkSnapshot) error {
+	return errors.New("signed owner was given only a decoded value")
+}
+
+func (a *signedStateApplier) ApplySigned(
+	_ context.Context,
+	envelope snapshot.Envelope,
+	value snapshot.NetworkSnapshot,
+) error {
+	if value.Revision == 0 || len(envelope.Hash) == 0 {
+		return errors.New("signed owner received an empty envelope")
+	}
+
+	a.envelopes = append(a.envelopes, bytes.Clone(envelope.Hash))
+
+	return nil
 }
 
 func (a *stateApplier) Apply(_ context.Context, value snapshot.NetworkSnapshot) error {
@@ -200,6 +223,46 @@ func TestSnapshotCatchUpVerifiesEveryPageAndAppliesOnlyTarget(t *testing.T) {
 		snapshot.ErrInvalidSignature,
 	) {
 		t.Fatalf("same-hash forged replay: %v", err)
+	}
+}
+
+func TestSignedOwnerReceivesExactEnvelopeOnCatchUpAndRestore(t *testing.T) {
+	root, history := signedHistory(t, 3)
+	var cursors []uint64
+
+	server := historyServer(t, history, nil, &cursors)
+	defer server.Close()
+
+	cfg := CoordinationConfig{
+		URL: "ws" + server.URL[len("http"):], Credential: "credential",
+		NetworkID: "home", DeviceID: "device-1", RootPublicKey: root,
+		StatePath: filepath.Join(t.TempDir(), "head.json"),
+	}
+	owner := &signedStateApplier{}
+	cursor := &coordinationCursor{}
+
+	if err := reconcileSnapshotHead(
+		context.Background(),
+		cfg,
+		owner,
+		cursor,
+		history[2],
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(owner.envelopes) != 1 || !bytes.Equal(owner.envelopes[0], history[2].Hash) {
+		t.Fatal("history path lost the exact verified signed envelope")
+	}
+
+	restarted := &signedStateApplier{}
+
+	if _, err := restoreSnapshotCursor(context.Background(), cfg, restarted); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(restarted.envelopes) != 1 || !bytes.Equal(restarted.envelopes[0], history[2].Hash) {
+		t.Fatal("restore path lost the exact persisted signed envelope")
 	}
 }
 

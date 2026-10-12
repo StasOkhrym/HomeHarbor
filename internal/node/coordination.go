@@ -28,6 +28,25 @@ type SnapshotApplier interface {
 	Apply(context.Context, snapshot.NetworkSnapshot) error
 }
 
+// SignedSnapshotApplier receives the original envelope after lineage checks.
+// Native helpers use it to independently re-verify authority before any host
+// effect; legacy Linux owners continue consuming the decoded value.
+type SignedSnapshotApplier interface {
+	ApplySigned(context.Context, snapshot.Envelope, snapshot.NetworkSnapshot) error
+}
+
+func applyVerifiedSnapshot(
+	ctx context.Context,
+	applier SnapshotApplier,
+	envelope snapshot.Envelope,
+	value snapshot.NetworkSnapshot,
+) error {
+	if signed, ok := applier.(SignedSnapshotApplier); ok {
+		return signed.ApplySigned(ctx, envelope, value)
+	}
+	return applier.Apply(ctx, value)
+}
+
 // PreparedSnapshotApplier validates without mutating runtime state, then applies
 // under the gateway's deny guard. Dependencies are explicit, not discovered by
 // runtime assertions on an Apply-only interface.
