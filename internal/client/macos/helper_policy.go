@@ -22,14 +22,16 @@ const maxHelperPolicyBytes = 8 * 1024
 // root-owned private file. It contains only public trust and bounded network
 // scope; the companion signing key never enters this process.
 type HelperPolicyDocument struct {
-	Version       int    `json:"version"`
-	OwnerUID      int    `json:"owner_uid"`
-	RootPublicKey string `json:"root_public_key"`
-	NetworkID     string `json:"network_id"`
-	DeviceID      string `json:"device_id"`
-	Overlay       string `json:"overlay"`
-	Private       string `json:"private"`
-	Suffix        string `json:"suffix"`
+	Version             int    `json:"version"`
+	OwnerUID            int    `json:"owner_uid"`
+	RootPublicKey       string `json:"root_public_key"`
+	NetworkID           string `json:"network_id"`
+	DeviceID            string `json:"device_id"`
+	Overlay             string `json:"overlay"`
+	Private             string `json:"private"`
+	Suffix              string `json:"suffix"`
+	BridgeEndpoint      string `json:"bridge_endpoint"`
+	WireGuardListenPort uint16 `json:"wireguard_listen_port"`
 }
 
 // LoadHelperPolicy uses localstate's no-follow, owner/mode-checked open path.
@@ -66,13 +68,17 @@ func LoadHelperPolicy(path, journalPath string) (policy HelperPolicy, result err
 	}
 	overlay, overlayErr := netip.ParsePrefix(document.Overlay)
 	private, privateErr := netip.ParsePrefix(document.Private)
+	bridge, bridgeErr := netip.ParseAddrPort(document.BridgeEndpoint)
 	if document.Version != 1 || document.OwnerUID <= 0 || document.NetworkID == "" ||
 		document.DeviceID == "" || overlayErr != nil || privateErr != nil ||
 		!overlay.IsValid() || !private.IsValid() || overlay.Bits() == 0 ||
 		private.Bits() == 0 || overlay != overlay.Masked() ||
 		private != private.Masked() || overlay.Overlaps(private) ||
 		!withinPrivateScope(overlay, true) || !withinPrivateScope(private, false) ||
-		!validResolverSuffix(document.Suffix) {
+		!validResolverSuffix(document.Suffix) || bridgeErr != nil ||
+		!validTunnelScope(TunnelConfig{
+			BridgeEndpoint: bridge, ListenPort: document.WireGuardListenPort,
+		}) {
 		return HelperPolicy{}, errors.New("native helper policy has invalid trust bounds")
 	}
 	return HelperPolicy{
@@ -84,7 +90,17 @@ func LoadHelperPolicy(path, journalPath string) (policy HelperPolicy, result err
 			},
 		},
 		OwnerUID: document.OwnerUID, JournalPath: journalPath,
+		Tunnel: TunnelConfig{
+			BridgeEndpoint: bridge, ListenPort: document.WireGuardListenPort,
+		},
 	}, nil
+}
+
+func validTunnelScope(tunnel TunnelConfig) bool {
+	return tunnel.BridgeEndpoint.IsValid() &&
+		tunnel.BridgeEndpoint.Addr() == netip.MustParseAddr("127.0.0.1") &&
+		tunnel.BridgeEndpoint.Port() >= 1024 && tunnel.ListenPort >= 1024 &&
+		tunnel.BridgeEndpoint.Port() != tunnel.ListenPort
 }
 
 func withinPrivateScope(prefix netip.Prefix, overlay bool) bool {

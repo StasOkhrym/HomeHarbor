@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 func helperJSON(t *testing.T, request HelperRequest) []byte {
@@ -22,13 +24,23 @@ func helperJSON(t *testing.T, request HelperRequest) []byte {
 }
 
 func TestHelperAppliesOnlyExactSignedPlanForProvisionedOwner(t *testing.T) {
-	authority, envelope, plan := nativeFixture(t)
+	authority, envelope, plan, _, privateKey := nativeFixtureWithKey(t)
 	policy := HelperPolicy{
 		Authority:   authority,
 		OwnerUID:    501,
 		JournalPath: filepath.Join(t.TempDir(), "owner.json"),
+		Tunnel: TunnelConfig{
+			BridgeEndpoint: netip.MustParseAddrPort("127.0.0.1:51822"),
+			ListenPort:     51820,
+		},
 	}
-	request := HelperRequest{Version: 1, Action: "apply", Envelope: envelope, Plan: plan}
+	request := HelperRequest{
+		Version:    1,
+		Action:     "apply",
+		Envelope:   envelope,
+		Plan:       plan,
+		PrivateKey: privateKey,
+	}
 	native := &fakeNative{}
 	if err := ExecuteHelper(
 		context.Background(),
@@ -69,18 +81,33 @@ func TestHelperAppliesOnlyExactSignedPlanForProvisionedOwner(t *testing.T) {
 	if len(native.calls) == 0 {
 		t.Fatal("valid helper request did not apply native operations")
 	}
+	if native.configuredTunnel.PrivateKey != privateKey ||
+		native.configuredTunnel.BridgeEndpoint != policy.Tunnel.BridgeEndpoint ||
+		native.configuredTunnel.ListenPort != policy.Tunnel.ListenPort {
+		t.Fatal("verified WireGuard identity was not passed to native configuration")
+	}
 }
 
 func TestHelperRejectsUnboundedOrAmbiguousInputBeforeEffects(t *testing.T) {
-	authority, envelope, plan := nativeFixture(t)
+	authority, envelope, plan, _, privateKey := nativeFixtureWithKey(t)
 	policy := HelperPolicy{
 		Authority:   authority,
 		OwnerUID:    501,
 		JournalPath: filepath.Join(t.TempDir(), "owner.json"),
+		Tunnel: TunnelConfig{
+			BridgeEndpoint: netip.MustParseAddrPort("127.0.0.1:51822"),
+			ListenPort:     51820,
+		},
 	}
 	request := helperJSON(
 		t,
-		HelperRequest{Version: 1, Action: "apply", Envelope: envelope, Plan: plan},
+		HelperRequest{
+			Version:    1,
+			Action:     "apply",
+			Envelope:   envelope,
+			Plan:       plan,
+			PrivateKey: privateKey,
+		},
 	)
 	for _, input := range [][]byte{
 		append(bytes.Clone(request), []byte(` {"version":1,"action":"close"}`)...),
@@ -104,12 +131,50 @@ func TestHelperRejectsUnboundedOrAmbiguousInputBeforeEffects(t *testing.T) {
 	}
 }
 
+func TestHelperRejectsPrivateKeyForAnotherSignedDevice(t *testing.T) {
+	authority, envelope, plan := nativeFixture(t)
+	foreignKey, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := HelperPolicy{
+		Authority:   authority,
+		OwnerUID:    501,
+		JournalPath: filepath.Join(t.TempDir(), "owner.json"),
+		Tunnel: TunnelConfig{
+			BridgeEndpoint: netip.MustParseAddrPort("127.0.0.1:51822"),
+			ListenPort:     51820,
+		},
+	}
+	native := &fakeNative{}
+	request := HelperRequest{
+		Version: 1, Action: "apply", Envelope: envelope, Plan: plan,
+		PrivateKey: foreignKey.String(),
+	}
+	if err := ExecuteHelper(
+		context.Background(),
+		bytes.NewReader(helperJSON(t, request)),
+		policy,
+		501,
+		native,
+	); err == nil {
+		t.Fatal("foreign WireGuard identity reached native operations")
+	}
+	if len(native.calls) != 0 {
+		t.Fatalf("foreign WireGuard identity caused effects: %v", native.calls)
+	}
+}
+
 func TestHelperCloseCannotCarryAnUnsignedPlan(t *testing.T) {
 	authority, envelope, plan := nativeFixture(t)
 	policy := HelperPolicy{
 		Authority:   authority,
 		OwnerUID:    501,
 		JournalPath: filepath.Join(t.TempDir(), "owner.json"),
+		Tunnel: TunnelConfig{
+			BridgeEndpoint: netip.MustParseAddrPort("127.0.0.1:51822"),
+			ListenPort:     51820,
+		},
 	}
 	native := &fakeNative{}
 	request := HelperRequest{Version: 1, Action: "close", Envelope: envelope, Plan: plan}

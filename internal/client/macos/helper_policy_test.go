@@ -18,13 +18,15 @@ func TestHelperPolicyLoadsOnlyPrivateOwnedProvisioning(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "policy.json")
 	journal := filepath.Join(dir, "journal.json")
-	content, err := json.Marshal(HelperPolicyDocument{
+	document := HelperPolicyDocument{
 		Version: 1, OwnerUID: 501,
 		RootPublicKey: base64.RawURLEncoding.EncodeToString(root),
 		NetworkID:     "sandbox-network", DeviceID: "client-1",
 		Overlay: "10.243.0.0/24", Private: "10.241.50.0/24",
-		Suffix: "sandbox.home.arpa",
-	})
+		Suffix:         "sandbox.home.arpa",
+		BridgeEndpoint: "127.0.0.1:51822", WireGuardListenPort: 51820,
+	}
+	content, err := json.Marshal(document)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,14 +39,35 @@ func TestHelperPolicyLoadsOnlyPrivateOwnedProvisioning(t *testing.T) {
 	}
 	if policy.OwnerUID != 501 || policy.JournalPath != journal ||
 		policy.Authority.NetworkID != "sandbox-network" ||
-		policy.Authority.Bounds.Private.String() != "10.241.50.0/24" {
+		policy.Authority.Bounds.Private.String() != "10.241.50.0/24" ||
+		policy.Tunnel.BridgeEndpoint.String() != "127.0.0.1:51822" ||
+		policy.Tunnel.ListenPort != 51820 {
 		t.Fatalf("wrong provisioned policy: %+v", policy)
 	}
-	for _, invalid := range []HelperPolicyDocument{
-		{Version: 1, OwnerUID: 501, RootPublicKey: base64.RawURLEncoding.EncodeToString(root), NetworkID: "sandbox-network", DeviceID: "client-1", Overlay: "0.0.0.0/1", Private: "10.241.50.0/24", Suffix: "sandbox.home.arpa"},
-		{Version: 1, OwnerUID: 501, RootPublicKey: base64.RawURLEncoding.EncodeToString(root), NetworkID: "sandbox-network", DeviceID: "client-1", Overlay: "10.243.0.0/24", Private: "203.0.113.0/24", Suffix: "sandbox.home.arpa"},
-		{Version: 1, OwnerUID: 501, RootPublicKey: base64.RawURLEncoding.EncodeToString(root), NetworkID: "sandbox-network", DeviceID: "client-1", Overlay: "10.243.0.0/24", Private: "10.241.50.0/24", Suffix: "../../etc"},
+	for _, endpoint := range []string{"0.0.0.0:51822", "192.0.2.1:51822", "127.0.0.1:80"} {
+		var invalid HelperPolicyDocument
+		if err := json.Unmarshal(content, &invalid); err != nil {
+			t.Fatal(err)
+		}
+		invalid.BridgeEndpoint = endpoint
+		bad, err := json.Marshal(invalid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, bad, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadHelperPolicy(path, journal); err == nil {
+			t.Fatalf("unsafe relay bridge endpoint accepted: %s", endpoint)
+		}
+	}
+	for _, mutate := range []func(*HelperPolicyDocument){
+		func(value *HelperPolicyDocument) { value.Overlay = "0.0.0.0/1" },
+		func(value *HelperPolicyDocument) { value.Private = "203.0.113.0/24" },
+		func(value *HelperPolicyDocument) { value.Suffix = "../../etc" },
 	} {
+		invalid := document
+		mutate(&invalid)
 		bad, err := json.Marshal(invalid)
 		if err != nil {
 			t.Fatal(err)

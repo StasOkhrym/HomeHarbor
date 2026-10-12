@@ -30,13 +30,21 @@ type Authority struct {
 	Bounds    networkplan.Bounds
 }
 
+// TunnelConfig combines caller-held identity with the root-provisioned local
+// UDP bridge and listen port. Only the identity travels through helper stdin.
+type TunnelConfig struct {
+	PrivateKey     string
+	BridgeEndpoint netip.AddrPort
+	ListenPort     uint16
+}
+
 // Operations is the small native effect boundary. Each Remove method must
 // inspect the current resource and refuse foreign changes, not blindly delete.
 type Operations interface {
 	Prepare(context.Context, networkplan.Plan) error
 	Create(context.Context, string) (string, error)
 	ResolveCreated(context.Context, string) (string, error)
-	Configure(context.Context, string, networkplan.Plan) error
+	Configure(context.Context, string, networkplan.Plan, TunnelConfig) error
 	Address(context.Context, string, netip.Prefix) error
 	AddRoute(context.Context, string, netip.Prefix) error
 	SetDNS(context.Context, networkplan.Resolver) error
@@ -50,6 +58,7 @@ type Adapter struct {
 	authority   Authority
 	envelope    snapshot.Envelope
 	ops         Operations
+	tunnel      TunnelConfig
 }
 
 func NewAdapter(
@@ -57,8 +66,12 @@ func NewAdapter(
 	authority Authority,
 	envelope snapshot.Envelope,
 	ops Operations,
+	tunnel TunnelConfig,
 ) *Adapter {
-	return &Adapter{journalPath: journalPath, authority: authority, envelope: envelope, ops: ops}
+	return &Adapter{
+		journalPath: journalPath, authority: authority, envelope: envelope,
+		ops: ops, tunnel: tunnel,
+	}
 }
 
 // Apply validates the exact signed plan, recovers stale intent, then journals
@@ -159,34 +172,45 @@ func (a *Adapter) install(
 	if !utunName.MatchString(name) {
 		return errors.New("native tunnel returned an invalid interface name")
 	}
+
 	state.Interface = name
+
 	if err := saveJournal(store, *state); err != nil {
 		return err
 	}
-	if err := a.ops.Configure(ctx, name, plan); err != nil {
+
+	if err := a.ops.Configure(ctx, name, plan, a.tunnel); err != nil {
 		return fmt.Errorf("configure native WireGuard: %w", err)
 	}
+
 	if err := a.ops.Address(ctx, name, plan.OverlayAddress); err != nil {
 		return fmt.Errorf("assign native overlay address: %w", err)
 	}
+
 	for _, route := range plan.Routes {
 		state.Routes = append(state.Routes, route)
+
 		if err := saveJournal(store, *state); err != nil {
 			return err
 		}
+
 		if err := a.ops.AddRoute(ctx, name, route); err != nil {
 			return fmt.Errorf("install native route %s: %w", route, err)
 		}
 	}
+
 	for _, resolver := range plan.DNS {
 		state.DNS = append(state.DNS, resolver)
+
 		if err := saveJournal(store, *state); err != nil {
 			return err
 		}
+
 		if err := a.ops.SetDNS(ctx, resolver); err != nil {
 			return fmt.Errorf("install scoped native resolver: %w", err)
 		}
 	}
+
 	return nil
 }
 

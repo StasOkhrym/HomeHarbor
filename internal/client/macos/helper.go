@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"reflect"
 
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+
 	"github.com/StasOkhrym/homeharbor/internal/node/networkplan"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
@@ -23,13 +25,15 @@ type HelperPolicy struct {
 	Authority   Authority
 	OwnerUID    int
 	JournalPath string
+	Tunnel      TunnelConfig
 }
 
 type HelperRequest struct {
-	Version  int               `json:"version"`
-	Action   string            `json:"action"`
-	Envelope snapshot.Envelope `json:"envelope,omitempty"`
-	Plan     networkplan.Plan  `json:"plan,omitempty"`
+	Version    int               `json:"version"`
+	Action     string            `json:"action"`
+	Envelope   snapshot.Envelope `json:"envelope,omitempty"`
+	Plan       networkplan.Plan  `json:"plan,omitempty"`
+	PrivateKey string            `json:"private_key,omitempty"`
 }
 
 // ExecuteHelper validates the complete bounded protocol before any native
@@ -48,7 +52,8 @@ func ExecuteHelper(
 	if policy.OwnerUID < 0 || callerUID != policy.OwnerUID ||
 		len(policy.Authority.Root) != ed25519.PublicKeySize ||
 		policy.Authority.NetworkID == "" || policy.Authority.DeviceID == "" ||
-		!filepath.IsAbs(policy.JournalPath) || input == nil || ops == nil {
+		!filepath.IsAbs(policy.JournalPath) || !validTunnelScope(policy.Tunnel) ||
+		input == nil || ops == nil {
 		return errors.New("native helper has invalid or foreign provisioned ownership")
 	}
 	data, err := io.ReadAll(io.LimitReader(input, MaxHelperRequestBytes+1))
@@ -75,17 +80,52 @@ func ExecuteHelper(
 	if err != nil || !bytes.Equal(bytes.TrimSpace(data), canonical) {
 		return errors.New("native helper request is not canonical JSON")
 	}
-	adapter := NewAdapter(policy.JournalPath, policy.Authority, request.Envelope, ops)
+	tunnel := policy.Tunnel
+	tunnel.PrivateKey = request.PrivateKey
+	adapter := NewAdapter(
+		policy.JournalPath,
+		policy.Authority,
+		request.Envelope,
+		ops,
+		tunnel,
+	)
 	switch request.Action {
 	case "apply":
+		if err := verifyNativePrivateKey(request, policy.Authority); err != nil {
+			return err
+		}
 		return adapter.Apply(ctx, request.Plan)
 	case "close":
 		if !reflect.DeepEqual(request.Envelope, snapshot.Envelope{}) ||
-			!reflect.DeepEqual(request.Plan, networkplan.Plan{}) {
+			!reflect.DeepEqual(request.Plan, networkplan.Plan{}) || request.PrivateKey != "" {
 			return errors.New("native close cannot carry a signed plan")
 		}
 		return adapter.Close(ctx)
 	default:
 		return errors.New("unknown native helper action")
 	}
+}
+
+func verifyNativePrivateKey(request HelperRequest, authority Authority) error {
+	if request.Plan.Revoked {
+		if request.PrivateKey != "" {
+			return errors.New("revoked native plan cannot carry a private key")
+		}
+		return nil
+	}
+	key, err := wgtypes.ParseKey(request.PrivateKey)
+	if err != nil {
+		return errors.New("native WireGuard private key is invalid")
+	}
+	value, err := snapshot.Verify(request.Envelope, authority.Root, authority.NetworkID)
+	if err != nil {
+		return err
+	}
+	for _, device := range value.Devices {
+		if device.ID == authority.DeviceID && device.Role == "client" &&
+			device.WireGuardPublicKey == key.PublicKey().String() {
+			return nil
+		}
+	}
+	return errors.New("native WireGuard private key does not match the signed client")
 }
