@@ -17,6 +17,7 @@ type runner func(context.Context, nodeapp.Role, config.Node) error
 
 var configKeys = map[string]string{
 	"state": "node.state_path", "control": "node.control_url", "token": "node.token",
+	"ca-file": "node.ca_file",
 	"refresh": "node.refresh", "name": "node.name",
 	"relay":        "relay.websocket_url",
 	"relay-ticket": "relay.ticket", "relay-session": "relay.session_id",
@@ -87,6 +88,12 @@ func bindFlags(cmd *cobra.Command, cfg *config.Node, path *string) {
 	f.StringVar(path, "config", "", "TOML node configuration path")
 	f.StringVar(&cfg.Identity.StatePath, "state", cfg.Identity.StatePath, "private node state file")
 	f.StringVar(&cfg.Identity.ControlURL, "control", cfg.Identity.ControlURL, "control plane URL")
+	f.StringVar(
+		&cfg.Identity.CAFile,
+		"ca-file",
+		cfg.Identity.CAFile,
+		"explicit PEM CA for control and relay TLS",
+	)
 	f.StringVar(
 		&cfg.Identity.Token,
 		"token",

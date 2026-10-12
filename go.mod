@@ -15,7 +15,8 @@ require (
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
-	golang.org/x/sys v0.44.0
+	golang.org/x/sys v0.46.0
+	golang.org/x/term v0.44.0
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 )
 

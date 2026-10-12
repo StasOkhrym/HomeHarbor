@@ -5,8 +5,11 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"github.com/StasOkhrym/homeharbor/internal/platform/trust"
 	controlprotocol "github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
@@ -94,6 +98,45 @@ func TestRunCoordinationVerifiesAndAppliesSignedSnapshot(t *testing.T) {
 	}
 	if !recorder.called || recorder.value.Revision != 1 {
 		t.Fatalf("recorder=%#v", recorder)
+	}
+}
+
+func TestRunCoordinationUsesExplicitCAForSignedSnapshot(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := snapshot.Sign(
+		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, privateKey, "root-1",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewTLSServer(coordinationTestHandler(t, envelope))
+	defer server.Close()
+	caFile := filepath.Join(t.TempDir(), "control-ca.pem")
+	certificate := pem.EncodeToMemory(
+		&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw},
+	)
+	if err := os.WriteFile(caFile, certificate, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := trust.NewHTTPClientFromCAFile(caFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseIdleConnections()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	recorder := &snapshotRecorder{cancel: cancel}
+	err = RunCoordination(ctx, CoordinationConfig{
+		URL: "wss" + server.URL[len("https"):], HTTPClient: client,
+		Credential: "credential", DeviceID: "device-1", NetworkID: "home",
+		RootPublicKey: publicKey, HeartbeatEvery: time.Hour,
+	}, recorder)
+	if err != nil || !recorder.called || recorder.value.Revision != 1 {
+		t.Fatalf("trusted signed snapshot was not applied: called=%t revision=%d err=%v",
+			recorder.called, recorder.value.Revision, err)
 	}
 }
 
@@ -341,21 +384,32 @@ func TestCandidatePublisherStopsWhenSessionContextEnds(t *testing.T) {
 
 func newCoordinationTestServer(t *testing.T, envelope snapshot.Envelope) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httptest.NewServer(coordinationTestHandler(t, envelope))
+}
+
+func coordinationTestHandler(t *testing.T, envelope snapshot.Envelope) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if serveCoordinationTestHistory(w, r, []snapshot.Envelope{envelope}) {
 			return
 		}
+
 		connection, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			t.Errorf("accept: %v", err)
+
 			return
 		}
 		defer func() { _ = connection.CloseNow() }()
+
 		var hello controlprotocol.Hello
+
 		if err := wsjson.Read(r.Context(), connection, &hello); err != nil {
 			t.Errorf("hello: %v", err)
+
 			return
 		}
+
 		if err := wsjson.Write(
 			r.Context(),
 			connection,
@@ -368,20 +422,25 @@ func newCoordinationTestServer(t *testing.T, envelope snapshot.Envelope) *httpte
 			},
 		); err != nil {
 			t.Errorf("welcome: %v", err)
+
 			return
 		}
+
 		payload, err := json.Marshal(envelope)
 		if err != nil {
 			t.Errorf("marshal envelope: %v", err)
+
 			return
 		}
+
 		_ = wsjson.Write(
 			r.Context(),
 			connection,
 			controlprotocol.Message{Type: "network.snapshot", Payload: payload},
 		)
+
 		consumeCoordinationTestPeer(r.Context(), connection)
-	}))
+	})
 }
 
 func TestCandidatePublisherJoined(t *testing.T) {

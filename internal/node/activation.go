@@ -18,6 +18,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/controlclient"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
@@ -32,7 +33,18 @@ type InviteEnrollment struct {
 	RootPublicKey ed25519.PublicKey
 	NetworkID     string
 	PollInterval  time.Duration
+	OnStage       func(InviteStage)
 }
+
+// InviteStage reports protocol progress without implying that network policy
+// has been applied. Application belongs to the normal client runtime.
+type InviteStage string
+
+const (
+	InvitePending  InviteStage = "pending"
+	InviteApproved InviteStage = "approved"
+	InviteClaimed  InviteStage = "claimed"
+)
 
 var inviteCanonical = func() cbor.EncMode {
 	m, err := cbor.CanonicalEncOptions().EncMode()
@@ -196,6 +208,36 @@ func EnrollByInvite(
 	p InviteEnrollment,
 	state *State,
 ) error {
+	return enrollByInvite(ctx, httpClient, p, state, func(current State) error {
+		return current.Save(p.StatePath)
+	})
+}
+
+// EnrollByInviteFrom keeps the caller's lifetime state lock across proof,
+// approval polling and credential persistence.
+func EnrollByInviteFrom(
+	ctx context.Context,
+	httpClient *http.Client,
+	p InviteEnrollment,
+	state *State,
+	store *localstate.Store,
+) error {
+	if store == nil {
+		return errors.New("state store is required")
+	}
+
+	return enrollByInvite(ctx, httpClient, p, state, func(current State) error {
+		return current.SaveTo(store)
+	})
+}
+
+func enrollByInvite(
+	ctx context.Context,
+	httpClient *http.Client,
+	p InviteEnrollment,
+	state *State,
+	save func(State) error,
+) error {
 	if state == nil || p.StatePath == "" {
 		return errors.New("state and state path are required")
 	}
@@ -207,7 +249,7 @@ func EnrollByInvite(
 	if err != nil {
 		return err
 	}
-	if err := state.Save(p.StatePath); err != nil {
+	if err := save(*state); err != nil {
 		return err
 	}
 	client, err := controlclient.ForEndpoint(base, httpClient)
@@ -217,6 +259,9 @@ func EnrollByInvite(
 	if err := client.SubmitInviteProof(ctx, permit, proof); err != nil {
 		return fmt.Errorf("submit invite proof: %w", err)
 	}
+	if p.OnStage != nil {
+		p.OnStage(InvitePending)
+	}
 	interval := p.PollInterval
 	if interval <= 0 {
 		interval = time.Second
@@ -225,6 +270,7 @@ func EnrollByInvite(
 	if err != nil {
 		return err
 	}
+	approvedReported := false
 	for {
 		challenge, err := client.Challenge(ctx, proof.InviteID)
 		if err == nil {
@@ -233,6 +279,10 @@ func EnrollByInvite(
 				challenge.ExpiresAt <= time.Now().Unix() ||
 				challenge.ExpiresAt > time.Now().Add(protocol.ClaimTTL).Unix() {
 				return protocol.ErrInvalidClaim
+			}
+			if p.OnStage != nil && !approvedReported {
+				p.OnStage(InviteApproved)
+				approvedReported = true
 			}
 			signed, signErr := protocol.SignClaim(challenge, ed25519.PrivateKey(private))
 			if signErr != nil {
@@ -253,10 +303,13 @@ func EnrollByInvite(
 				updated.DeviceID = d.ID
 				updated.DeviceCredential = d.Credential
 				updated.CredentialExpiresAt = d.CredentialExpiresAt
-				if err := updated.Save(p.StatePath); err != nil {
+				if err := save(updated); err != nil {
 					return err
 				}
 				*state = updated
+				if p.OnStage != nil {
+					p.OnStage(InviteClaimed)
+				}
 				return nil
 			}
 			err = claimErr

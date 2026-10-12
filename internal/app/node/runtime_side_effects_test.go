@@ -61,6 +61,7 @@ func TestInvalidRuntimeDoesNotCreateIdentityOrEnroll(t *testing.T) {
 		{"candidates", func(c *config.Node) { c.Direct.Candidates = "not-an-endpoint" }},
 		{"routes", func(c *config.Node) { c.WireGuard.Routes = "not-a-prefix" }},
 		{"control URL", func(c *config.Node) { c.Identity.ControlURL = ":invalid" }},
+		{"CA with plaintext control", func(c *config.Node) { c.Identity.CAFile = "sandbox-ca.pem" }},
 		{"signed trust", func(c *config.Node) { c.WireGuard.InterfaceName = "wg-test" }},
 		{"relay listen", func(c *config.Node) {
 			c.Relay.WebSocketURL = "wss://relay.localhost/relay/udp"
@@ -76,11 +77,15 @@ func TestInvalidRuntimeDoesNotCreateIdentityOrEnroll(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cfg, calls := runtimeFixture(t)
+
 			test.mutate(&cfg)
+
 			app, err := NewRuntime(context.Background(), Client, cfg)
+
 			if err == nil || app != nil {
 				t.Fatal("invalid configuration accepted")
 			}
+
 			assertNoStartupEffects(t, cfg, calls)
 		})
 	}
@@ -90,6 +95,27 @@ func TestNewRuntimeDoesNotStartEnrollment(t *testing.T) {
 	cfg, calls := runtimeFixture(t)
 	if _, err := NewRuntime(context.Background(), Client, cfg); err != nil {
 		t.Fatal(err)
+	}
+
+	assertNoStartupEffects(t, cfg, calls)
+}
+
+func TestMalformedExplicitCAFailsBeforeIdentityCreation(t *testing.T) {
+	cfg, calls := runtimeFixture(t)
+	cfg.Identity.ControlURL = "https://127.0.0.1:14443"
+	cfg.Identity.CAFile = filepath.Join(t.TempDir(), "bad-ca.pem")
+
+	if err := os.WriteFile(cfg.Identity.CAFile, []byte("invalid CA"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	app, err := NewRuntime(context.Background(), Client, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Run(context.Background()); err == nil {
+		t.Fatal("malformed CA accepted")
 	}
 
 	assertNoStartupEffects(t, cfg, calls)

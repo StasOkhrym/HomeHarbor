@@ -41,6 +41,23 @@ func validateRuntime(role Role, cfg config.Node) error {
 	if err := validateNodeURL(cfg.Relay.WebSocketURL, "relay", "ws", "wss"); err != nil {
 		return err
 	}
+	if cfg.Identity.CAFile != "" {
+		for _, endpoint := range []struct {
+			value, scheme string
+		}{
+			{cfg.Identity.ControlURL, "https"},
+			{cfg.Coordination.URL, "wss"},
+			{cfg.Relay.WebSocketURL, "wss"},
+		} {
+			if endpoint.value == "" {
+				continue
+			}
+			parsed, _ := url.Parse(endpoint.value)
+			if parsed.Scheme != endpoint.scheme {
+				return errors.New("explicit CA requires HTTPS control and WSS connections")
+			}
+		}
+	}
 	if _, err := node.ParseDirectCandidates(cfg.Direct.Candidates); err != nil {
 		return err
 	}

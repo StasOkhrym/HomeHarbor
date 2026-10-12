@@ -1,0 +1,17 @@
+# Join a client with a signed invitation
+
+`go run ./cmd/client join` (or a binary built from `./cmd/client`) is the enrollment step. It submits a signed invitation proof, waits for a trusted companion's approval, claims a short-lived credential, and saves that credential with the client's own identity keys. It does **not** configure a tunnel, route or DNS resolver. Start the normal client runtime afterward and wait for a verified signed snapshot before treating access as applied.
+
+Provide the client with a reachable HTTPS control origin, the sandbox CA certificate, the companion's **public** signing root, the network ID, and a private state path. Obtain the root/network fingerprint through a separate trusted operator channel. On that trusted side, derive it from the root public key file and network ID:
+
+```sh
+python3 -c 'import base64,hashlib,pathlib,sys; v=pathlib.Path(sys.argv[1]).read_bytes().strip(); k=v if len(v)==32 else base64.urlsafe_b64decode(v+b"="*((-len(v))%4)); assert len(k)==32; print(hashlib.sha256(b"homeharbor/network-trust/v1\0"+k+sys.argv[2].encode()).hexdigest())' root.pub sandbox-network
+```
+
+Run `go run ./cmd/client join --control https://localhost:PORT --ca-file sandbox-ca.pem --root-public-key root.pub --network-id sandbox-network --trust-fingerprint FINGERPRINT --state PRIVATE_STATE_PATH`. The command reads the signed invitation link and separate eight-digit code from stdin; never put either in command arguments, environment variables or a saved shell command. When stdin is a terminal, input is hidden while each value is entered. When input is piped, the caller must protect that pipe. The command does not follow HTTP redirects, disable TLS verification or download a replacement trust root from control.
+
+The first attempt creates a private Ed25519/WireGuard identity before sending proof. The device ID is derived from its public identity key, so an interrupted pending join can be retried with the same state path. Corrupt state fails closed. Wrong root, network, expired invitation or wrong control origin fails before proof submission. The command reports pending, approved and claimed separately; only the normal client runtime can report an applied signed revision. Approval requires the trusted companion to sign the exact device/profile change and publish its snapshot. Do not substitute a legacy enrollment token or a fixture-generated approval.
+
+Use the same `--state`, `--control`, `--ca-file`, `--root-public-key` and `--network-id` values for the normal client command. In TOML, the CA path is `[node] ca_file`; the root and network belong under `[coordination]`. The explicit CA is shared by credential renewal, relay admission, relay WSS, coordination WSS and signed snapshot history. Supplying a CA with plaintext HTTP/WS endpoints is rejected. The runtime never installs that CA into macOS system trust.
+
+For the optional one-Mac sandbox, keep this native client outside Docker's private subnet. The manual network apply and cleanup steps are documented separately when the macOS adapter and fixture are installed. Do not run host network changes as part of routine verification.

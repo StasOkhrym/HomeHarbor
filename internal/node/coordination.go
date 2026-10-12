@@ -111,6 +111,7 @@ func (a *CompositeSnapshotApplier) Apply(
 
 type CoordinationConfig struct {
 	URL           string
+	HTTPClient    *http.Client
 	Credential    string
 	Leases        credentials.LeaseSource
 	DeviceID      string
@@ -259,7 +260,10 @@ func runCoordination(
 	connection, _, err := websocket.Dial(
 		sessionContext,
 		cfg.URL,
-		&websocket.DialOptions{HTTPHeader: header, CompressionMode: websocket.CompressionDisabled},
+		&websocket.DialOptions{
+			HTTPClient: cfg.HTTPClient, HTTPHeader: header,
+			CompressionMode: websocket.CompressionDisabled,
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("dial coordination: %w", err)

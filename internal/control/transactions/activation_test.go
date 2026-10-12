@@ -51,6 +51,7 @@ type fixture struct {
 	devices    *devicepg.Repository
 	root       ed25519.PrivateKey
 	deviceKey  ed25519.PrivateKey
+	gateway    node.State
 	approval   invite.SignedApproval
 	record     invites.Record
 	snapshot   *snapshotReader
@@ -110,9 +111,18 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	pool := database(t)
 	ctx := context.Background()
+
 	now := time.Now().UTC()
+
 	root, rootKey, _ := ed25519.GenerateKey(rand.Reader)
+
 	_, deviceKey, _ := ed25519.GenerateKey(rand.Reader)
+
+	gateway, err := node.NewState()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := pool.Exec(
 		ctx,
 		`INSERT INTO access_profiles(id,name,created_at) VALUES('family','Family',$1)`,
@@ -120,32 +130,41 @@ func newFixture(t *testing.T) *fixture {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	local, err := invite.New("home", "family", time.Hour, now, rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	permit, err := invite.SignPermit(local.Permit, rootKey, "root-1")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	wgKey, err := wgtypes.GeneratePrivateKey()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	publicWG := wgKey.PublicKey()
+
 	proof, err := local.Proof("linux", deviceKey, local.Code, publicWG[:])
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	repo := invitepg.New(pool)
 	service := invites.NewService(repo, root, "home", time.Now)
+
 	if err = service.SubmitProof(ctx, permit, proof); err != nil {
 		t.Fatal(err)
 	}
+
 	r, err := repo.Get(ctx, proof.InviteID)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	approval, err := invite.SignApproval(
 		invite.Approval{
 			Version:            1,
@@ -160,38 +179,47 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	snap := &snapshotReader{}
 	f := &fixture{
 		pool:      pool,
 		devices:   devicepg.New(pool, workflowpg.AppendEvent),
 		root:      rootKey,
 		deviceKey: deviceKey,
+		gateway:   gateway,
 		approval:  approval,
 		record:    r,
 		snapshot:  snap,
 	}
 	f.wgKey = wgKey
 	f.code = local.Code
+
 	f.link, err = local.Link("https://control.example", permit)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var security workflows.ChallengeRepository
+
 	if redisURL := os.Getenv("TEST_REDIS_URL"); redisURL != "" {
 		options, err := redis.ParseURL(redisURL)
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		client := redis.NewClient(options)
 		t.Cleanup(func() { _ = client.Close() })
+
 		if err := client.Ping(ctx).Err(); err != nil {
 			t.Fatal(err)
 		}
+
 		security = redissecurity.New(
 			client,
 			fmt.Sprintf("activation-envtest-%d", time.Now().UnixNano()),
 		)
 	}
+
 	f.activation = workflows.NewActivation(
 		workflowpg.NewActivationUnitOfWork(pool),
 		repo,
@@ -202,17 +230,25 @@ func newFixture(t *testing.T) *fixture {
 		time.Now,
 		rand.Reader,
 	)
+
 	return f
 }
 
 func (f *fixture) publish(t *testing.T) {
 	t.Helper()
 	var err error
+
 	f.snapshot.envelope, err = snapshot.Sign(
 		snapshot.NetworkSnapshot{
 			NetworkID: "home",
 			Revision:  1,
 			Devices: []snapshot.Device{
+				{
+					ID:                 "gateway-1",
+					Role:               "gateway",
+					IdentityPublicKey:  f.gateway.IdentityPublicKey,
+					WireGuardPublicKey: f.gateway.WireGuard.PublicKey,
+				},
 				{
 					ID:                "linux",
 					Role:              "client",
@@ -603,6 +639,10 @@ func TestPostgresHTTPResponseLossRequestsFreshChallengeAndPersistsReplacement(t 
 	loaded, err := node.Load(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if loaded.IdentityPublicKey == f.gateway.IdentityPublicKey ||
+		loaded.WireGuard.PublicKey == f.gateway.WireGuard.PublicKey {
+		t.Fatal("client reused the independently generated gateway identity")
 	}
 	if _, err = f.devices.AuthenticateCredential(
 		ctx,

@@ -17,6 +17,7 @@ type Node struct {
 type NodeIdentity struct {
 	StatePath           string `toml:"state_path"`
 	ControlURL          string `toml:"control_url"`
+	CAFile              string `toml:"ca_file"`
 	EnrollmentTokenFile string `toml:"enrollment_token_file"`
 	Refresh             bool   `toml:"refresh"`
 	Name                string `toml:"name"`

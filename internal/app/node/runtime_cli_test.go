@@ -25,10 +25,21 @@ func TestRelayConfigurationErrorsNameCobraLongFlags(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := prepareRelay(context.Background(), tc.cfg, node.State{}, nil, nil, nil, nil)
+			_, err := prepareRelay(
+				context.Background(),
+				tc.cfg,
+				node.State{},
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+			)
+
 			if err == nil {
 				t.Fatal("expected relay configuration error")
 			}
+
 			for _, flag := range tc.want {
 				if !strings.Contains(err.Error(), flag) {
 					t.Fatalf("error %q omits %s", err, flag)

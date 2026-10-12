@@ -31,6 +31,7 @@ func fetchSnapshotHistory(
 	if err != nil {
 		return nil, err
 	}
+
 	switch endpoint.Scheme {
 	case "ws":
 		endpoint.Scheme = "http"
@@ -39,6 +40,7 @@ func fetchSnapshotHistory(
 	default:
 		return nil, errors.New("coordination requires ws or wss URL")
 	}
+
 	endpoint.Path, endpoint.RawPath, endpoint.Fragment = "/api/v1/coordination/snapshots", "", ""
 	query := url.Values{
 		"after_revision": {strconv.FormatUint(revision, 10)},
@@ -47,11 +49,14 @@ func fetchSnapshotHistory(
 	if revision > 0 {
 		query.Set("after_hash", base64.RawURLEncoding.EncodeToString(hash))
 	}
+
 	endpoint.RawQuery = query.Encode()
+
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
 		return nil, err
 	}
+
 	if cfg.Leases != nil {
 		lease, err := cfg.Leases.Current(ctx)
 		if err != nil {
@@ -60,15 +65,24 @@ func fetchSnapshotHistory(
 		if lease.DeviceID != cfg.DeviceID || !lease.ExpiresAt.After(time.Now()) {
 			return nil, errors.New("invalid history credential lease")
 		}
+
 		operation, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
 		defer cancel()
+
 		request = request.WithContext(operation)
 		cfg.Credential = lease.Credential
 	}
+
 	request.Header.Set("Authorization", "Bearer "+cfg.Credential)
-	// Use normal TLS validation. A redirect must not move a credential-bearing
-	// history request to another endpoint or silently switch its trust boundary.
+	// Reuse the explicitly provisioned CA from the coordination connection.
+	// A redirect must not move a credential-bearing history request.
+	transport := http.DefaultTransport
+	if cfg.HTTPClient != nil && cfg.HTTPClient.Transport != nil {
+		transport = cfg.HTTPClient.Transport
+	}
+
 	client := &http.Client{
+		Transport:     transport,
 		Timeout:       15 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
@@ -77,9 +91,11 @@ func fetchSnapshotHistory(
 		return nil, err
 	}
 	defer func() { _ = response.Body.Close() }()
+
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("snapshot history HTTP status %d", response.StatusCode)
 	}
+
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxSnapshotHistoryBytes+1))
 	if err != nil {
 		return nil, err
@@ -87,19 +103,24 @@ func fetchSnapshotHistory(
 	if len(data) > maxSnapshotHistoryBytes {
 		return nil, errors.New("snapshot history exceeds page body limit")
 	}
+
 	var page []snapshot.Envelope
+
 	if err := json.Unmarshal(data, &page); err != nil {
 		return nil, err
 	}
+
 	if len(page) > snapshotHistoryPageSize {
 		return nil, errors.New("snapshot history exceeds page count limit")
 	}
+
 	for _, envelope := range page {
 		encoded, err := json.Marshal(envelope)
 		if err != nil || len(encoded) > maxSnapshotEnvelopeBytes {
 			return nil, errors.New("snapshot history exceeds envelope limit")
 		}
 	}
+
 	return page, nil
 }
 

@@ -1,5 +1,7 @@
 # Signed activation and durable events
 
+The client-side command and trust inputs are described in [client join](client-join.md).
+
 Invite approval creates the public device identity, profile membership, approval
 record and outbox events in one DB transaction. The application workflow owns the
 transaction; each module's storage adapter writes its own tables. Approval returns

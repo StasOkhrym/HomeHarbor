@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/netip"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	nodepath "github.com/StasOkhrym/homeharbor/internal/node/path"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
+	"github.com/StasOkhrym/homeharbor/internal/platform/trust"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
@@ -52,11 +54,23 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 			return nil, err
 		}
 	}
+	handedOff := false
+	var httpClient *http.Client
+	if cfg.Identity.CAFile != "" {
+		httpClient, err = trust.NewHTTPClientFromCAFile(cfg.Identity.CAFile)
+		if err != nil {
+			return nil, err
+		}
+	}
+	defer func() {
+		if !handedOff && httpClient != nil {
+			httpClient.CloseIdleConnections()
+		}
+	}()
 	store, err := localstate.Open(cfg.Identity.StatePath)
 	if err != nil {
 		return nil, err
 	}
-	handedOff := false
 	defer func() {
 		if !handedOff {
 			result = errors.Join(result, store.Close())
@@ -72,13 +86,13 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 			return nil, err
 		}
 	}
-	state, err := prepareIdentity(ctx, cfg, store)
+	state, err := prepareIdentity(ctx, cfg, store, httpClient)
 	if err != nil {
 		return nil, err
 	}
 	var leases *credentials.Owner
 	if cfg.Identity.ControlURL != "" {
-		leases = prepareCredentials(cfg, state, store)
+		leases = prepareCredentials(cfg, state, store, httpClient)
 		if _, err := leases.Current(ctx); err != nil {
 			return nil, err
 		}
@@ -110,7 +124,16 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 		workers = append(workers, lifecycle.Worker{Name: "credentials", Component: leases})
 	}
 	if cfg.Relay.WebSocketURL != "" || cfg.Relay.Ticket != "" {
-		relay, err := prepareRelay(ctx, cfg, state, source, peers, paths, candidates.set)
+		relay, err := prepareRelay(
+			ctx,
+			cfg,
+			state,
+			source,
+			peers,
+			paths,
+			candidates.set,
+			httpClient,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -125,6 +148,7 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 			root,
 			peers,
 			candidates,
+			httpClient,
 		)
 		if err != nil {
 			return nil, err
@@ -141,6 +165,9 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 			denyErr = guard.Guard(cleanup)
 			cancel()
 		}
+		if httpClient != nil {
+			httpClient.CloseIdleConnections()
+		}
 		return errors.Join(denyErr, store.Close())
 	}}, nil
 }
@@ -149,29 +176,35 @@ func prepareIdentity(
 	ctx context.Context,
 	cfg config.Node,
 	store *localstate.Store,
+	httpClient *http.Client,
 ) (node.State, error) {
 	state, err := node.LoadOrCreateFrom(store)
 	if err != nil {
 		return node.State{}, err
 	}
+
 	operation, cancel := context.WithTimeout(ctx, cfg.Runtime.OperationTimeout)
 	defer cancel()
+
 	if cfg.Identity.ControlURL != "" && cfg.Identity.Token != "" && state.DeviceCredential == "" {
 		err = node.Enroll(
 			operation,
-			nil,
+			httpClient,
 			cfg.Identity.ControlURL,
 			cfg.Identity.Token,
 			cfg.Identity.Name,
 			&state,
 		)
 	}
+
 	if err != nil {
 		return node.State{}, err
 	}
+
 	if err := state.SaveTo(store); err != nil {
 		return node.State{}, err
 	}
+
 	return state, nil
 }
 
@@ -239,6 +272,7 @@ func prepareRelay(
 	peers *node.SnapshotWireGuardReconciler,
 	paths *nodepath.PathSelector,
 	candidates *node.CandidateSet,
+	httpClient *http.Client,
 ) (lifecycle.Component, error) {
 	if cfg.Relay.SessionID == "" || cfg.Relay.DestinationDevice == "" {
 		return nil, errors.New(
@@ -256,6 +290,7 @@ func prepareRelay(
 		DestinationDeviceID: cfg.Relay.DestinationDevice,
 		ListenAddress:       cfg.Relay.ListenAddress,
 		WireGuardAddress:    cfg.Relay.WireGuardAddress,
+		RelayHTTPClient:     httpClient,
 	}
 	bridge.OnObservedEndpoint = func(endpoint netip.AddrPort) {
 		if candidates != nil {
@@ -265,12 +300,12 @@ func prepareRelay(
 	var renew node.RelayTicketProvider
 	if cfg.Identity.ControlURL != "" {
 		renew = func(ctx context.Context) (string, error) {
-			session, err := issueRelaySession(ctx, cfg, state.DeviceID, leases)
+			session, err := issueRelaySession(ctx, cfg, state.DeviceID, leases, httpClient)
 			return session.Ticket, err
 		}
 	}
 	if bridge.Ticket == "" {
-		session, err := issueRelaySession(ctx, cfg, state.DeviceID, leases)
+		session, err := issueRelaySession(ctx, cfg, state.DeviceID, leases, httpClient)
 		if err != nil {
 			return nil, err
 		}
@@ -316,6 +351,7 @@ func prepareCoordination(
 	root ed25519.PublicKey,
 	peers *node.SnapshotWireGuardReconciler,
 	candidates candidateBindings,
+	httpClient *http.Client,
 ) (lifecycle.Component, error) {
 	if leases == nil {
 		return nil, errors.New("coordination requires a control credential owner")
@@ -326,6 +362,7 @@ func prepareCoordination(
 		DeviceID:          state.DeviceID,
 		NetworkID:         cfg.Coordination.NetworkID,
 		RootPublicKey:     root,
+		HTTPClient:        httpClient,
 		StatePath:         cfg.Identity.StatePath + ".snapshot",
 		CandidateHandler:  candidates.handle,
 		CandidateProvider: candidates.provide,
@@ -389,6 +426,7 @@ func prepareCredentials(
 	cfg config.Node,
 	state node.State,
 	store *localstate.Store,
+	httpClient *http.Client,
 ) *credentials.Owner {
 	asLease := func(s node.State) protocol.CredentialLease {
 		return protocol.CredentialLease{
@@ -404,27 +442,32 @@ func prepareCredentials(
 			copy := state
 			copy.DeviceCredential = previous.Credential
 			copy.CredentialExpiresAt = previous.ExpiresAt
-			err := node.RefreshCredential(ctx, nil, cfg.Identity.ControlURL, &copy)
+
+			err := node.RefreshCredential(ctx, httpClient, cfg.Identity.ControlURL, &copy)
+
 			return asLease(copy), err
 		},
 		Recover: func(ctx context.Context) (protocol.CredentialLease, error) {
 			copy := state
 			err := node.RecoverCredential(
 				ctx,
-				nil,
+				httpClient,
 				cfg.Identity.ControlURL,
 				cfg.Coordination.NetworkID,
 				&copy,
 			)
+
 			return asLease(copy), err
 		},
 		Save: func(ctx context.Context, lease protocol.CredentialLease) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+
 			copy := state
 			copy.DeviceCredential = lease.Credential
 			copy.CredentialExpiresAt = lease.ExpiresAt
+
 			return copy.SaveTo(store)
 		},
 	})
@@ -435,12 +478,15 @@ func issueRelaySession(
 	cfg config.Node,
 	deviceID string,
 	leases credentials.LeaseSource,
+	httpClient *http.Client,
 ) (node.RelaySession, error) {
 	if leases == nil {
 		return node.RelaySession{}, errors.New("control credential source required")
 	}
+
 	operation, cancel := context.WithTimeout(ctx, cfg.Runtime.OperationTimeout)
 	defer cancel()
+
 	lease, err := leases.Current(operation)
 	if err != nil {
 		return node.RelaySession{}, err
@@ -448,11 +494,13 @@ func issueRelaySession(
 	if lease.DeviceID != deviceID || lease.Credential == "" || !lease.ExpiresAt.After(time.Now()) {
 		return node.RelaySession{}, errors.New("invalid relay credential lease")
 	}
+
 	operation, expire := context.WithDeadline(operation, lease.ExpiresAt)
 	defer expire()
+
 	return node.IssueRelaySession(
 		operation,
-		nil,
+		httpClient,
 		cfg.Identity.ControlURL,
 		lease.Credential,
 		cfg.Relay.SessionID,
