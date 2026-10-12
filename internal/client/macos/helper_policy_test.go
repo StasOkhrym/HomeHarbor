@@ -8,10 +8,16 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 func TestHelperPolicyLoadsOnlyPrivateOwnedProvisioning(t *testing.T) {
 	root, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	private, err := wgtypes.GeneratePrivateKey()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +28,8 @@ func TestHelperPolicyLoadsOnlyPrivateOwnedProvisioning(t *testing.T) {
 		Version: 1, OwnerUID: 501,
 		RootPublicKey: base64.RawURLEncoding.EncodeToString(root),
 		NetworkID:     "sandbox-network", DeviceID: "client-1",
-		Overlay: "10.243.0.0/24", Private: "10.241.50.0/24",
+		LocalWireGuardPublicKey: private.PublicKey().String(),
+		Overlay:                 "10.243.0.0/24", Private: "10.241.50.0/24",
 		Suffix:         "sandbox.home.arpa",
 		BridgeEndpoint: "127.0.0.1:51822", WireGuardListenPort: 51820,
 	}
@@ -65,6 +72,7 @@ func TestHelperPolicyLoadsOnlyPrivateOwnedProvisioning(t *testing.T) {
 		func(value *HelperPolicyDocument) { value.Overlay = "0.0.0.0/1" },
 		func(value *HelperPolicyDocument) { value.Private = "203.0.113.0/24" },
 		func(value *HelperPolicyDocument) { value.Suffix = "../../etc" },
+		func(value *HelperPolicyDocument) { value.LocalWireGuardPublicKey = "invalid" },
 	} {
 		invalid := document
 		mutate(&invalid)
@@ -96,5 +104,38 @@ func TestHelperPolicyLoadsOnlyPrivateOwnedProvisioning(t *testing.T) {
 	}
 	if _, err := LoadHelperPolicy(path, journal); err == nil {
 		t.Fatal("symlinked helper policy accepted")
+	}
+}
+
+func TestHelperPolicyPinsLocalWireGuardIdentity(t *testing.T) {
+	root, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	private, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := map[string]any{
+		"version": 1, "owner_uid": 501,
+		"root_public_key": base64.RawURLEncoding.EncodeToString(root),
+		"network_id":      "sandbox-network", "device_id": "client-1",
+		"overlay": "10.243.0.0/24", "private": "10.241.50.0/24",
+		"suffix": "sandbox.home.arpa", "bridge_endpoint": "127.0.0.1:51822",
+		"wireguard_listen_port":      51820,
+		"local_wireguard_public_key": private.PublicKey().String(),
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.json")
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := LoadHelperPolicy(path, filepath.Join(dir, "journal.json"))
+	if err != nil || policy.LocalWireGuardPublicKey != private.PublicKey().String() {
+		t.Fatalf("pinned local identity missing: policy=%+v err=%v", policy, err)
 	}
 }

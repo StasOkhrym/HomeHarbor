@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+
 	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
 	"github.com/StasOkhrym/homeharbor/internal/node/networkplan"
 )
@@ -22,16 +24,17 @@ const maxHelperPolicyBytes = 8 * 1024
 // root-owned private file. It contains only public trust and bounded network
 // scope; the companion signing key never enters this process.
 type HelperPolicyDocument struct {
-	Version             int    `json:"version"`
-	OwnerUID            int    `json:"owner_uid"`
-	RootPublicKey       string `json:"root_public_key"`
-	NetworkID           string `json:"network_id"`
-	DeviceID            string `json:"device_id"`
-	Overlay             string `json:"overlay"`
-	Private             string `json:"private"`
-	Suffix              string `json:"suffix"`
-	BridgeEndpoint      string `json:"bridge_endpoint"`
-	WireGuardListenPort uint16 `json:"wireguard_listen_port"`
+	Version                 int    `json:"version"`
+	OwnerUID                int    `json:"owner_uid"`
+	RootPublicKey           string `json:"root_public_key"`
+	NetworkID               string `json:"network_id"`
+	DeviceID                string `json:"device_id"`
+	LocalWireGuardPublicKey string `json:"local_wireguard_public_key"`
+	Overlay                 string `json:"overlay"`
+	Private                 string `json:"private"`
+	Suffix                  string `json:"suffix"`
+	BridgeEndpoint          string `json:"bridge_endpoint"`
+	WireGuardListenPort     uint16 `json:"wireguard_listen_port"`
 }
 
 // LoadHelperPolicy uses localstate's no-follow, owner/mode-checked open path.
@@ -69,8 +72,10 @@ func LoadHelperPolicy(path, journalPath string) (policy HelperPolicy, result err
 	overlay, overlayErr := netip.ParsePrefix(document.Overlay)
 	private, privateErr := netip.ParsePrefix(document.Private)
 	bridge, bridgeErr := netip.ParseAddrPort(document.BridgeEndpoint)
+	localKey, localKeyErr := wgtypes.ParseKey(document.LocalWireGuardPublicKey)
 	if document.Version != 1 || document.OwnerUID <= 0 || document.NetworkID == "" ||
 		document.DeviceID == "" || overlayErr != nil || privateErr != nil ||
+		localKeyErr != nil || localKey == (wgtypes.Key{}) ||
 		!validNativeBounds(networkplan.Bounds{
 			Overlay: overlay, Private: private, Suffix: document.Suffix,
 		}) || bridgeErr != nil ||
@@ -88,6 +93,7 @@ func LoadHelperPolicy(path, journalPath string) (policy HelperPolicy, result err
 			},
 		},
 		OwnerUID: document.OwnerUID, JournalPath: journalPath,
+		LocalWireGuardPublicKey: localKey.String(),
 		Tunnel: TunnelConfig{
 			BridgeEndpoint: bridge, ListenPort: document.WireGuardListenPort,
 		},

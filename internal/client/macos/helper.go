@@ -22,10 +22,11 @@ const MaxHelperRequestBytes = 256 * 1024
 // HelperPolicy comes from root-owned provisioned state, never from the caller's
 // JSON. The caller may request an exact signed apply or cleanup of its owner.
 type HelperPolicy struct {
-	Authority   Authority
-	OwnerUID    int
-	JournalPath string
-	Tunnel      TunnelConfig
+	Authority               Authority
+	OwnerUID                int
+	JournalPath             string
+	LocalWireGuardPublicKey string
+	Tunnel                  TunnelConfig
 }
 
 type HelperRequest struct {
@@ -55,6 +56,11 @@ func ExecuteHelper(
 		!filepath.IsAbs(policy.JournalPath) || !validTunnelScope(policy.Tunnel) ||
 		input == nil || ops == nil {
 		return errors.New("native helper has invalid or foreign provisioned ownership")
+	}
+	pinnedKey, err := wgtypes.ParseKey(policy.LocalWireGuardPublicKey)
+	if err != nil || pinnedKey == (wgtypes.Key{}) ||
+		pinnedKey.String() != policy.LocalWireGuardPublicKey {
+		return errors.New("native helper has invalid provisioned WireGuard identity")
 	}
 	data, err := io.ReadAll(io.LimitReader(input, MaxHelperRequestBytes+1))
 	if err != nil {
@@ -91,7 +97,7 @@ func ExecuteHelper(
 	)
 	switch request.Action {
 	case "apply":
-		if err := verifyNativePrivateKey(request, policy.Authority); err != nil {
+		if err := verifyNativePrivateKey(request, policy.Authority, pinnedKey); err != nil {
 			return err
 		}
 		return adapter.Apply(ctx, request.Plan)
@@ -106,26 +112,34 @@ func ExecuteHelper(
 	}
 }
 
-func verifyNativePrivateKey(request HelperRequest, authority Authority) error {
+func verifyNativePrivateKey(request HelperRequest, authority Authority, pinned wgtypes.Key) error {
 	if request.Plan.Revoked {
 		if request.PrivateKey != "" {
 			return errors.New("revoked native plan cannot carry a private key")
 		}
+
 		return nil
 	}
+
 	key, err := wgtypes.ParseKey(request.PrivateKey)
 	if err != nil {
 		return errors.New("native WireGuard private key is invalid")
 	}
+	if key.PublicKey() != pinned {
+		return errors.New("native WireGuard private key differs from provisioned client")
+	}
+
 	value, err := snapshot.Verify(request.Envelope, authority.Root, authority.NetworkID)
 	if err != nil {
 		return err
 	}
+
 	for _, device := range value.Devices {
 		if device.ID == authority.DeviceID && device.Role == "client" &&
 			device.WireGuardPublicKey == key.PublicKey().String() {
 			return nil
 		}
 	}
+
 	return errors.New("native WireGuard private key does not match the signed client")
 }
