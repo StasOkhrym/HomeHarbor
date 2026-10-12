@@ -71,11 +71,9 @@ func LoadHelperPolicy(path, journalPath string) (policy HelperPolicy, result err
 	bridge, bridgeErr := netip.ParseAddrPort(document.BridgeEndpoint)
 	if document.Version != 1 || document.OwnerUID <= 0 || document.NetworkID == "" ||
 		document.DeviceID == "" || overlayErr != nil || privateErr != nil ||
-		!overlay.IsValid() || !private.IsValid() || overlay.Bits() == 0 ||
-		private.Bits() == 0 || overlay != overlay.Masked() ||
-		private != private.Masked() || overlay.Overlaps(private) ||
-		!withinPrivateScope(overlay, true) || !withinPrivateScope(private, false) ||
-		!validResolverSuffix(document.Suffix) || bridgeErr != nil ||
+		!validNativeBounds(networkplan.Bounds{
+			Overlay: overlay, Private: private, Suffix: document.Suffix,
+		}) || bridgeErr != nil ||
 		!validTunnelScope(TunnelConfig{
 			BridgeEndpoint: bridge, ListenPort: document.WireGuardListenPort,
 		}) {
@@ -94,6 +92,17 @@ func LoadHelperPolicy(path, journalPath string) (policy HelperPolicy, result err
 			BridgeEndpoint: bridge, ListenPort: document.WireGuardListenPort,
 		},
 	}, nil
+}
+
+func validNativeBounds(bounds networkplan.Bounds) bool {
+	return bounds.Overlay.IsValid() && bounds.Private.IsValid() &&
+		bounds.Overlay.Bits() > 0 && bounds.Private.Bits() > 0 &&
+		bounds.Overlay == bounds.Overlay.Masked() &&
+		bounds.Private == bounds.Private.Masked() &&
+		!bounds.Overlay.Overlaps(bounds.Private) &&
+		withinPrivateScope(bounds.Overlay, true) &&
+		withinPrivateScope(bounds.Private, false) &&
+		validResolverSuffix(bounds.Suffix)
 }
 
 func validTunnelScope(tunnel TunnelConfig) bool {
