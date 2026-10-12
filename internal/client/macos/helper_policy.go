@@ -30,6 +30,7 @@ type HelperPolicyDocument struct {
 	NetworkID               string `json:"network_id"`
 	DeviceID                string `json:"device_id"`
 	LocalWireGuardPublicKey string `json:"local_wireguard_public_key"`
+	RelayPeerPublicKey      string `json:"relay_peer_public_key"`
 	Overlay                 string `json:"overlay"`
 	Private                 string `json:"private"`
 	Suffix                  string `json:"suffix"`
@@ -43,11 +44,13 @@ func LoadHelperPolicy(path, journalPath string) (policy HelperPolicy, result err
 	if !filepath.IsAbs(path) || !filepath.IsAbs(journalPath) {
 		return HelperPolicy{}, errors.New("native helper paths must be absolute")
 	}
+
 	store, err := localstate.Open(path)
 	if err != nil {
 		return HelperPolicy{}, fmt.Errorf("open native helper policy: %w", err)
 	}
 	defer func() { result = errors.Join(result, store.Close()) }()
+
 	data, err := store.Read()
 	if err != nil {
 		return HelperPolicy{}, fmt.Errorf("read native helper policy: %w", err)
@@ -55,27 +58,39 @@ func LoadHelperPolicy(path, journalPath string) (policy HelperPolicy, result err
 	if len(data) > maxHelperPolicyBytes {
 		return HelperPolicy{}, errors.New("native helper policy exceeds size bound")
 	}
+
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var document HelperPolicyDocument
+
 	if err := decoder.Decode(&document); err != nil {
 		return HelperPolicy{}, fmt.Errorf("decode native helper policy: %w", err)
 	}
+
 	var trailing any
+
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return HelperPolicy{}, errors.New("native helper policy contains trailing data")
 	}
+
 	root, err := base64.RawURLEncoding.Strict().DecodeString(document.RootPublicKey)
 	if err != nil || len(root) != ed25519.PublicKeySize {
 		return HelperPolicy{}, errors.New("native helper policy has invalid root public key")
 	}
+
 	overlay, overlayErr := netip.ParsePrefix(document.Overlay)
+
 	private, privateErr := netip.ParsePrefix(document.Private)
+
 	bridge, bridgeErr := netip.ParseAddrPort(document.BridgeEndpoint)
+
 	localKey, localKeyErr := wgtypes.ParseKey(document.LocalWireGuardPublicKey)
+
+	relayKey, relayKeyErr := wgtypes.ParseKey(document.RelayPeerPublicKey)
 	if document.Version != 1 || document.OwnerUID <= 0 || document.NetworkID == "" ||
 		document.DeviceID == "" || overlayErr != nil || privateErr != nil ||
 		localKeyErr != nil || localKey == (wgtypes.Key{}) ||
+		relayKeyErr != nil || relayKey == (wgtypes.Key{}) || relayKey == localKey ||
 		!validNativeBounds(networkplan.Bounds{
 			Overlay: overlay, Private: private, Suffix: document.Suffix,
 		}) || bridgeErr != nil ||
@@ -84,6 +99,7 @@ func LoadHelperPolicy(path, journalPath string) (policy HelperPolicy, result err
 		}) {
 		return HelperPolicy{}, errors.New("native helper policy has invalid trust bounds")
 	}
+
 	return HelperPolicy{
 		Authority: Authority{
 			Root: ed25519.PublicKey(root), NetworkID: document.NetworkID,
@@ -94,6 +110,7 @@ func LoadHelperPolicy(path, journalPath string) (policy HelperPolicy, result err
 		},
 		OwnerUID: document.OwnerUID, JournalPath: journalPath,
 		LocalWireGuardPublicKey: localKey.String(),
+		RelayPeerPublicKey:      relayKey.String(),
 		Tunnel: TunnelConfig{
 			BridgeEndpoint: bridge, ListenPort: document.WireGuardListenPort,
 		},

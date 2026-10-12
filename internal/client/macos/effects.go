@@ -1,3 +1,5 @@
+//go:build darwin || linux
+
 package macos
 
 import (
@@ -36,13 +38,17 @@ func (nativeCommandRunner) Run(ctx context.Context, path string, args ...string)
 	if path != darwinIfconfig && path != darwinRoute {
 		return "", errors.New("unsupported native executable")
 	}
+
 	command := exec.CommandContext(ctx, path, args...)
+	command.Dir = "/"
 	command.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL=C"}
+
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("native %s operation failed: %w (%s)",
 			filepath.Base(path), err, strings.TrimSpace(string(output[:min(len(output), 4096)])))
 	}
+
 	return string(output), nil
 }
 

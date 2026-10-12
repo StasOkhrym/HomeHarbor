@@ -11,6 +11,6 @@ import (
 // NewCommand creates a fresh client command without starting the node.
 func NewCommand() *cobra.Command {
 	command := nodecmd.NewCommand(nodeapp.Client)
-	command.AddCommand(newJoinCommand())
+	command.AddCommand(newJoinCommand(), newNetworkHelperCommand())
 	return command
 }

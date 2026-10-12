@@ -26,6 +26,7 @@ type HelperPolicy struct {
 	OwnerUID                int
 	JournalPath             string
 	LocalWireGuardPublicKey string
+	RelayPeerPublicKey      string
 	Tunnel                  TunnelConfig
 }
 
