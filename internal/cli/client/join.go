@@ -9,11 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/StasOkhrym/homeharbor/internal/cli/host"
 	"github.com/StasOkhrym/homeharbor/internal/node"
@@ -114,11 +112,11 @@ func runJoin(command *cobra.Command, options joinOptions) (result error) {
 	}
 	scanner := bufio.NewScanner(command.InOrStdin())
 	scanner.Buffer(make([]byte, 4096), 16*1024)
-	link, err := readPrivateLine(scanner, command, "Invitation link")
+	link, err := host.ReadPrivateLine(scanner, command, "Invitation link")
 	if err != nil {
 		return err
 	}
-	code, err := readPrivateLine(scanner, command, "Invitation code")
+	code, err := host.ReadPrivateLine(scanner, command, "Invitation code")
 	if err != nil {
 		return err
 	}
@@ -149,38 +147,6 @@ func runJoin(command *cobra.Command, options joinOptions) (result error) {
 			}
 		},
 	}, &state, store)
-}
-
-func readPrivateLine(scanner *bufio.Scanner, command *cobra.Command, label string) (string, error) {
-	if _, err := fmt.Fprintf(command.ErrOrStderr(), "%s (stdin): ", label); err != nil {
-		return "", err
-	}
-	if input, ok := command.InOrStdin().(*os.File); ok && term.IsTerminal(int(input.Fd())) {
-		private, err := term.ReadPassword(int(input.Fd()))
-		_, _ = fmt.Fprintln(command.ErrOrStderr())
-		if err != nil {
-			return "", fmt.Errorf("read private input: %w", err)
-		}
-		if len(private) > 16*1024 {
-			return "", errors.New("private invitation input is too long")
-		}
-		value := strings.TrimSpace(string(private))
-		if value == "" {
-			return "", errors.New("private invitation input is empty")
-		}
-		return value, nil
-	}
-	if !scanner.Scan() {
-		if err := scanner.Err(); err != nil {
-			return "", fmt.Errorf("read private input: %w", err)
-		}
-		return "", errors.New("private invitation input is incomplete")
-	}
-	value := strings.TrimSpace(scanner.Text())
-	if value == "" {
-		return "", errors.New("private invitation input is empty")
-	}
-	return value, nil
 }
 
 // The fingerprint binds both the public signing root and the selected network

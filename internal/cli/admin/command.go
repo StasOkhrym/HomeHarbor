@@ -2,6 +2,7 @@
 package admin
 
 import (
+	"bufio"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -21,7 +22,7 @@ import (
 
 type options struct {
 	config, key, passphraseFile, endpoint, caFile, keyID string
-	manifest, network, profile, baseURL, invite, code    string
+	manifest, network, profile, baseURL, invite          string
 	overlayPool, device                                  string
 	ttl                                                  time.Duration
 }
@@ -266,31 +267,45 @@ func newApprove() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if o.invite == "" || o.code == "" {
-				return errors.New("invite and code are required")
+			if strings.TrimSpace(o.invite) == "" {
+				return errors.New("invite is required")
 			}
+
+			scanner := bufio.NewScanner(cmd.InOrStdin())
+			scanner.Buffer(make([]byte, 4096), 16*1024)
+
+			code, err := host.ReadPrivateLine(scanner, cmd, "Invitation code")
+			if err != nil {
+				return err
+			}
+
 			attempts, err := companion.NewFileInviteAttemptStore(cfg.InviteAttemptsFile)
 			if err != nil {
 				return err
 			}
+
 			session, err := unlockSession(o.key, o.passphraseFile)
 			if err != nil {
 				return err
 			}
+
 			root, err := session.PrivateKey()
 			if err != nil {
 				return err
 			}
+
 			approver, closeClient, err := remoteApprover(*o)
 			if err != nil {
 				return err
 			}
 			defer closeClient()
+
 			approver.Attempts = attempts
+
 			return approver.Approve(
 				cmd.Context(),
 				o.invite,
-				strings.TrimSpace(o.code),
+				code,
 				root,
 			)
 		},
@@ -298,7 +313,6 @@ func newApprove() *cobra.Command {
 	common(cmd, o)
 	remote(cmd, o)
 	cmd.Flags().StringVar(&o.invite, "invite", "", "pending invite ID")
-	cmd.Flags().StringVar(&o.code, "code", "", "short code received separately")
 	return cmd
 }
 

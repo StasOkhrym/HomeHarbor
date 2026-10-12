@@ -26,6 +26,36 @@ func TestAdminRemoteAcceptsExplicitCAFlag(t *testing.T) {
 	}
 }
 
+func TestApproveReadsCodePrivatelyAndRejectsSecretFlag(t *testing.T) {
+	root := NewCommand()
+
+	root.SetIn(strings.NewReader("secret-code\n"))
+	var out, errOut bytes.Buffer
+
+	status := host.Execute(context.Background(), []string{
+		"approve", "--invite", "invite-1",
+	}, &out, &errOut, root)
+
+	if status != 1 || !strings.Contains(errOut.String(), "invite attempt state") {
+		t.Fatalf("status=%d stderr=%q", status, errOut.String())
+	}
+	if strings.Contains(out.String()+errOut.String(), "secret-code") {
+		t.Fatal("approval code appeared in command output")
+	}
+
+	root = NewCommand()
+
+	out.Reset()
+	errOut.Reset()
+	status = host.Execute(context.Background(), []string{
+		"approve", "--invite", "invite-1", "--code", "secret-code",
+	}, &out, &errOut, root)
+
+	if status != 2 || !strings.Contains(errOut.String(), "unknown flag") {
+		t.Fatalf("secret flag accepted: status=%d stderr=%q", status, errOut.String())
+	}
+}
+
 func TestAdminRemoteUsesOnlyExplicitCA(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
