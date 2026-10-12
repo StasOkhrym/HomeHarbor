@@ -16,6 +16,7 @@ secrets/
 config/control.toml
 config/relay.toml
 .local/
+.sandbox/
 __pycache__/
 *.py[cod]
 .venv/

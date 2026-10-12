@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ const UDPPairProtocol = "udp_pair"
 type UDPPairConfig struct {
 	ListenIP          net.IP
 	AdvertiseHost     string
+	AdvertiseHosts    map[string]string
 	PortMin           int
 	PortMax           int
 	BindTimeout       time.Duration
@@ -95,24 +97,31 @@ func NewUDPPair(tickets TicketIssuer, cfg UDPPairConfig) (*UDPPair, error) {
 		(cfg.PortMin == 0) != (cfg.PortMax == 0) {
 		return nil, errors.New("invalid UDP pair port range")
 	}
+
 	if cfg.BindTimeout == 0 {
 		cfg.BindTimeout = 10 * time.Second
 	}
+
 	if cfg.IdleTimeout == 0 {
 		cfg.IdleTimeout = 2 * time.Minute
 	}
+
 	if cfg.MaxPeers == 0 {
 		cfg.MaxPeers = 4096
 	}
+
 	if cfg.MaxPeersPerDevice == 0 {
 		cfg.MaxPeersPerDevice = 8
 	}
+
 	if cfg.MaxDatagramBytes == 0 {
 		cfg.MaxDatagramBytes = 65507
 	}
+
 	if cfg.MaxAdmissions == 0 {
 		cfg.MaxAdmissions = cfg.MaxPeers * 4
 	}
+
 	if cfg.BindTimeout < 0 || cfg.IdleTimeout < 0 || cfg.MaxPeers < 1 ||
 		cfg.MaxPeersPerDevice < 1 ||
 		cfg.MaxAdmissions < 1 ||
@@ -120,8 +129,20 @@ func NewUDPPair(tickets TicketIssuer, cfg UDPPairConfig) (*UDPPair, error) {
 		cfg.MaxDatagramBytes > 65507 {
 		return nil, errors.New("invalid UDP pair resource limits")
 	}
+	if len(cfg.AdvertiseHosts) != 0 && cfg.AdvertiseHost != "" {
+		return nil, errors.New("choose either fixed or per-control-host UDP advertisement")
+	}
+
+	for controlHost, udpHost := range cfg.AdvertiseHosts {
+		if !validOfferHost(controlHost) || controlHost != strings.ToLower(controlHost) ||
+			!validOfferHost(udpHost) {
+			return nil, errors.New("invalid per-control-host UDP advertisement")
+		}
+	}
+
 	cfg.ListenIP = append(net.IP(nil), cfg.ListenIP...)
 	cfg.AllowedOrigins = append([]string(nil), cfg.AllowedOrigins...)
+	cfg.AdvertiseHosts = cloneAdvertiseHosts(cfg.AdvertiseHosts)
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &UDPPair{
 		cfg:     cfg,
@@ -132,7 +153,76 @@ func NewUDPPair(tickets TicketIssuer, cfg UDPPairConfig) (*UDPPair, error) {
 		all:     make(map[*peer]struct{}),
 		used:    make(map[[32]byte]int64),
 	}
+
 	return r, nil
+}
+
+func cloneAdvertiseHosts(source map[string]string) map[string]string {
+	if len(source) == 0 {
+		return nil
+	}
+
+	copy := make(map[string]string, len(source))
+	for key, value := range source {
+		copy[key] = value
+	}
+
+	return copy
+}
+
+func validOfferHost(host string) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return true
+	}
+
+	if host == "" || len(host) > 253 {
+		return false
+	}
+
+	for label := range strings.SplitSeq(host, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+
+		for _, char := range label {
+			switch {
+			case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z',
+				char >= '0' && char <= '9', char == '-':
+			default:
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func (r *UDPPair) offerHost(requestHost string) (string, error) {
+	if len(r.cfg.AdvertiseHosts) != 0 {
+		requested := requestHost
+		if host, _, err := net.SplitHostPort(requestHost); err == nil {
+			requested = host
+		}
+
+		mapped, ok := r.cfg.AdvertiseHosts[strings.ToLower(strings.TrimSuffix(requested, "."))]
+		if !ok {
+			return "", errors.New("unknown relay control host")
+		}
+
+		return mapped, nil
+	}
+	if r.cfg.AdvertiseHost != "" {
+		return r.cfg.AdvertiseHost, nil
+	}
+	if r.cfg.ListenIP != nil && !r.cfg.ListenIP.IsUnspecified() {
+		return r.cfg.ListenIP.String(), nil
+	}
+
+	if host, _, err := net.SplitHostPort(requestHost); err == nil {
+		return host, nil
+	}
+
+	return requestHost, nil
 }
 
 func (r *UDPPair) Close() error {
@@ -205,6 +295,7 @@ func (r *UDPPair) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "TLS relay control required", http.StatusUpgradeRequired)
 		return
 	}
+
 	token := relayTicketFromRequest(req)
 	claims, err := r.tickets.Verify(token)
 	if err != nil || claims.TicketID == "" || claims.DestinationDeviceID == "" ||
@@ -212,6 +303,13 @@ func (r *UDPPair) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "invalid peer admission ticket", http.StatusUnauthorized)
 		return
 	}
+
+	host, err := r.offerHost(req.Host)
+	if err != nil {
+		http.Error(w, "unknown relay control host", http.StatusMisdirectedRequest)
+		return
+	}
+
 	// Add under the same lock that guards Close, so Wait cannot race Add.
 	r.mu.Lock()
 	if r.closed {
@@ -219,9 +317,11 @@ func (r *UDPPair) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "relay stopped", http.StatusServiceUnavailable)
 		return
 	}
+
 	r.wg.Add(1)
 	r.mu.Unlock()
 	defer r.wg.Done()
+
 	p, status, err := r.reserve(claims, token)
 	if err != nil {
 		http.Error(w, "relay admission rejected", status)
@@ -232,8 +332,10 @@ func (r *UDPPair) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if !p.bound {
 			r.removeLocked(p)
 		}
+
 		r.mu.Unlock()
 	}()
+
 	c, err := websocket.Accept(
 		w,
 		req,
@@ -246,22 +348,14 @@ func (r *UDPPair) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer func() { _ = c.CloseNow() }()
+
 	c.SetReadLimit(2048)
 	ctx, cancel := context.WithDeadline(r.ctx, p.deadline)
 	defer cancel()
+
 	stop := context.AfterFunc(req.Context(), cancel)
 	defer stop()
-	host := r.cfg.AdvertiseHost
-	if host == "" {
-		if r.cfg.ListenIP != nil && !r.cfg.ListenIP.IsUnspecified() {
-			host = r.cfg.ListenIP.String()
-		} else {
-			host, _, err = net.SplitHostPort(req.Host)
-			if err != nil {
-				host = req.Host
-			}
-		}
-	}
+
 	address := net.JoinHostPort(host, strconv.Itoa(p.udp.LocalAddr().(*net.UDPAddr).Port))
 	offer := UDPPairMessage{
 		Protocol:            UDPPairProtocol,
@@ -275,13 +369,17 @@ func (r *UDPPair) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if err := wsjson.Write(ctx, c, offer); err != nil {
 		return
 	}
+
 	var confirm UDPPairMessage
+
 	if err := wsjson.Read(ctx, c, &confirm); err != nil {
 		return
 	}
+
 	if _, err := r.tickets.Verify(token); err != nil {
 		return
 	}
+
 	r.mu.Lock()
 	_, alive := r.all[p]
 	valid := alive && !r.closed && time.Now().Before(p.deadline) && p.candidate != nil &&
@@ -292,6 +390,7 @@ func (r *UDPPair) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.mu.Unlock()
 		return
 	}
+
 	active := p
 	if old := r.peers[p.key]; old != nil {
 		// Preserve the established ingress across an ambiguous WSS response.
@@ -303,6 +402,7 @@ func (r *UDPPair) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	} else {
 		r.peers[p.key] = p
 	}
+
 	active.endpoint = cloneUDPAddr(p.candidate)
 	active.bound = true
 	active.lastSeen = time.Now()

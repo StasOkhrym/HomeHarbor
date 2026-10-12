@@ -104,21 +104,26 @@ func runRelay(
 	app, err := relayapp.NewWithOptions(cfg, logger, relayapp.Options{
 		TLSConfig: tlsConfig,
 		UDPPair: relayruntime.UDPPairConfig{
-			PortMin:       cfg.Server.UDPPortMin,
-			PortMax:       cfg.Server.UDPPortMax,
-			AdvertiseHost: cfg.Server.UDPAdvertiseHost,
+			PortMin:        cfg.Server.UDPPortMin,
+			PortMax:        cfg.Server.UDPPortMax,
+			AdvertiseHost:  cfg.Server.UDPAdvertiseHost,
+			AdvertiseHosts: cfg.Server.UDPAdvertiseHosts,
 		},
 	})
 	if err != nil {
 		return fmt.Errorf("configure relay: %w", err)
 	}
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	logger.Info("relay starting", "address", cfg.Server.ListenAddress)
+
 	if err := app.Run(ctx); err != nil {
 		return fmt.Errorf("serve relay: %w", err)
 	}
+
 	return ctx.Err()
 }
 

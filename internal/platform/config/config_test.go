@@ -322,6 +322,7 @@ func TestLoadAgentAppliesSafeDefaults(t *testing.T) {
 func TestLoadAdminDefersPassphraseFileUntilFlagsSelected(t *testing.T) {
 	dir := t.TempDir()
 	passphrasePath := filepath.Join(dir, "root-passphrase")
+
 	if err := os.WriteFile(
 		passphrasePath,
 		[]byte("correct horse battery staple\n"),
@@ -329,8 +330,10 @@ func TestLoadAdminDefersPassphraseFileUntilFlagsSelected(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	configPath := filepath.Join(dir, "admin.toml")
 	content := `endpoint = "https://control.example"
+ca_file = "state/control-ca.pem"
 key_id = "root-2026"
 root_key_file = "state/root-key.age"
 passphrase_file = "` + passphrasePath + `"
@@ -339,14 +342,18 @@ profile_id = "family"
 base_url = "https://control.example/invite"
 overlay_pool = "10.200.0.0/24"
 `
+
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	cfg, err := LoadAdmin(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if cfg.Endpoint != "https://control.example" || cfg.KeyID != "root-2026" ||
+		cfg.CAFile != "state/control-ca.pem" ||
 		cfg.PassphraseFile != passphrasePath ||
 		cfg.OverlayPool != "10.200.0.0/24" {
 		t.Fatalf("unexpected admin config: %#v", cfg)

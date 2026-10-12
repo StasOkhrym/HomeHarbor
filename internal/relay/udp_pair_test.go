@@ -130,6 +130,42 @@ func (f *pairFixture) offer(t *testing.T, ticket string) (*websocket.Conn, UDPPa
 	return c, offer
 }
 
+func TestUDPPairAdvertisesMappedUDPHostForControlAudience(t *testing.T) {
+	f := newPairFixture(t, UDPPairConfig{
+		AdvertiseHosts: map[string]string{"127.0.0.1": "relay-underlay.sandbox"},
+	})
+
+	_, offer := f.offer(t, f.ticket(t, "session", "device", "peer"))
+
+	host, _, err := net.SplitHostPort(offer.UDPAddress)
+
+	if err != nil || host != "relay-underlay.sandbox" {
+		t.Fatalf("UDP offer address=%q, err=%v", offer.UDPAddress, err)
+	}
+}
+
+func TestUDPPairRejectsUnknownOrInvalidAdvertiseHost(t *testing.T) {
+	f := newPairFixture(t, UDPPairConfig{
+		AdvertiseHosts: map[string]string{"relay.sandbox": "relay"},
+	})
+	header := http.Header{"Authorization": {"Bearer " + f.ticket(t, "session", "device", "peer")}}
+
+	_, response, err := websocket.Dial(
+		f.ctx, "wss"+strings.TrimPrefix(f.s.URL, "https"),
+		&websocket.DialOptions{HTTPClient: f.s.Client(), HTTPHeader: header},
+	)
+
+	if err == nil || response == nil || response.StatusCode != http.StatusMisdirectedRequest {
+		t.Fatalf("unknown control host accepted: response=%v error=%v", response, err)
+	}
+
+	if _, err := NewUDPPair(f.i, UDPPairConfig{
+		AdvertiseHosts: map[string]string{"relay.sandbox": "relay:52000"},
+	}); err == nil {
+		t.Fatal("UDP offer map accepted a host with a port")
+	}
+}
+
 func probePair(t *testing.T, u *net.UDPConn, offer UDPPairMessage) (string, *net.UDPAddr) {
 	t.Helper()
 

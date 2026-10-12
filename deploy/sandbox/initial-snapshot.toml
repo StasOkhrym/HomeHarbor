@@ -1,0 +1,60 @@
+# Companion fills the gateway public keys after gateway enrollment, then signs
+# this exact initial state. The site exists on Docker's private network but no
+# client receives access until the companion adds explicit signed ACLs.
+network_id = "sandbox-network"
+
+[[devices]]
+id = "gateway-1"
+role = "gateway"
+identity_public_key = "REPLACE_WITH_GATEWAY_IDENTITY_PUBLIC_KEY"
+wireguard_public_key = "REPLACE_WITH_GATEWAY_WIREGUARD_PUBLIC_KEY"
+overlay_address = "10.200.0.2/32"
+
+[[gateways]]
+device_id = "gateway-1"
+name = "Sandbox gateway"
+
+[[routes]]
+id = "sandbox-private"
+gateway_id = "gateway-1"
+prefix = "172.29.50.0/24"
+resolver = "172.29.50.53"
+domain_suffix = "sandbox.home.arpa"
+
+[[services]]
+id = "sandbox-site"
+name = "Private sandbox site"
+kind = "web"
+url = "http://site.sandbox.home.arpa:8080"
+description = "Manual native client packet-path fixture"
+
+[[profiles]]
+id = "sandbox"
+name = "Sandbox"
+device_ids = ["gateway-1"]
+service_ids = ["sandbox-site"]
+acl_rule_ids = ["sandbox-dns-udp", "sandbox-dns-tcp", "sandbox-site-web"]
+
+[[acl]]
+id = "sandbox-dns-udp"
+source_device_id = "gateway-1"
+destination = "172.29.50.53/32"
+protocol = "udp"
+port_from = 53
+port_to = 53
+
+[[acl]]
+id = "sandbox-dns-tcp"
+source_device_id = "gateway-1"
+destination = "172.29.50.53/32"
+protocol = "tcp"
+port_from = 53
+port_to = 53
+
+[[acl]]
+id = "sandbox-site-web"
+source_device_id = "gateway-1"
+destination = "172.29.50.80/32"
+protocol = "tcp"
+port_from = 8080
+port_to = 8080

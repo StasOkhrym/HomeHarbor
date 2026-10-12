@@ -80,6 +80,70 @@ func TestRelayAdmissionReadsCurrentLease(t *testing.T) {
 	}
 }
 
+func TestRelayAdmissionKeepsConfiguredAudienceEndpoint(t *testing.T) {
+	requests := make(chan struct{}, 1)
+	relay := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case requests <- struct{}{}:
+		default:
+		}
+
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer relay.Close()
+
+	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(node.RelaySession{
+			Ticket:              "ticket",
+			SessionID:           "session",
+			DestinationDeviceID: "destination",
+			RelayURL:            "wss://host-only.invalid/relay/udp",
+			RelayTransport:      protocol.CapabilityUDPPair,
+		})
+	}))
+	defer control.Close()
+
+	cfg := config.DefaultClient()
+	cfg.Identity.ControlURL = control.URL
+	cfg.Relay.WebSocketURL = strings.Replace(relay.URL, "https://", "wss://", 1) + "/relay/udp"
+	cfg.Relay.SessionID = "session"
+	cfg.Relay.DestinationDevice = "destination"
+	source := &leaseValue{value: protocol.CredentialLease{
+		DeviceID: "device", Credential: "credential", ExpiresAt: time.Now().Add(time.Minute),
+	}}
+
+	component, err := prepareRelay(
+		context.Background(),
+		cfg,
+		node.State{DeviceID: "device"},
+		source,
+		nil,
+		nil,
+		nil,
+		relay.Client(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	finished := make(chan error, 1)
+	go func() { finished <- component.Run(ctx) }()
+	select {
+	case <-requests:
+	case err := <-finished:
+		t.Fatalf("relay bridge exited without dialing its configured audience endpoint: %v", err)
+	case <-ctx.Done():
+		t.Fatal("relay bridge did not dial its configured audience endpoint")
+	}
+
+	cancel()
+	<-finished
+}
+
 func TestRelayAdmissionUsesExplicitControlCA(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)

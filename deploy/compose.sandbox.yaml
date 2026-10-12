@@ -1,0 +1,154 @@
+name: homeharbor-sandbox
+
+services:
+  db:
+    extends: { file: compose.yaml, service: db }
+    networks: [backend]
+    volumes: [sandbox-postgres:/var/lib/postgresql/data]
+  redis:
+    extends: { file: compose.yaml, service: redis }
+    networks: [backend]
+  migrate:
+    extends: { file: compose.yaml, service: migrate }
+    networks: [backend]
+  control:
+    extends: { file: compose.yaml, service: control }
+    networks: [backend]
+  relay:
+    extends: { file: compose.yaml, service: relay }
+    networks:
+      backend:
+      underlay:
+        ipv4_address: ${SANDBOX_RELAY_UNDERLAY_IP:-172.28.40.20}
+    ports: ["127.0.0.1:52000-52015:52000-52015/udp"]
+  proxy:
+    image: traefik:v3.7.13
+    user: "${RUNTIME_UID:-65532}:${RUNTIME_GID:-65532}"
+    command: ["--configFile=/etc/traefik/traefik.toml"]
+    ports: ["127.0.0.1:${SANDBOX_HTTPS_PORT:-8443}:8443"]
+    networks:
+      backend:
+        ipv4_address: ${SANDBOX_PROXY_BACKEND_IP:-172.30.60.10}
+      underlay:
+        ipv4_address: ${SANDBOX_PROXY_UNDERLAY_IP:-172.28.40.10}
+        aliases: [control.sandbox, relay.sandbox]
+    configs:
+      - source: sandbox_proxy_config
+        target: /etc/traefik/traefik.toml
+      - source: sandbox_proxy_routes
+        target: /etc/traefik/dynamic/routes.toml
+    secrets: [relay_tls_ca, frontend_tls_cert, frontend_tls_key]
+    depends_on:
+      control: { condition: service_healthy }
+      relay: { condition: service_healthy }
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping", "--ping.entrypoint=websecure"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  gateway:
+    profiles: [native-client]
+    build:
+      context: ..
+      dockerfile: deploy/sandbox/Dockerfile.gateway
+    command: ["/etc/homeharbor/gateway.toml"]
+    networks:
+      underlay:
+        ipv4_address: ${SANDBOX_UNDERLAY_IP:-172.28.40.2}
+      private:
+        ipv4_address: ${SANDBOX_PRIVATE_GATEWAY_IP:-172.29.50.2}
+    configs:
+      - source: gateway_config
+        target: /etc/homeharbor/gateway.toml
+    secrets: [root_public_key, relay_tls_ca]
+    environment:
+      SSL_CERT_FILE: /run/secrets/relay_tls_ca
+      SANDBOX_UNDERLAY_IP: ${SANDBOX_UNDERLAY_IP:-172.28.40.2}
+      SANDBOX_PRIVATE_GATEWAY_IP: ${SANDBOX_PRIVATE_GATEWAY_IP:-172.29.50.2}
+    volumes: [sandbox-gateway-state:/var/lib/homeharbor]
+    cap_add: [NET_ADMIN]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    sysctls: [net.ipv4.ip_forward=1]
+    depends_on:
+      proxy: { condition: service_healthy }
+    init: true
+  dns:
+    build:
+      context: ..
+      dockerfile: deploy/sandbox/Dockerfile.fixture
+      target: dns
+    command:
+      - sh
+      - -ec
+      - >-
+        ip route replace ${SANDBOX_OVERLAY_SUBNET:-10.200.0.0/24}
+        via ${SANDBOX_PRIVATE_GATEWAY_IP:-172.29.50.2} &&
+        exec dnsmasq --no-daemon --conf-file=/etc/dnsmasq.conf
+        --listen-address=${SANDBOX_DNS_IP:-172.29.50.53}
+        --address=/site.sandbox.home.arpa/${SANDBOX_SITE_IP:-172.29.50.80}
+    networks:
+      private:
+        ipv4_address: ${SANDBOX_DNS_IP:-172.29.50.53}
+    cap_add: [NET_ADMIN]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  site:
+    build:
+      context: ..
+      dockerfile: deploy/sandbox/Dockerfile.fixture
+      target: site
+    command:
+      - sh
+      - -ec
+      - >-
+        ip route replace ${SANDBOX_OVERLAY_SUBNET:-10.200.0.0/24}
+        via ${SANDBOX_PRIVATE_GATEWAY_IP:-172.29.50.2} &&
+        exec httpd -f -p 8080 -h /site
+    networks:
+      private:
+        ipv4_address: ${SANDBOX_SITE_IP:-172.29.50.80}
+    cap_add: [NET_ADMIN]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+networks:
+  backend:
+    internal: true
+    ipam:
+      config: [{ subnet: "${SANDBOX_BACKEND_SUBNET:-172.30.60.0/24}" }]
+  underlay:
+    ipam:
+      config: [{ subnet: "${SANDBOX_UNDERLAY_SUBNET:-172.28.40.0/24}" }]
+  private:
+    internal: true
+    ipam:
+      config: [{ subnet: "${SANDBOX_PRIVATE_SUBNET:-172.29.50.0/24}" }]
+
+configs:
+  control_config: { file: ../.sandbox/control.toml }
+  relay_config: { file: ../.sandbox/relay.toml }
+  gateway_config: { file: ../.sandbox/gateway.toml }
+  sandbox_proxy_config: { file: ./traefik/local.toml }
+  sandbox_proxy_routes: { file: ./sandbox/routes.toml }
+
+secrets:
+  postgres_password: { file: ../.sandbox/secrets/postgres_password }
+  redis_password: { file: ../.sandbox/secrets/redis_password }
+  relay_ticket_key: { file: ../.sandbox/secrets/relay_ticket_key }
+  session_signing_key: { file: ../.sandbox/secrets/session_signing_key }
+  ceremony_encryption_key: { file: ../.sandbox/secrets/ceremony_encryption_key }
+  root_public_key: { file: ../.sandbox/secrets/root_public_key }
+  relay_tls_cert: { file: ../.sandbox/secrets/relay_tls_cert }
+  relay_tls_key: { file: ../.sandbox/secrets/relay_tls_key }
+  relay_tls_ca: { file: ../.sandbox/secrets/relay_tls_ca }
+  frontend_tls_cert: { file: ../.sandbox/secrets/frontend_tls_cert }
+  frontend_tls_key: { file: ../.sandbox/secrets/frontend_tls_key }
+
+volumes:
+  sandbox-postgres:
+  sandbox-gateway-state:

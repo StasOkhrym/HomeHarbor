@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -15,13 +16,14 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/cli/host"
 	"github.com/StasOkhrym/homeharbor/internal/companion"
 	platformconfig "github.com/StasOkhrym/homeharbor/internal/platform/config"
+	"github.com/StasOkhrym/homeharbor/internal/platform/trust"
 )
 
 type options struct {
-	config, key, passphraseFile, endpoint, keyID      string
-	manifest, network, profile, baseURL, invite, code string
-	overlayPool, device                               string
-	ttl                                               time.Duration
+	config, key, passphraseFile, endpoint, caFile, keyID string
+	manifest, network, profile, baseURL, invite, code    string
+	overlayPool, device                                  string
+	ttl                                                  time.Duration
 }
 
 // NewCommand constructs a fresh tree. It does no file, key or network I/O.
@@ -50,6 +52,28 @@ func common(cmd *cobra.Command, o *options) {
 
 func remote(cmd *cobra.Command, o *options) {
 	cmd.Flags().StringVar(&o.endpoint, "endpoint", "https://control.example", "control plane URL")
+	cmd.Flags().StringVar(&o.caFile, "ca-file", "", "explicit PEM CA for the control endpoint")
+}
+
+func remoteApprover(o options) (companion.RemoteApprover, func(), error) {
+	a := companion.RemoteApprover{Endpoint: o.endpoint, KeyID: o.keyID}
+	if o.caFile == "" {
+		return a, func() {}, nil
+	}
+
+	endpoint, err := url.Parse(o.endpoint)
+	if err != nil || endpoint.Scheme != "https" || endpoint.Hostname() == "" {
+		return a, nil, errors.New("explicit CA requires an HTTPS control endpoint")
+	}
+
+	client, err := trust.NewHTTPClientFromCAFile(o.caFile)
+	if err != nil {
+		return a, nil, err
+	}
+
+	a.Client = client
+
+	return a, client.CloseIdleConnections, nil
 }
 
 func keyID(cmd *cobra.Command, o *options) {
@@ -62,16 +86,20 @@ func resolve(cmd *cobra.Command, o *options) (platformconfig.Admin, error) {
 	if err := cmd.Context().Err(); err != nil {
 		return platformconfig.Admin{}, err
 	}
+
 	if strings.TrimSpace(o.config) == "" {
 		return platformconfig.Admin{}, nil
 	}
+
 	cfg, err := platformconfig.LoadAdmin(o.config)
 	if err != nil {
 		return platformconfig.Admin{}, err
 	}
+
 	applyString(cmd, "key", &o.key, cfg.RootKeyFile)
 	applyString(cmd, "passphrase-file", &o.passphraseFile, cfg.PassphraseFile)
 	applyString(cmd, "endpoint", &o.endpoint, cfg.Endpoint)
+	applyString(cmd, "ca-file", &o.caFile, cfg.CAFile)
 	applyString(cmd, "key-id", &o.keyID, cfg.KeyID)
 	applyString(cmd, "manifest", &o.manifest, cfg.SnapshotManifestFile)
 	applyString(cmd, "network", &o.network, cfg.NetworkID)
@@ -133,37 +161,51 @@ func newInitSnapshot() *cobra.Command {
 			if _, err := resolve(cmd, o); err != nil {
 				return err
 			}
+
 			if strings.TrimSpace(o.manifest) == "" {
 				return errors.New("manifest is required")
 			}
+
 			manifest, err := companion.LoadSnapshotManifest(o.manifest)
 			if err != nil {
 				return err
 			}
+
 			session, err := unlockSession(o.key, o.passphraseFile)
 			if err != nil {
 				return err
 			}
+
 			root, err := session.PrivateKey()
 			if err != nil {
 				return err
 			}
+
 			envelope, err := manifest.SignInitialSnapshot(root, o.keyID)
 			if err != nil {
 				return err
 			}
-			if err := (companion.RemoteApprover{Endpoint: o.endpoint}).PublishInitialSnapshot(
+
+			approver, closeClient, err := remoteApprover(*o)
+			if err != nil {
+				return err
+			}
+			defer closeClient()
+
+			if err := approver.PublishInitialSnapshot(
 				cmd.Context(),
 				envelope,
 			); err != nil {
 				return err
 			}
+
 			_, err = fmt.Fprintf(
 				cmd.OutOrStdout(),
 				"initial snapshot published: network=%s revision=1 hash=%s\n",
 				manifest.NetworkID,
 				base64.RawURLEncoding.EncodeToString(envelope.Hash),
 			)
+
 			return err
 		},
 	}
@@ -239,7 +281,13 @@ func newApprove() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return (companion.RemoteApprover{Endpoint: o.endpoint, Attempts: attempts}).Approve(
+			approver, closeClient, err := remoteApprover(*o)
+			if err != nil {
+				return err
+			}
+			defer closeClient()
+			approver.Attempts = attempts
+			return approver.Approve(
 				cmd.Context(),
 				o.invite,
 				strings.TrimSpace(o.code),
@@ -262,22 +310,35 @@ func newPublishSnapshot() *cobra.Command {
 			if _, err := resolve(cmd, o); err != nil {
 				return err
 			}
+
 			if o.invite == "" || o.overlayPool == "" {
 				return errors.New("invite and overlay-pool are required")
 			}
+
 			pool, err := netip.ParsePrefix(o.overlayPool)
 			if err != nil {
 				return fmt.Errorf("parse overlay-pool: %w", err)
 			}
+
 			session, err := unlockSession(o.key, o.passphraseFile)
 			if err != nil {
 				return err
 			}
+
 			root, err := session.PrivateKey()
 			if err != nil {
 				return err
 			}
-			return (companion.RemoteApprover{Endpoint: o.endpoint, KeyID: o.keyID, OverlayPool: pool}).PublishSnapshot(
+
+			approver, closeClient, err := remoteApprover(*o)
+			if err != nil {
+				return err
+			}
+			defer closeClient()
+
+			approver.OverlayPool = pool
+
+			return approver.PublishSnapshot(
 				cmd.Context(),
 				strings.TrimSpace(o.invite),
 				root,
@@ -301,18 +362,28 @@ func newRevokeDevice() *cobra.Command {
 			if _, err := resolve(cmd, o); err != nil {
 				return err
 			}
+
 			if strings.TrimSpace(o.device) == "" {
 				return errors.New("device is required")
 			}
+
 			session, err := unlockSession(o.key, o.passphraseFile)
 			if err != nil {
 				return err
 			}
+
 			root, err := session.PrivateKey()
 			if err != nil {
 				return err
 			}
-			return (companion.RemoteApprover{Endpoint: o.endpoint, KeyID: o.keyID}).PublishDeviceRemoval(
+
+			approver, closeClient, err := remoteApprover(*o)
+			if err != nil {
+				return err
+			}
+			defer closeClient()
+
+			return approver.PublishDeviceRemoval(
 				cmd.Context(),
 				strings.TrimSpace(o.device),
 				root,

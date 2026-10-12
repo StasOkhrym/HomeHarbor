@@ -107,11 +107,12 @@ type Observability struct {
 type RelayServer struct {
 	Runtime Runtime `toml:"runtime"`
 	Server  struct {
-		ListenAddress    string `toml:"listen_address"`
-		UDPListenAddress string `toml:"udp_listen_address"`
-		UDPPortMin       int    `toml:"udp_port_min"`
-		UDPPortMax       int    `toml:"udp_port_max"`
-		UDPAdvertiseHost string `toml:"udp_advertise_host"`
+		ListenAddress     string            `toml:"listen_address"`
+		UDPListenAddress  string            `toml:"udp_listen_address"`
+		UDPPortMin        int               `toml:"udp_port_min"`
+		UDPPortMax        int               `toml:"udp_port_max"`
+		UDPAdvertiseHost  string            `toml:"udp_advertise_host"`
+		UDPAdvertiseHosts map[string]string `toml:"udp_advertise_hosts"`
 	} `toml:"server"`
 	Security struct {
 		TicketKey     string `toml:"ticket_key"`
@@ -126,6 +127,7 @@ type RelayServer struct {
 // the passphrase file is opened by the command after changed flags are applied.
 type Admin struct {
 	Endpoint             string `toml:"endpoint"`
+	CAFile               string `toml:"ca_file"`
 	KeyID                string `toml:"key_id"`
 	RootKeyFile          string `toml:"root_key_file"`
 	PassphraseFile       string `toml:"passphrase_file"`

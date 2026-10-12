@@ -282,6 +282,7 @@ func prepareRelay(
 	if cfg.Relay.WebSocketURL == "" && cfg.Relay.Ticket != "" {
 		return nil, errors.New("--relay is required when --relay-ticket is supplied")
 	}
+
 	bridge := node.RelayBridgeConfig{
 		RelayURL:            cfg.Relay.WebSocketURL,
 		Ticket:              cfg.Relay.Ticket,
@@ -304,12 +305,21 @@ func prepareRelay(
 			return session.Ticket, err
 		}
 	}
+
 	if bridge.Ticket == "" {
 		session, err := issueRelaySession(ctx, cfg, state.DeviceID, leases, httpClient)
 		if err != nil {
 			return nil, err
 		}
-		bridge.RelayURL, bridge.Ticket = session.RelayURL, session.Ticket
+
+		// Control returns its public URL, which may be reachable only from the
+		// host. A gateway on the sandbox underlay uses its configured audience
+		// URL while keeping the authenticated ticket from the same session.
+		if bridge.RelayURL == "" {
+			bridge.RelayURL = session.RelayURL
+		}
+
+		bridge.Ticket = session.Ticket
 		bridge.TicketLifetime = time.Duration(session.ExpiresInSeconds) * time.Second
 	}
 
@@ -318,14 +328,17 @@ func prepareRelay(
 			func(ctx context.Context) error { return node.RunRelayBridgeLoop(ctx, bridge, renew) },
 		), nil
 	}
+
 	allowed, err := node.ParsePrefixList(cfg.WireGuard.AllowedPrefixes)
 	if err != nil {
 		return nil, err
 	}
+
 	routes, err := node.ParsePrefixList(cfg.WireGuard.Routes)
 	if err != nil {
 		return nil, err
 	}
+
 	tunnel := node.KernelRelayConfig{
 		RelayBridgeConfig: bridge,
 		InterfaceName:     cfg.WireGuard.InterfaceName,
@@ -338,6 +351,7 @@ func prepareRelay(
 		EndpointUpdater:   peers,
 		PathSelector:      paths,
 	}
+
 	return lifecycle.Func(
 		func(ctx context.Context) error { return node.RunKernelRelayLoop(ctx, tunnel, renew) },
 	), nil

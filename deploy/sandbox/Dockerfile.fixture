@@ -1,0 +1,10 @@
+FROM alpine:3.22 AS base
+RUN apk add --no-cache iproute2
+
+FROM base AS dns
+RUN apk add --no-cache dnsmasq
+COPY deploy/sandbox/dns.conf /etc/dnsmasq.conf
+
+FROM base AS site
+RUN apk add --no-cache busybox-extras
+COPY deploy/sandbox/site/index.html /site/index.html
