@@ -216,10 +216,29 @@ def save_public(flow, filename, output):
     atomic_write(path, (json.dumps(public, sort_keys=True) + "\n").encode())
 
 
-def join(flow):
+def join(flow, trust_fingerprint=None):
     with flow.lock():
         flow.require_owner()
         flow.inventory()
+        # The public fingerprint comes from the operator, never from an implicit
+        # computation over the same local root file. Keep private pipe input
+        # entirely with the production Go command; Python readline can prefetch it.
+        fingerprint = trust_fingerprint
+        if fingerprint is None:
+            fingerprint = os.environ.get("SANDBOX_TRUST_FINGERPRINT") or None
+
+        if fingerprint is None:
+            if not sys.stdin.isatty():
+                raise ValueError("piped join requires an independently trusted --trust-fingerprint")
+
+            fingerprint = input("Trusted out-of-band root/network fingerprint: ")
+
+        fingerprint = fingerprint.strip()
+        if len(fingerprint) != 64 or any(
+            char not in "0123456789abcdefABCDEF" for char in fingerprint
+        ):
+            raise ValueError("trusted fingerprint must be a SHA-256 hex digest")
+
         root = require_file(flow, "root-public.key")
         ca = require_file(flow, "secrets/relay_tls_ca")
         state = flow.sandbox / "client.json"
@@ -228,13 +247,6 @@ def join(flow):
         control = (
             f"https://control.localhost:{flow.environment().get('SANDBOX_HTTPS_PORT', '8443')}"
         )
-        # The trust fingerprint is deliberately supplied by the operator, rather
-        # than computed and silently trusted by this orchestration adapter.
-        fingerprint = input("Trusted out-of-band root/network fingerprint: ").strip()
-        if len(fingerprint) != 64 or any(
-            char not in "0123456789abcdefABCDEF" for char in fingerprint
-        ):
-            raise ValueError("trusted fingerprint must be a SHA-256 hex digest")
         result = run_foreground(
             [
                 str(binary),
@@ -256,8 +268,10 @@ def join(flow):
         )
         if result:
             return result
+
         public = flow.command([str(binary), "identity", "--state", str(state)], timeout=30)
         save_public(flow, "client-public.json", public)
+
     print("Client credential claimed. No native networking applied; next: sandbox-prepare.")
     return 0
 
@@ -332,32 +346,37 @@ def fingerprint(flow):
     return hashlib.sha256(b"homeharbor/network-trust/v1\0" + key + b"sandbox-network").hexdigest()
 
 
-def dispatch(flow, command, action):
+def dispatch(flow, command, action, trust_fingerprint=None):
     if command == "client":
         if action == "join":
-            return join(flow)
+            return join(flow, trust_fingerprint)
         if action in {None, "run"}:
             return run_client(flow)
         if action == "close":
             flow.down()
             return 0
+
         raise ValueError("client action must be join, run or close")
     if command == "gateway":
         return gateway(flow, action)
     if command == "prepare":
         if action not in {None, "fingerprint"}:
             raise ValueError("prepare accepts only the optional fingerprint action")
+
         with flow.lock():
             flow.require_owner()
             flow.inventory()
             if action == "fingerprint":
                 print(fingerprint(flow))
                 return 0
+
             flow.script("sandbox_prepare.py")
+
         print("Public helper policy candidate ready; explicit root-owned provisioning is required.")
         return 0
     if command == "check":
         from sandbox_diagnostics import check
 
         return check(flow, action)
+
     raise ValueError("unknown sandbox action")

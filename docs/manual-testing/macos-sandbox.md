@@ -102,7 +102,29 @@ make sandbox-client ACTION=join
 Supply the trusted fingerprint, then the signed link and separate code at the
 client's hidden prompts. Observe **pending**. The join command applies no host
 tunnel, DNS or routes. Before approving, verify the pending device/public keys
-and intended profile in the operator UI. Using only its non-secret invite ID:
+and intended profile in the operator UI.
+
+For deliberate private piped/file input, supply the **public, independently
+trusted** fingerprint separately so the launcher never reads ahead into the
+private input. The file contains exactly the signed link and separate code on
+two lines and must be mode 0600:
+
+```sh
+make sandbox-client ACTION=join TRUST_FINGERPRINT=PUBLIC_HEX_FINGERPRINT < .sandbox/private-join-input
+# Equivalent explicit CLI, with a public fingerprint argument:
+sh scripts/sandbox.sh client join --trust-fingerprint PUBLIC_HEX_FINGERPRINT < .sandbox/private-join-input
+```
+
+Make exports only `SANDBOX_TRUST_FINGERPRINT`; invite/code remain on stdin and are
+never command arguments or environment values. Without an explicit fingerprint,
+noninteractive join refuses before reading input. Terminal join still prompts
+for the public fingerprint, then delegates hidden private prompts to Go. Delete
+the private input file after a confirmed claim. The production client verifies
+the supplied fingerprint against its root/network; the launcher never computes
+and silently trusts a replacement.
+
+After reviewing the pending device/profile, use only its non-secret invite ID
+for the companion commands:
 
 ```sh
 go run ./cmd/admin approve --config .sandbox/admin.toml --invite INVITE_ID

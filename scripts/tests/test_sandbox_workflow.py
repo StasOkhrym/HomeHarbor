@@ -1,5 +1,6 @@
 """Opt-in workflow contracts. Fake Docker boundary; no host networking effects."""
 
+import base64
 import contextlib
 import importlib
 import io
@@ -570,7 +571,9 @@ class SandboxWorkflowTests(unittest.TestCase):
             code = (
                 "from sandbox_workflow import Workflow; from sandbox_runtime import join; "
                 "from scripts.tests.test_sandbox_workflow import DockerBoundary; "
-                f'raise SystemExit(join(Workflow(__import__("pathlib").Path({temp!r}),uid=501,run=DockerBoundary())))'
+                f'raise SystemExit(join(Workflow(__import__("pathlib").Path({temp!r}),uid=501,run=DockerBoundary()),trust_fingerprint="'
+                + "a" * 64
+                + '"))'
             )
             process = subprocess.Popen(
                 [sys.executable, "-c", code],
@@ -583,15 +586,16 @@ class SandboxWorkflowTests(unittest.TestCase):
                 stderr=subprocess.PIPE,
             )
             pid = None
+
             try:
-                process.stdin.write(b"a" * 64 + b"\n")
-                process.stdin.flush()
                 deadline = time.monotonic() + 5
                 while (
                     not pid_file.exists() and process.poll() is None and time.monotonic() < deadline
                 ):
                     time.sleep(0.02)
+
                 self.assertTrue(pid_file.exists(), "join did not start its child")
+
                 pid = int(pid_file.read_text())
                 process.terminate()
                 # A surviving child retains the output pipes; don't let communicate
@@ -607,7 +611,9 @@ class SandboxWorkflowTests(unittest.TestCase):
                     ).stdout.strip()
                     if not state or state.startswith("Z"):
                         break
+
                     time.sleep(0.02)
+
                 self.assertFalse(
                     state and not state.startswith("Z"), "owned pending join survived its launcher"
                 )
@@ -619,9 +625,149 @@ class SandboxWorkflowTests(unittest.TestCase):
                         os.kill(pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+
                 if process.poll() is None:
                     process.kill()
+
                 process.communicate(timeout=5)
+
+    def test_piped_join_preserves_private_input_and_exports_only_public_identity(self):
+        with tempfile.TemporaryDirectory() as temp:
+            flow = self.owned(temp)
+            binary = flow.sandbox / "bin/client"
+            binary.parent.mkdir()
+            public = {
+                "device_id": "piped-client",
+                "identity_public_key": base64.urlsafe_b64encode(bytes([1]) * 32)
+                .decode()
+                .rstrip("="),
+                "wireguard_public_key": base64.b64encode(bytes([2]) * 32).decode(),
+            }
+            private_input = "https://example.test/invite#private-link-sentinel\n12345678\n"
+            binary.write_text(
+                f"#!{sys.executable}\nimport json,pathlib,sys\n"
+                f"root=pathlib.Path({str(flow.sandbox)!r})\n"
+                "if sys.argv[1]=='identity':\n"
+                f" print(json.dumps({public!r}))\n"
+                "else:\n"
+                " (root/'received-fingerprint').write_text(sys.argv[sys.argv.index('--trust-fingerprint')+1])\n"
+                f" expected={private_input!r}\n"
+                " actual=sys.stdin.read()\n"
+                " if actual!=expected: sys.exit(9)\n"
+                " (root/'client.json').write_text('private-state-sentinel')\n"
+            )
+            binary.chmod(0o700)
+            (flow.sandbox / "root-public.key").write_text("test-root")
+            (flow.sandbox / "secrets").mkdir()
+            (flow.sandbox / "secrets/relay_tls_ca").write_text("test-ca")
+            code = (
+                "from pathlib import Path; from sandbox_workflow import Workflow; "
+                "from sandbox_runtime import join; "
+                "from scripts.tests.test_sandbox_workflow import DockerBoundary; "
+                f"raise SystemExit(join(Workflow(Path({temp!r}),uid=501,run=DockerBoundary())))"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", code],
+                env={
+                    **os.environ,
+                    "PYTHONPATH": os.pathsep.join((str(ROOT / "scripts"), str(ROOT))),
+                    "SANDBOX_TRUST_FINGERPRINT": "a" * 64,
+                },
+                input=private_input,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+
+            self.assertEqual(
+                result.returncode, 0, "launcher consumed private stdin instead of delegating it"
+            )
+            self.assertEqual(json.loads((flow.sandbox / "client-public.json").read_text()), public)
+            self.assertEqual((flow.sandbox / "client.json").read_text(), "private-state-sentinel")
+            self.assertFalse("private-link-sentinel" in result.stdout + result.stderr)
+            self.assertFalse("12345678" in result.stdout + result.stderr)
+            self.assertEqual((flow.sandbox / "received-fingerprint").read_text(), "a" * 64)
+
+            cli_code = (
+                "from pathlib import Path; import sys,sandbox_workflow as app; "
+                "from scripts.tests.test_sandbox_workflow import DockerBoundary; "
+                "real=app.Workflow; "
+                f"app.Workflow=lambda:real(Path({temp!r}),uid=501,run=DockerBoundary()); "
+                f"sys.argv=['sandbox','client','join','--trust-fingerprint',{'b' * 64!r}]; "
+                "raise SystemExit(app.main())"
+            )
+            explicit = subprocess.run(
+                [sys.executable, "-c", cli_code],
+                env={
+                    **os.environ,
+                    "PYTHONPATH": os.pathsep.join((str(ROOT / "scripts"), str(ROOT))),
+                    "SANDBOX_TRUST_FINGERPRINT": "a" * 64,
+                },
+                input=private_input,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+
+            self.assertEqual(explicit.returncode, 0, "public CLI trust argument was not delegated")
+            self.assertEqual((flow.sandbox / "received-fingerprint").read_text(), "b" * 64)
+
+    def test_public_trust_option_rejected_outside_join_without_state_effects(self):
+        import sandbox_workflow
+
+        with (
+            patch.object(sys, "argv", ["sandbox", "down", "--trust-fingerprint", "a" * 64]),
+            patch.object(
+                sandbox_workflow,
+                "Workflow",
+                side_effect=AssertionError("command constructed an owner"),
+            ),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            with self.assertRaises(SystemExit) as error:
+                sandbox_workflow.main()
+
+        self.assertEqual(error.exception.code, 2)
+
+    def test_noninteractive_join_without_trusted_fingerprint_does_not_read_stdin(self):
+        with tempfile.TemporaryDirectory() as temp:
+            flow = self.owned(temp)
+            (flow.sandbox / "root-public.key").write_text("test-root")
+            (flow.sandbox / "secrets").mkdir()
+            (flow.sandbox / "secrets/relay_tls_ca").write_text("test-ca")
+            binary = flow.sandbox / "bin/client"
+            binary.parent.mkdir()
+            binary.write_text(f"#!{sys.executable}\nraise SystemExit(9)\n")
+            binary.chmod(0o700)
+            code = (
+                "from pathlib import Path; from sandbox_workflow import Workflow; "
+                "from sandbox_runtime import join; import sys; "
+                "from scripts.tests.test_sandbox_workflow import DockerBoundary; "
+                f"flow=Workflow(Path({temp!r}),uid=501,run=DockerBoundary())\n"
+                "try: join(flow)\n"
+                "except ValueError as error:\n"
+                " assert 'fingerprint' in str(error)\n"
+                " assert sys.stdin.read()=='private-link\\n12345678\\n'\n"
+                "else: raise AssertionError('piped join silently trusted a fingerprint')\n"
+            )
+            env = {**os.environ, "PYTHONPATH": os.pathsep.join((str(ROOT / "scripts"), str(ROOT)))}
+            env.pop("SANDBOX_TRUST_FINGERPRINT", None)
+            result = subprocess.run(
+                [sys.executable, "-c", code],
+                env=env,
+                input="private-link\n12345678\n",
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+
+            self.assertEqual(
+                result.returncode, 0, "noninteractive input was read before explicit trust"
+            )
+            self.assertFalse((flow.sandbox / "client.json").exists())
 
 
 if __name__ == "__main__":

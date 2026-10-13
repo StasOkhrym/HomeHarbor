@@ -371,12 +371,17 @@ def dispatch_command():
         choices=("up", "client", "gateway", "prepare", "status", "logs", "check", "down", "reset"),
     )
     parser.add_argument("action", nargs="?")
+    parser.add_argument(
+        "--trust-fingerprint", help="public out-of-band SHA-256 trust fingerprint for client join"
+    )
     args = parser.parse_args()
+    if args.trust_fingerprint is not None and (args.command, args.action) != ("client", "join"):
+        parser.error("--trust-fingerprint is only valid for client join")
     workflow = Workflow()
     if args.command in {"client", "gateway", "prepare", "check"}:
         from sandbox_runtime import dispatch
 
-        return dispatch(workflow, args.command, args.action)
+        return dispatch(workflow, args.command, args.action, args.trust_fingerprint)
     if args.action is not None:
         parser.error("this command takes no extra arguments")
     getattr(workflow, args.command)()

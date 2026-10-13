@@ -10,6 +10,9 @@ export SHFMT_PACKAGE := mvdan.cc/sh/v3/cmd/shfmt@v3.14.1
 export ACTIONLINT_PACKAGE := github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 ACTION ?= run
 CHECK ?= allowed
+ifneq ($(strip $(TRUST_FINGERPRINT)),)
+export SANDBOX_TRUST_FINGERPRINT := $(TRUST_FINGERPRINT)
+endif
 FUZZ_TIME ?= 5s
 SECURITY ?= all
 

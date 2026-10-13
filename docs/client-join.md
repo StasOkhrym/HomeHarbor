@@ -22,4 +22,10 @@ Preparation uses the initialized control HTTPS port. Optional `--wireguard-port`
 
 For the optional one-Mac sandbox, keep this native client outside Docker's private subnet. Follow the [manual macOS sandbox](manual-testing/macos-sandbox.md) for explicit helper provisioning, apply and cleanup. Do not run host network changes as part of routine verification.
 
+Piped `scripts/sandbox.sh client join` requires the independently trusted public
+fingerprint in `--trust-fingerprint` or `SANDBOX_TRUST_FINGERPRINT`; Make accepts
+`TRUST_FINGERPRINT=PUBLIC_HEX`. The launcher leaves the entire private pipe for
+the Go client and refuses noninteractive input without explicit trust. Interactive
+terminal use retains the public fingerprint and hidden private prompts.
+
 After an interrupted native macOS run, stop the remaining client process, then run `client network-close --config native-client.toml`. This recovery command needs the explicitly installed helper and its scoped sudo authorization. It uses the existing identity and public root/network/device binding, works without control connectivity even after credential expiry, and preserves identity and credentials. Missing, corrupt or actively locked client state fails before helper execution. A helper failure retains its root ownership journal for another recovery attempt.
