@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import signal
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -11,8 +12,42 @@ import time
 import tomllib
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def strict_tls_handshake(ca, certificate, key, hostname):
+    """Actual client/server TLS verification in memory, with no listener or trust install."""
+
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_context.load_cert_chain(certificate, key)
+    client_context = ssl.create_default_context(cafile=ca)
+    client_context.verify_flags |= ssl.VERIFY_X509_STRICT
+    incoming = [ssl.MemoryBIO(), ssl.MemoryBIO()]
+    outgoing = [ssl.MemoryBIO(), ssl.MemoryBIO()]
+    endpoints = [
+        server_context.wrap_bio(incoming[0], outgoing[0], server_side=True),
+        client_context.wrap_bio(incoming[1], outgoing[1], server_hostname=hostname),
+    ]
+    completed = [False, False]
+    for _ in range(32):
+        for index, endpoint in enumerate(endpoints):
+            if not completed[index]:
+                try:
+                    endpoint.do_handshake()
+                    completed[index] = True
+                except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
+                    pass
+
+            data = outgoing[index].read()
+            if data:
+                incoming[1 - index].write(data)
+
+        if all(completed):
+            return endpoints[1].getpeercert()
+
+    raise AssertionError("bounded in-memory TLS handshake did not complete")
 
 
 class ToolingTests(unittest.TestCase):
@@ -453,6 +488,139 @@ class ToolingTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([path.read_bytes() for path in paths], before)
+
+    def test_dev_authority_accepts_strict_tls_and_keeps_existing_bytes(self):
+        self.local_state()
+        result = self.run_script("dev-init")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        files = [
+            self.root / "secrets" / name
+            for name in ("relay_tls_ca", "frontend_tls_cert", "frontend_tls_key")
+        ]
+        before = [path.read_bytes() for path in files]
+
+        try:
+            strict_tls_handshake(*files, "control.localhost")
+        except ssl.SSLError as error:
+            self.fail(f"new dev authority fails strict TLS: {error}")
+
+        with self.assertRaises(ssl.SSLCertVerificationError):
+            strict_tls_handshake(*files, "unrelated.localhost")
+
+        result = self.run_script("dev-init")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([path.read_bytes() for path in files], before)
+
+    def test_sandbox_authority_accepts_strict_tls_without_dev_state_changes(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        self.addCleanup(lambda: sys.path.remove(str(ROOT / "scripts")))
+        import sandbox_init
+        from sandbox_preflight import PROFILES
+
+        sandbox = self.root / ".sandbox"
+        secret_dir = sandbox / "secrets"
+        secret_dir.mkdir(parents=True)
+        network = sandbox / "network.env"
+        network.write_text("preflight-test-fixture\n")
+        public = b"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\n"
+        for path, content in [
+            (sandbox / "root-key.age", b"existing-unopened-signing-key"),
+            (sandbox / "root-public.key", public),
+            (sandbox / "root-passphrase", b"existing-test-passphrase"),
+            (secret_dir / "root_public_key", public),
+        ]:
+            path.write_bytes(content)
+        with (
+            patch.object(sandbox_init, "ROOT", self.root),
+            patch.object(sandbox_init, "SANDBOX", sandbox),
+            patch.object(sandbox_init, "NETWORK_FILE", network),
+            patch.object(sandbox_init, "load_profile", return_value=PROFILES[0].environment()),
+        ):
+            sandbox_init.initialize()
+            files = [
+                secret_dir / name
+                for name in ("relay_tls_ca", "frontend_tls_cert", "frontend_tls_key")
+            ]
+            before = [path.read_bytes() for path in files]
+            try:
+                strict_tls_handshake(*files, "control.localhost")
+                strict_tls_handshake(*files, "control.sandbox")
+            except ssl.SSLError as error:
+                self.fail(f"new sandbox authority fails strict TLS: {error}")
+            sandbox_init.initialize()
+            self.assertEqual([path.read_bytes() for path in files], before)
+        self.assertFalse((self.root / "secrets").exists())
+        self.assertFalse((self.root / ".local").exists())
+
+    def test_dev_init_preserves_legacy_authority_without_key_usage(self):
+        local, _ = self.local_state()
+        sys.path.insert(0, str(ROOT / "scripts"))
+        self.addCleanup(lambda: sys.path.remove(str(ROOT / "scripts")))
+        from tls_material import issue
+
+        secret_dir = self.root / "secrets"
+        ca, ca_key = secret_dir / "relay_tls_ca", local / "relay-ca-key.pem"
+        config = self.root / "legacy-ca.cnf"
+        config.write_text(
+            "[req]\ndistinguished_name=dn\nx509_extensions=authority\n"
+            "[dn]\n[authority]\nbasicConstraints=critical,CA:TRUE\n"
+            "subjectKeyIdentifier=hash\n"
+        )
+        result = subprocess.run(
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-days",
+                "3650",
+                "-sha256",
+                "-subj",
+                "/CN=Legacy fixture CA",
+                "-config",
+                str(config),
+                "-keyout",
+                str(ca_key),
+                "-out",
+                str(ca),
+            ],
+            env=self.env,
+            capture_output=True,
+        )
+
+        self.assertEqual(result.returncode, 0, "legacy CA fixture generation failed")
+
+        description = subprocess.check_output(
+            ["openssl", "x509", "-in", str(ca), "-noout", "-text"], env=self.env
+        )
+
+        self.assertNotIn(b"X509v3 Key Usage", description)
+
+        for prefix, names in (
+            ("relay", ["relay", "localhost"]),
+            ("frontend", ["control.localhost", "relay.localhost"]),
+        ):
+            with patch.dict(os.environ, {"PATH": self.env["PATH"]}):
+                cert, key = issue(self.root, prefix, ca, ca_key, names)
+
+            shutil.copyfile(cert, secret_dir / f"{prefix}_tls_cert")
+            shutil.copyfile(key, secret_dir / f"{prefix}_tls_key")
+
+        files = [ca, ca_key] + [
+            secret_dir / f"{prefix}_tls_{part}"
+            for prefix in ("relay", "frontend")
+            for part in ("cert", "key")
+        ]
+        before = [path.read_bytes() for path in files]
+        result = self.run_script("dev-init")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([path.read_bytes() for path in files], before)
 
     def test_dev_init_creates_verified_frontend_tls_without_rotating_ca(self):
         self.local_state()

@@ -8,10 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import tomlkit
-from dev_init import SECRET_BYTES, complete, issue, verify_pair
+from dev_init import SECRET_BYTES, complete
 from sandbox_identity import load_public_identity, validate_public_identity
 from sandbox_pair import stored_pair_documents
 from sandbox_preflight import NETWORK_FILE, PROFILES, load_profile
+from tls_material import issue, issue_authority, verify_pair
 from tooling import ROOT, atomic_write, cli, port, quiet_run, require_commands
 
 SANDBOX = ROOT / ".sandbox"
@@ -230,24 +231,7 @@ def initialize() -> None:
             verify_pair(relay_cert, relay_key, ca, ["relay"])
         else:
             require_commands("openssl")
-            staged_ca, staged_key = temp / "ca", temp / "ca-key"
-            quiet_run(
-                "openssl",
-                "req",
-                "-x509",
-                "-newkey",
-                "rsa:2048",
-                "-nodes",
-                "-days",
-                "3650",
-                "-sha256",
-                "-subj",
-                "/CN=HomeHarbor Sandbox CA",
-                "-keyout",
-                str(staged_key),
-                "-out",
-                str(staged_ca),
-            )
+            staged_ca, staged_key = issue_authority(temp, "HomeHarbor Sandbox CA")
             staged_cert, staged_relay_key = issue(temp, "relay", staged_ca, staged_key, ["relay"])
             for destination, source, mode in (
                 (ca, staged_ca, 0o644),

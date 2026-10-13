@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import tomlkit
+from tls_material import issue, issue_authority, verify_pair
 from tooling import ROOT, atomic_write, cli, port, quiet_run, require_commands
 
 SECRET_BYTES = {
@@ -118,76 +119,13 @@ def complete(paths, label):
     return all(present)
 
 
-def verify_pair(cert, key, ca, names):
-    quiet_run("openssl", "verify", "-CAfile", str(ca), str(cert))
-    cert_public = quiet_run("openssl", "x509", "-in", str(cert), "-pubkey", "-noout")
-    key_public = quiet_run("openssl", "pkey", "-in", str(key), "-pubout")
-    if cert_public != key_public:
-        raise ValueError(f"TLS certificate/key mismatch: {cert.name}; restore the matching pair")
-    description = quiet_run("openssl", "x509", "-in", str(cert), "-noout", "-text").decode()
-    # LibreSSL on macOS lacks verify_hostname. Local certificates use exact SANs.
-    extension = re.search(r"X509v3 Subject Alternative Name:\s*\n\s*([^\n]+)", description)
-    sans = set(re.findall(r"DNS:([^,\s]+)", extension[1])) if extension else set()
-    if not set(names).issubset(sans):
-        raise ValueError(
-            f"TLS domains do not match {cert.name}; restore its matching configuration"
-        )
-
-
-def issue(directory, prefix, ca, ca_key, names):
-    key, cert, csr, ext = [directory / f"{prefix}.{part}" for part in ("key", "cert", "csr", "ext")]
-    quiet_run(
-        "openssl",
-        "req",
-        "-new",
-        "-newkey",
-        "rsa:2048",
-        "-nodes",
-        "-sha256",
-        "-subj",
-        "/CN=" + names[0],
-        "-keyout",
-        str(key),
-        "-out",
-        str(csr),
-    )
-    ext.write_text(
-        "basicConstraints=critical,CA:FALSE\n"
-        "keyUsage=critical,digitalSignature,keyEncipherment\n"
-        "extendedKeyUsage=serverAuth\nsubjectAltName="
-        + ",".join("DNS:" + name for name in names)
-        + "\n"
-    )
-    quiet_run(
-        "openssl",
-        "x509",
-        "-req",
-        "-days",
-        "365",
-        "-sha256",
-        "-in",
-        str(csr),
-        "-CA",
-        str(ca),
-        "-CAkey",
-        str(ca_key),
-        "-set_serial",
-        "0x" + secrets.token_hex(16),
-        "-extfile",
-        str(ext),
-        "-out",
-        str(cert),
-    )
-    verify_pair(cert, key, ca, names)
-    return cert, key
-
-
 def initialize():
     require_commands("openssl")
     control_name = local_domain(os.environ.get("CONTROL_DOMAIN", "control.localhost"))
     relay_name = local_domain(os.environ.get("RELAY_DOMAIN", "relay.localhost"))
     if control_name == relay_name:
         raise ValueError("CONTROL_DOMAIN and RELAY_DOMAIN must differ")
+
     https_port = port(os.environ.get("DEV_HTTPS_PORT", "8443"), "DEV_HTTPS_PORT")
     http_port = port(
         os.environ.get("PROXY_HTTP_PORT", os.environ.get("DEV_HTTP_PORT", "8088")),
@@ -195,6 +133,7 @@ def initialize():
     )
     if http_port == https_port:
         raise ValueError("HTTP and HTTPS ports must differ")
+
     pending = configs(control_name, relay_name, https_port)  # Parse before any writes.
     local, secret_dir = ROOT / ".local", ROOT / "secrets"
     ca, cert, key = [secret_dir / f"relay_tls_{part}" for part in ("ca", "cert", "key")]
@@ -207,6 +146,7 @@ def initialize():
     passphrase = local / "root-passphrase"
     if has_root and (not passphrase.exists() or not passphrase.read_bytes()):
         raise ValueError("Local companion root passphrase missing; restore .local/root-passphrase")
+
     mounted_public = secret_dir / "root_public_key"
     if mounted_public.exists() and (
         not has_root or mounted_public.read_bytes() != root_public.read_bytes()
@@ -214,17 +154,21 @@ def initialize():
         raise ValueError(
             "secrets/root_public_key differs from .local/root-public.key; restore matching trust"
         )
+
     if not has_root:
         require_commands("go")
+
     for name, size in SECRET_BYTES.items():
         path = secret_dir / name
         length = ((size + 2) // 3) * 4
         if path.exists():
             if len(path.read_bytes()) != length:
                 raise ValueError(f"secrets/{name} must contain exactly {length} bytes; restore it")
+
             pending[path] = (path.read_bytes(), 0o600)
         else:
             pending[path] = (base64.b64encode(secrets.token_bytes(size)), 0o600)
+
     # Stage all generated material privately; a command failure publishes nothing.
     with tempfile.TemporaryDirectory(prefix="homeharbor-init-") as scratch:
         temp = Path(scratch)
@@ -235,24 +179,8 @@ def initialize():
                 raise ValueError(
                     "Existing local CA/frontend TLS without relay certificates; restore TLS"
                 )
-            staged_ca, staged_ca_key = temp / "ca", temp / "ca-key"
-            quiet_run(
-                "openssl",
-                "req",
-                "-x509",
-                "-newkey",
-                "rsa:2048",
-                "-nodes",
-                "-days",
-                "3650",
-                "-sha256",
-                "-subj",
-                "/CN=HomeHarbor Local Relay CA",
-                "-keyout",
-                str(staged_ca_key),
-                "-out",
-                str(staged_ca),
-            )
+
+            staged_ca, staged_ca_key = issue_authority(temp, "HomeHarbor Local Relay CA")
             staged_cert, staged_key = issue(
                 temp, "relay", staged_ca, staged_ca_key, ["relay", "localhost"]
             )
@@ -263,7 +191,9 @@ def initialize():
                 (key, staged_key, 0o600),
             ):
                 pending[dest] = (source.read_bytes(), mode)
+
             ca, ca_key = staged_ca, staged_ca_key
+
         if has_frontend:
             verify_pair(frontend_cert, frontend_key, ca, [control_name, relay_name])
         else:
@@ -274,9 +204,11 @@ def initialize():
                 "openssl", "pkey", "-in", str(ca_key), "-pubout"
             ):
                 raise ValueError("Local CA certificate/private key mismatch; restore matching TLS")
+
             new_cert, new_key = issue(temp, "frontend", ca, ca_key, [control_name, relay_name])
             pending[frontend_cert] = (new_cert.read_bytes(), 0o644)
             pending[frontend_key] = (new_key.read_bytes(), 0o600)
+
         if not has_root:
             phrase = (
                 passphrase.read_bytes()
@@ -285,6 +217,7 @@ def initialize():
             )
             if not phrase:
                 raise ValueError("Local root passphrase is empty")
+
             temp_phrase, temp_key = temp / "passphrase", temp / "root-key.age"
             temp_phrase.write_bytes(phrase)
             public = quiet_run(
@@ -299,17 +232,21 @@ def initialize():
             )
             if not public.strip() or not temp_key.is_file() or not temp_key.read_bytes():
                 raise ValueError("Companion root generation produced incomplete keys")
+
             pending[root_key] = (temp_key.read_bytes(), 0o600)
             pending[root_public] = (public, 0o644)
             pending[passphrase] = (phrase, 0o600)
         else:
             public = root_public.read_bytes()
+
         if not mounted_public.exists():
             pending[mounted_public] = (public, 0o644)
+
     routes = tomlkit.parse((ROOT / "deploy/traefik/routes.toml").read_text())
     for name, domain in (("control", control_name), ("relay", relay_name)):
         router = routes["http"]["routers"][name]
         router["rule"] = f"Host(`{domain}`)"
+
     routes["tls"] = {
         "certificates": [
             {
@@ -322,19 +259,23 @@ def initialize():
     snapshot = local / "initial-snapshot.toml"
     if not snapshot.exists():
         pending[snapshot] = ((ROOT / "config/initial-snapshot.example.toml").read_bytes(), 0o600)
+
     # Reusing trust does not mean reusing unsafe filesystem permissions. Stage
     # existing private material too, after validation, without changing bytes.
     for path in (root_key, passphrase, local / "relay-ca-key.pem", key, frontend_key):
         if path.exists() and path not in pending:
             pending[path] = (path.read_bytes(), 0o600)
+
     # Reject all symlink destinations before the first publication.
     for path in pending:
         if path.is_symlink() or any(
             parent.is_symlink() for parent in path.parents if parent != ROOT
         ):
             raise ValueError(f"Refusing to write through symlink: {path}")
+
     for path, (content, mode) in pending.items():
         atomic_write(path, content, mode)
+
     (local / "traefik/state").mkdir(parents=True, exist_ok=True)
     print(f"Local configuration ready: https://{control_name}:{https_port}")
 

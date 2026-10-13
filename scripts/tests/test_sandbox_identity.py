@@ -206,6 +206,7 @@ class SandboxIdentityTests(unittest.TestCase):
                 "sandbox_pair.py",
                 "sandbox_preflight.py",
                 "dev_init.py",
+                "tls_material.py",
                 "tooling.py",
             ):
                 shutil.copy(ROOT / "scripts" / name, scripts / name)
