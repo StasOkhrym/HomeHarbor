@@ -2,8 +2,8 @@
   <section class="panel">
     <h2>Signed invite · trusted companion</h2>
     <p>Create the invite on your Mac for a profile already present in signed configuration. Send the link and 8-digit code through separate channels.</p>
-    <pre>go run ./cmd/admin invite --config .local/admin.toml</pre>
-    <p class="help">Choose the profile in your local admin TOML configuration. The link and code are output locally, not returned by this panel.</p>
+    <pre>admin invite --config /path/to/admin.toml</pre>
+    <p class="help">Run the admin CLI on your trusted companion. Replace /path/to/admin.toml with its configuration file for this deployment and choose the intended profile there. The link and code are output locally, not returned by this panel.</p>
     <p>After the device submits its proof, approve locally using <code>admin approve</code>, then publish its addition using <code>admin publish-snapshot</code>. Use CLI help for the required flags. Never paste the code, passphrase or private key here.</p>
     {{if .InvitesReady}}
       <form method="get" action="/admin/invites">

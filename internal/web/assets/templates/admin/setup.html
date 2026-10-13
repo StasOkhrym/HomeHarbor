@@ -2,8 +2,8 @@
   <section class="panel">
     <h2>1. Prepare your trusted companion</h2>
     <p>Your passkey protects this panel. The separate signing key on your Mac authorizes LAN access.</p>
-    <pre>go run ./cmd/admin init-root --config .local/admin.toml</pre>
-    <p class="help">Run this locally in your checkout only if a root key does not already exist. Never upload the private key or passphrase to this panel.</p>
+    <pre>admin init-root --config /path/to/admin.toml</pre>
+    <p class="help">Run the admin CLI on your trusted companion. Replace /path/to/admin.toml with its configuration file for this deployment. Create a root only if its signing key does not already exist. Never upload the private key or passphrase to this panel.</p>
   </section>
   <section class="panel">
     <h2>2. Enroll your gateway</h2>
@@ -20,8 +20,8 @@
   <section class="panel">
     <h2>4. Publish your initial signed configuration</h2>
     <p>Prepare a manifest using <code>config/initial-snapshot.example.toml</code>. Review its exact devices, routes, services, profiles and ACL locally.</p>
-    <pre>go run ./cmd/admin init-snapshot --config .local/admin.toml --manifest .local/initial-snapshot.toml</pre>
-    <p class="help">This command is for revision 1 only. Later arbitrary topology edits are not implemented by the current companion CLI. Saving forms cannot publish them.</p>
+    <pre>admin init-snapshot --config /path/to/admin.toml --manifest /path/to/initial-snapshot.toml</pre>
+    <p class="help">Replace both paths with the trusted companion's configuration and reviewed manifest for this deployment. This command is for revision 1 only. Later arbitrary topology edits are not implemented by the current companion CLI. Saving forms cannot publish them.</p>
     <p>{{.SignedState}}</p>
   </section>
   <section class="panel">

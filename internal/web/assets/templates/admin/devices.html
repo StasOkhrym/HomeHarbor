@@ -99,8 +99,8 @@
       <h2>Next: remove signed access</h2>
       {{if eq .Device.Role "client"}}
         <p>Use the trusted companion on your Mac. Replace CLIENT_DEVICE_ID with the public ID from Advanced; do not paste private keys here.</p>
-        <pre>go run ./cmd/admin revoke-device --config .local/admin.toml --device CLIENT_DEVICE_ID</pre>
-        <p class="help">This publishes a signed client removal. Gateway application remains unknown until verified separately.</p>
+        <pre>admin revoke-device --config /path/to/admin.toml --device CLIENT_DEVICE_ID</pre>
+        <p class="help">Replace /path/to/admin.toml with the trusted companion's configuration file for this deployment. This publishes a signed client removal. Gateway application remains unknown until verified separately.</p>
       {{else}}
         <p class="help">The current companion command supports client removal only, not gateway topology changes.</p>
       {{end}}
