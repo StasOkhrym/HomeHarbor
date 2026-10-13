@@ -10,6 +10,7 @@ from pathlib import Path
 import tomlkit
 from dev_init import SECRET_BYTES, complete, issue, verify_pair
 from sandbox_identity import load_public_identity, validate_public_identity
+from sandbox_pair import stored_pair_documents
 from sandbox_preflight import NETWORK_FILE, PROFILES, load_profile
 from tooling import ROOT, atomic_write, cli, port, quiet_run, require_commands
 
@@ -59,7 +60,9 @@ def document(name: str, target: str | None = None):
 
 
 def configuration(
-    port_number: int, selected: dict[str, str] | None = None
+    port_number: int,
+    selected: dict[str, str] | None = None,
+    native_ports: tuple[int, int] | None = None,
 ) -> dict[Path, tuple[bytes, int]]:
     selected = selected or load_profile()
     host = endpoint_audience("host", port_number)
@@ -110,7 +113,7 @@ def configuration(
     admin["passphrase_file"] = str(SANDBOX / "root-passphrase")
     admin["snapshot_manifest_file"] = str(SANDBOX / "initial-snapshot.toml")
     admin["invite_attempts_file"] = str(SANDBOX / "invite-attempts.json")
-    return {
+    documents = {
         SANDBOX / f"{name}.toml": (tomlkit.dumps(doc).encode(), 0o600)
         for name, doc in (
             ("control", control),
@@ -119,6 +122,12 @@ def configuration(
             ("admin", admin),
         )
     }
+    documents.update(
+        stored_pair_documents(
+            SANDBOX, selected, port_number, os.getuid(), check_destination, native_ports
+        )
+    )
+    return documents
 
 
 def render_manifest(selected: dict[str, str], gateway: dict[str, str] | None = None) -> bytes:

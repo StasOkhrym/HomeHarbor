@@ -203,6 +203,7 @@ class SandboxIdentityTests(unittest.TestCase):
                 "sandbox_bind.py",
                 "sandbox_init.py",
                 "sandbox_identity.py",
+                "sandbox_pair.py",
                 "sandbox_preflight.py",
                 "dev_init.py",
                 "tooling.py",

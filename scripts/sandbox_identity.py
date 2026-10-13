@@ -54,22 +54,36 @@ def unique_fields(pairs):
     return result
 
 
-def load_public_identity(path: Path) -> dict[str, str] | None:
+def read_public_file(path: Path) -> bytes | None:
     if path.is_symlink() or path.parent.is_symlink():
         raise ValueError("node public metadata must not use symlinks")
+
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
         return None
+
     with os.fdopen(descriptor, "rb") as stream:
         info = os.fstat(stream.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_PUBLIC_BYTES:
             raise ValueError("node public metadata must be a bounded regular file")
+
         content = stream.read(MAX_PUBLIC_BYTES + 1)
+
     if len(content) > MAX_PUBLIC_BYTES:
         raise ValueError("node public metadata is oversized")
+
+    return content
+
+
+def load_public_identity(path: Path) -> dict[str, str] | None:
+    content = read_public_file(path)
+    if content is None:
+        return None
+
     try:
         value = json.loads(content, object_pairs_hook=unique_fields)
     except (UnicodeError, json.JSONDecodeError):
         raise ValueError("node public metadata is malformed") from None
+
     return validate_public_identity(value)
