@@ -82,6 +82,20 @@ func restoreSnapshotCursor(
 	if err != nil {
 		return coordinationCursor{}, fmt.Errorf("%w: verify: %w", ErrSnapshotState, err)
 	}
+	if deferred, ok := applier.(SnapshotRestoreVerifier); ok {
+		if err := deferred.VerifyRestore(ctx, envelope, value); err != nil {
+			return coordinationCursor{}, fmt.Errorf(
+				"%w: verify deferred restore: %w",
+				ErrSnapshotState,
+				err,
+			)
+		}
+		return coordinationCursor{
+			revision:   value.Revision,
+			hash:       bytes.Clone(envelope.Hash),
+			needsApply: true,
+		}, nil
+	}
 	// Reconstruct local kernel/resolver state on process restart. A checkpoint
 	// proves the previously applied target; it does not prove today's kernel.
 	if err := applyVerifiedSnapshot(ctx, applier, envelope, value); err != nil {

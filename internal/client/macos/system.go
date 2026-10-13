@@ -13,14 +13,6 @@ import (
 	"time"
 )
 
-const (
-	InstalledClientPath    = "/Library/PrivilegedHelperTools/homeharbor/client"
-	InstalledWireGuardPath = "/Library/PrivilegedHelperTools/homeharbor/wireguard-go"
-	InstalledWGPath        = "/Library/PrivilegedHelperTools/homeharbor/wg"
-	SystemPolicyPath       = "/private/etc/homeharbor/network-helper.json"
-	SystemJournalPath      = "/private/var/db/homeharbor/client-network.json"
-)
-
 // RunSystemHelper is the only production entrypoint to privileged native
 // operations. Paths and binaries are fixed; caller stdin carries signed desired
 // state and the private device key, never executable or persistence paths.

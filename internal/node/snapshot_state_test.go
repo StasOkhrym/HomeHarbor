@@ -29,6 +29,148 @@ type signedStateApplier struct {
 	envelopes [][]byte
 }
 
+type deferredStateApplier struct {
+	verified []uint64
+	applied  []uint64
+	fail     error
+}
+
+func (*deferredStateApplier) Apply(context.Context, snapshot.NetworkSnapshot) error {
+	return errors.New("deferred owner requires a signed envelope")
+}
+
+func (a *deferredStateApplier) VerifyRestore(
+	_ context.Context,
+	_ snapshot.Envelope,
+	value snapshot.NetworkSnapshot,
+) error {
+	a.verified = append(a.verified, value.Revision)
+	return nil
+}
+
+func (a *deferredStateApplier) ApplySigned(
+	_ context.Context,
+	_ snapshot.Envelope,
+	value snapshot.NetworkSnapshot,
+) error {
+	if a.fail != nil {
+		return a.fail
+	}
+
+	a.applied = append(a.applied, value.Revision)
+
+	return nil
+}
+
+func TestDeferredRestoreAppliesMatchingAuthenticatedHeadAndRetriesFailure(t *testing.T) {
+	public, history := signedHistory(t, 1)
+	ctx := context.Background()
+	cfg := CoordinationConfig{
+		NetworkID:     "home",
+		RootPublicKey: public,
+		StatePath:     filepath.Join(t.TempDir(), "head.json"),
+	}
+
+	prepared, err := prepareSnapshotState(cfg.StatePath, history[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := prepared.commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	applier := &deferredStateApplier{}
+
+	cursor, err := restoreSnapshotCursor(ctx, cfg, applier)
+
+	if err != nil || len(applier.applied) != 0 ||
+		!reflect.DeepEqual(applier.verified, []uint64{1}) {
+		t.Fatalf(
+			"checkpoint applied host state before authenticated head: applied=%v verified=%v err=%v",
+			applier.applied,
+			applier.verified,
+			err,
+		)
+	}
+
+	applier.fail = errors.New("root owner rejected stale or failed host apply")
+
+	if err := reconcileSnapshotHead(ctx, cfg, applier, &cursor, history[0]); err == nil {
+		t.Fatal("matching head suppressed required host restoration")
+	}
+
+	applier.fail = nil
+
+	if err := reconcileSnapshotHead(ctx, cfg, applier, &cursor, history[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := reconcileSnapshotHead(
+		ctx,
+		cfg,
+		applier,
+		&cursor,
+		history[0],
+	); err != nil ||
+		!reflect.DeepEqual(applier.applied, []uint64{1}) {
+		t.Fatalf("matching head was not applied exactly once: %v, %v", applier.applied, err)
+	}
+}
+
+func TestDeferredRestoreCatchesUpWithoutReapplyingOlderCheckpoint(t *testing.T) {
+	public, history := signedHistory(t, 2)
+	var requested []uint64
+
+	server := historyServer(t, history, nil, &requested)
+	defer server.Close()
+
+	cfg := CoordinationConfig{
+		URL:           "ws" + server.URL[len("http"):],
+		Credential:    "credential",
+		NetworkID:     "home",
+		RootPublicKey: public,
+		StatePath:     filepath.Join(t.TempDir(), "head.json"),
+	}
+
+	prepared, err := prepareSnapshotState(cfg.StatePath, history[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := prepared.commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	applier := &deferredStateApplier{}
+
+	cursor, err := restoreSnapshotCursor(context.Background(), cfg, applier)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := reconcileSnapshotHead(
+		context.Background(),
+		cfg,
+		applier,
+		&cursor,
+		history[1],
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(applier.applied, []uint64{2}) ||
+		!reflect.DeepEqual(requested, []uint64{1}) ||
+		cursor.revision != 2 {
+		t.Fatalf(
+			"older checkpoint reapplied: applied=%v requested=%v cursor=%d",
+			applier.applied,
+			requested,
+			cursor.revision,
+		)
+	}
+}
+
 func (*signedStateApplier) Apply(context.Context, snapshot.NetworkSnapshot) error {
 	return errors.New("signed owner was given only a decoded value")
 }

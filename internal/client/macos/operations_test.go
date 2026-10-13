@@ -127,6 +127,7 @@ func nativeOperationsFixture(
 
 func TestNativeOperationsApplyAndRecoverOnlyOwnedTunnel(t *testing.T) {
 	ops, policy, settings, driver, runner, request := nativeOperationsFixture(t)
+
 	if err := ExecuteHelper(
 		context.Background(),
 		bytes.NewReader(helperJSON(t, request)),
@@ -136,10 +137,13 @@ func TestNativeOperationsApplyAndRecoverOnlyOwnedTunnel(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	if driver.path != settings.binaryPath || driver.nameFile != policy.JournalPath+".name" {
 		t.Fatalf("unexpected native process inputs: %q %q", driver.path, driver.nameFile)
 	}
+
 	config := driver.config
+
 	if config.PrivateKey == nil || config.PrivateKey.String() != request.PrivateKey ||
 		config.ListenPort == nil ||
 		*config.ListenPort != 51820 ||
@@ -147,22 +151,28 @@ func TestNativeOperationsApplyAndRecoverOnlyOwnedTunnel(t *testing.T) {
 		len(config.Peers) != 1 {
 		t.Fatal("native WireGuard config lost pinned identity or peer replacement")
 	}
+
 	peer := config.Peers[0]
+
 	if peer.Endpoint == nil || peer.Endpoint.String() != "127.0.0.1:51822" ||
 		len(peer.AllowedIPs) != 2 ||
 		peer.AllowedIPs[0].String() != "10.200.0.2/32" ||
 		peer.AllowedIPs[1].String() != "172.29.50.0/24" {
 		t.Fatalf("native peer widened or lost signed routes: %+v", peer)
 	}
+
 	if _, err := os.Stat(filepath.Join(settings.resolverDir, "sandbox.home.arpa")); err != nil {
 		t.Fatal(err)
 	}
+
 	// A new helper invocation must recover the same ownership from disk.
 	recovered, err := newNativeOperations(policy, settings, driver, runner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	closeRequest := HelperRequest{Version: 1, Action: "close"}
+
+	closeRequest := HelperRequest{Version: 1, Action: "close", Owner: helperOwner(policy.Authority)}
+
 	if err := ExecuteHelper(
 		context.Background(),
 		bytes.NewReader(helperJSON(t, closeRequest)),
@@ -172,6 +182,7 @@ func TestNativeOperationsApplyAndRecoverOnlyOwnedTunnel(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	for _, path := range []string{
 		filepath.Join(settings.resolverDir, "sandbox.home.arpa"),
 		filepath.Join(settings.socketDir, "utun7.sock"),

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
@@ -208,7 +209,14 @@ func TestHelperCloseCannotCarryAnUnsignedPlan(t *testing.T) {
 		},
 	}
 	native := &fakeNative{}
-	request := HelperRequest{Version: 1, Action: "close", Envelope: envelope, Plan: plan}
+	request := HelperRequest{
+		Version:  1,
+		Action:   "close",
+		Owner:    helperOwner(authority),
+		Envelope: envelope,
+		Plan:     plan,
+	}
+
 	if err := ExecuteHelper(
 		context.Background(),
 		bytes.NewReader(helperJSON(t, request)),
@@ -218,6 +226,7 @@ func TestHelperCloseCannotCarryAnUnsignedPlan(t *testing.T) {
 	); err == nil {
 		t.Fatal("close accepted a caller-selected plan")
 	}
+
 	if len(native.calls) != 0 {
 		t.Fatalf("invalid close caused native effects: %v", native.calls)
 	}
@@ -258,5 +267,85 @@ func TestHelperRejectsSignedDeviceThatDiffersFromRootPinnedIdentity(t *testing.T
 
 	if len(native.calls) != 0 {
 		t.Fatalf("foreign local key caused host effects: %v", native.calls)
+	}
+}
+
+type policyHelperExecutor struct {
+	policy HelperPolicy
+	ops    Operations
+}
+
+func (h policyHelperExecutor) Execute(ctx context.Context, request HelperRequest) error {
+	data, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+
+	return ExecuteHelper(ctx, bytes.NewReader(data), h.policy, h.policy.OwnerUID, h.ops)
+}
+
+func TestControllerCloseRejectsAnotherConfiguredOwnerBeforeCleanup(t *testing.T) {
+	authority, envelope, plan, _, privateKey := nativeFixtureWithKey(t)
+	policy := HelperPolicy{
+		Authority:               authority,
+		OwnerUID:                501,
+		JournalPath:             filepath.Join(t.TempDir(), "owner.json"),
+		LocalWireGuardPublicKey: testLocalPublicKey(t, privateKey),
+		Tunnel: TunnelConfig{
+			BridgeEndpoint: netip.MustParseAddrPort("127.0.0.1:51822"),
+			ListenPort:     51820,
+		},
+	}
+	native := &fakeNative{}
+	apply := HelperRequest{
+		Version:    1,
+		Action:     "apply",
+		Envelope:   envelope,
+		Plan:       plan,
+		PrivateKey: privateKey,
+	}
+
+	if err := ExecuteHelper(
+		context.Background(),
+		bytes.NewReader(helperJSON(t, apply)),
+		policy,
+		501,
+		native,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	before := len(native.calls)
+	helper := policyHelperExecutor{policy: policy, ops: native}
+	for _, mutate := range []func(*Authority){
+		func(a *Authority) { a.NetworkID = "another-network" },
+		func(a *Authority) { a.DeviceID = "another-device" },
+		func(a *Authority) { a.Root = append(a.Root[:0:0], a.Root...); a.Root[0] ^= 1 },
+	} {
+		foreign := authority
+
+		mutate(&foreign)
+
+		controller, err := NewController(foreign, privateKey, time.Second, helper)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := controller.Close(context.Background()); err == nil {
+			t.Fatal("foreign configured owner closed installed native ownership")
+		}
+
+		if len(native.calls) != before {
+			t.Fatal("foreign configured owner reached native cleanup")
+		}
+	}
+
+	controller, err := NewController(authority, privateKey, time.Second, helper)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := controller.Close(context.Background()); err != nil {
+		t.Fatalf("correctly scoped owner could not clean up: %v", err)
 	}
 }

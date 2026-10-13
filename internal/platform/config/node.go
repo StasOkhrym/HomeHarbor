@@ -1,6 +1,6 @@
 package config
 
-// Node describes the shared runtime configuration for the Linux gateway and
+// Node describes the shared runtime configuration for the gateway and
 // client executables. The two binaries intentionally share transport fields;
 // role-specific behavior remains in their composition code rather than in a
 // second, subtly different configuration parser.
@@ -12,6 +12,7 @@ type Node struct {
 	Coordination NodeCoordination `toml:"coordination"`
 	Direct       NodeDirect       `toml:"direct"`
 	DNS          NodeDNS          `toml:"dns"`
+	Native       NodeNative       `toml:"native"`
 }
 
 type NodeIdentity struct {
@@ -60,6 +61,15 @@ type NodeDirect struct {
 type NodeDNS struct {
 	Link             string `toml:"link"`
 	EnableForwarding bool   `toml:"enable_forwarding"`
+}
+
+// NodeNative opts the macOS client into signed system networking. These
+// startup bounds do not replace the helper's independently provisioned policy.
+type NodeNative struct {
+	Enabled bool   `toml:"enabled"`
+	Overlay string `toml:"overlay"`
+	Private string `toml:"private"`
+	Suffix  string `toml:"suffix"`
 }
 
 // LoadClient reads a client TOML file and applies safe client defaults.

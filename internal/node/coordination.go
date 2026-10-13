@@ -35,6 +35,13 @@ type SignedSnapshotApplier interface {
 	ApplySigned(context.Context, snapshot.Envelope, snapshot.NetworkSnapshot) error
 }
 
+// SnapshotRestoreVerifier defers host reconstruction until the current
+// authenticated head arrives. Its checkpoint is a lineage anchor, while a
+// separate privileged owner may already have accepted a newer signed policy.
+type SnapshotRestoreVerifier interface {
+	VerifyRestore(context.Context, snapshot.Envelope, snapshot.NetworkSnapshot) error
+}
+
 func applyVerifiedSnapshot(
 	ctx context.Context,
 	applier SnapshotApplier,
@@ -239,8 +246,9 @@ func RunCoordination(ctx context.Context, cfg CoordinationConfig, applier Snapsh
 }
 
 type coordinationCursor struct {
-	revision uint64
-	hash     []byte
+	revision   uint64
+	hash       []byte
+	needsApply bool
 }
 
 func runCoordination(

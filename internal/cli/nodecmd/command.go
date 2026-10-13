@@ -29,6 +29,8 @@ var configKeys = map[string]string{
 	"coordination": "coordination.url", "root-public-key": "coordination.root_public_key_file",
 	"network-id": "coordination.network_id", "direct-candidates": "direct.candidates",
 	"dns-link": "dns.link", "enable-forwarding": "dns.enable_forwarding",
+	"native": "native.enabled", "native-overlay": "native.overlay",
+	"native-private": "native.private", "native-suffix": "native.suffix",
 }
 
 // NewCommand creates an independent Cobra tree without opening files or starting a node.
@@ -80,6 +82,33 @@ func newCommand(role nodeapp.Role, run runner) *cobra.Command {
 		},
 	}
 	bindFlags(cmd, &defaults, &path)
+	if role == nodeapp.Client {
+		f := cmd.Flags()
+		f.BoolVar(
+			&defaults.Native.Enabled,
+			"native",
+			false,
+			"opt into the installed macOS native network helper",
+		)
+		f.StringVar(
+			&defaults.Native.Overlay,
+			"native-overlay",
+			"",
+			"independently provisioned native overlay pool",
+		)
+		f.StringVar(
+			&defaults.Native.Private,
+			"native-private",
+			"",
+			"independently provisioned native private subnet",
+		)
+		f.StringVar(
+			&defaults.Native.Suffix,
+			"native-suffix",
+			"",
+			"independently provisioned native DNS suffix",
+		)
+	}
 	return cmd
 }
 

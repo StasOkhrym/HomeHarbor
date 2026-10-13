@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -25,6 +26,11 @@ func validateRuntime(role Role, cfg config.Node) error {
 	}
 	if role != Client && role != Gateway {
 		return errors.New("invalid node role")
+	}
+	if cfg.Native.Enabled {
+		if err := validateNativeRuntime(role, cfg, runtime.GOOS); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(cfg.Identity.StatePath) == "" {
 		return errors.New("state path is required")
@@ -78,8 +84,10 @@ func validateRuntime(role Role, cfg config.Node) error {
 	}
 	kernel := cfg.WireGuard.InterfaceName != "" || cfg.Coordination.URL != ""
 	if kernel {
-		if cfg.WireGuard.InterfaceName == "" || cfg.Coordination.URL == "" ||
-			cfg.Coordination.RootPublicKeyFile == "" || cfg.Coordination.NetworkID == "" {
+		if (!cfg.Native.Enabled && cfg.WireGuard.InterfaceName == "") ||
+			cfg.Coordination.URL == "" ||
+			cfg.Coordination.RootPublicKeyFile == "" ||
+			cfg.Coordination.NetworkID == "" {
 			return errors.New(
 				"kernel node requires interface, signed coordination, network and root key",
 			)
@@ -89,8 +97,10 @@ func validateRuntime(role Role, cfg config.Node) error {
 		if _, err := node.LoadPublicKeyFile(cfg.Coordination.RootPublicKeyFile); err != nil {
 			return err
 		}
-		if _, err := dns.NewManager(cfg.WireGuard.InterfaceName); err != nil {
-			return err
+		if !cfg.Native.Enabled {
+			if _, err := dns.NewManager(cfg.WireGuard.InterfaceName); err != nil {
+				return err
+			}
 		}
 	}
 	if cfg.DNS.Link != "" {
@@ -127,8 +137,9 @@ func validateRuntime(role Role, cfg config.Node) error {
 			return errors.New("invalid relay UDP port")
 		}
 	}
-	if kernel && (cfg.WireGuard.ListenPort == 0 || cfg.WireGuard.PeerPublicKey == "" ||
-		cfg.WireGuard.OverlayAddress == "") {
+	if kernel && !cfg.Native.Enabled &&
+		(cfg.WireGuard.ListenPort == 0 || cfg.WireGuard.PeerPublicKey == "" ||
+			cfg.WireGuard.OverlayAddress == "") {
 		return errors.New("kernel relay requires listen port, peer key and overlay address")
 	}
 	return nil

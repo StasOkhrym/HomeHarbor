@@ -138,14 +138,15 @@ func reconcileSnapshotHead(
 		return fmt.Errorf("verify snapshot head: %w", err)
 	}
 	// Authenticate before comparing attacker-supplied hashes for replay.
-	if target.Revision == cursor.revision && bytes.Equal(head.Hash, cursor.hash) {
+	sameHead := target.Revision == cursor.revision && bytes.Equal(head.Hash, cursor.hash)
+	if sameHead && !cursor.needsApply {
 		return nil
 	}
-	if target.Revision <= cursor.revision {
+	if target.Revision <= cursor.revision && !sameHead {
 		return snapshot.ErrRevisionRollback
 	}
 	revision, hash := cursor.revision, bytes.Clone(cursor.hash)
-	var envelope snapshot.Envelope
+	envelope := head
 	for revision < target.Revision {
 		page, err := fetchSnapshotHistory(ctx, cfg, revision, hash)
 		if err != nil {
@@ -187,5 +188,6 @@ func reconcileSnapshotHead(
 		return fmt.Errorf("%w: commit after apply: %w", ErrSnapshotState, err)
 	}
 	cursor.revision, cursor.hash = revision, hash
+	cursor.needsApply = false
 	return nil
 }

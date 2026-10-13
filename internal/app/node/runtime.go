@@ -11,6 +11,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/agent/dns"
 	"github.com/StasOkhrym/homeharbor/internal/agent/nft"
+	"github.com/StasOkhrym/homeharbor/internal/client/macos"
 	"github.com/StasOkhrym/homeharbor/internal/node"
 	"github.com/StasOkhrym/homeharbor/internal/node/credentials"
 	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
@@ -103,7 +104,20 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 	}
 	var peers *node.SnapshotWireGuardReconciler
 	var paths *nodepath.PathSelector
-	if kernel {
+	var nativeOwner *macos.Controller
+	if cfg.Native.Enabled {
+		nativeOwner, err = prepareNativeController(cfg, state, root, macos.NewInstalledHelper())
+		if err != nil {
+			return nil, err
+		}
+		operation, cancel := context.WithTimeout(ctx, cfg.Runtime.OperationTimeout)
+		err = nativeOwner.Close(operation)
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if kernel && !cfg.Native.Enabled {
 		peers, err = node.NewSnapshotWireGuardReconciler(
 			cfg.WireGuard.InterfaceName,
 			state.DeviceID,
@@ -146,6 +160,7 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 			state,
 			source,
 			root,
+			nativeOwner,
 			peers,
 			candidates,
 			httpClient,
@@ -160,6 +175,12 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 		// App calls close only after every worker and its cleanup have joined.
 		// A bounded fresh context allows deny installation during cancellation.
 		var denyErr error
+		var nativeErr error
+		if nativeOwner != nil {
+			cleanup, cancel := context.WithTimeout(context.Background(), cfg.Runtime.CleanupTimeout)
+			nativeErr = nativeOwner.Close(cleanup)
+			cancel()
+		}
 		if guard != nil {
 			cleanup, cancel := context.WithTimeout(context.Background(), cfg.Runtime.CleanupTimeout)
 			denyErr = guard.Guard(cleanup)
@@ -168,7 +189,7 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 		if httpClient != nil {
 			httpClient.CloseIdleConnections()
 		}
-		return errors.Join(denyErr, store.Close())
+		return errors.Join(denyErr, nativeErr, store.Close())
 	}}, nil
 }
 
@@ -363,6 +384,7 @@ func prepareCoordination(
 	state node.State,
 	leases credentials.LeaseSource,
 	root ed25519.PublicKey,
+	nativeOwner *macos.Controller,
 	peers *node.SnapshotWireGuardReconciler,
 	candidates candidateBindings,
 	httpClient *http.Client,
@@ -385,6 +407,14 @@ func prepareCoordination(
 		connection.CandidateChanges = candidates.set.Changes()
 	}
 	if role == Client {
+		if cfg.Native.Enabled {
+			if nativeOwner == nil {
+				return nil, errors.New("native client requires its signed network owner")
+			}
+			return lifecycle.Func(func(ctx context.Context) error {
+				return node.RunCoordinationLoop(ctx, connection, nativeOwner)
+			}), nil
+		}
 		applier := node.NewCompositeSnapshotApplier(
 			nil,
 			node.NewClientReconciler(cfg.WireGuard.InterfaceName, state.DeviceID),

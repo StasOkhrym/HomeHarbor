@@ -83,6 +83,57 @@ func TestHelpDoesNotReadConfigOrStartNode(t *testing.T) {
 	}
 }
 
+func TestNativeOptionsBindOnlyAtClientCLI(t *testing.T) {
+	var got config.Node
+
+	command := newCommand(
+		nodeapp.Client,
+		func(_ context.Context, _ nodeapp.Role, cfg config.Node) error {
+			got = cfg
+			return nil
+		},
+	)
+	var stdout, stderr bytes.Buffer
+
+	code := host.Execute(context.Background(), []string{
+		"--native",
+		"--native-overlay=10.243.0.0/24",
+		"--native-private=10.241.50.0/24",
+		"--native-suffix=sandbox.home.arpa",
+	}, &stdout, &stderr, command)
+
+	if code != 0 || !got.Native.Enabled || got.Native.Overlay != "10.243.0.0/24" ||
+		got.Native.Private != "10.241.50.0/24" ||
+		got.Native.Suffix != "sandbox.home.arpa" {
+		t.Fatalf(
+			"native client options lost: %+v, code=%d stderr=%s",
+			got.Native,
+			code,
+			stderr.String(),
+		)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	called := false
+
+	command = newCommand(
+		nodeapp.Gateway,
+		func(context.Context, nodeapp.Role, config.Node) error { called = true; return nil },
+	)
+
+	if code := host.Execute(
+		context.Background(),
+		[]string{"--native"},
+		&stdout,
+		&stderr,
+		command,
+	); code == 0 ||
+		called {
+		t.Fatal("gateway accepted macOS native CLI mode")
+	}
+}
+
 func TestCanceledNodeDoesNotStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
