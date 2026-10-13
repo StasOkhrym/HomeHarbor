@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/controlclient"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
@@ -17,10 +18,36 @@ func Enroll(
 	controlURL, token, name string,
 	state *State,
 ) error {
+	return enroll(ctx, httpClient, controlURL, token, name, state, "")
+}
+
+// EnrollGateway bootstraps the trusted gateway role before any tunnel runs.
+// A client-role token or a response for different public keys cannot admit it.
+func EnrollGateway(
+	ctx context.Context,
+	httpClient *http.Client,
+	controlURL, token, name string,
+	state *State,
+) error {
+	return enroll(ctx, httpClient, controlURL, token, name, state, "gateway")
+}
+
+func enroll(
+	ctx context.Context,
+	httpClient *http.Client,
+	controlURL, token, name string,
+	state *State,
+	role string,
+) error {
+	if state == nil {
+		return errors.New("node identity is required")
+	}
+
 	client, err := controlclient.ForEndpoint(strings.TrimRight(controlURL, "/"), httpClient)
 	if err != nil {
 		return err
 	}
+
 	device, err := client.Enroll(ctx, protocol.EnrollmentRequest{
 		Token:              token,
 		Name:               name,
@@ -33,9 +60,18 @@ func Enroll(
 	if device.ID == "" || device.Credential == "" || device.CredentialExpiresAt.IsZero() {
 		return errors.New("control plane returned incomplete enrollment")
 	}
+	if role != "" && (device.Role != role || device.Status != "active" ||
+		device.IdentityPublicKey != state.IdentityPublicKey ||
+		device.WireGuardPublicKey != state.WireGuard.PublicKey ||
+		!device.CredentialExpiresAt.After(time.Now())) {
+		return errors.New("control plane enrollment does not match gateway role and identity")
+	}
+
 	state.DeviceID = device.ID
 	state.DeviceCredential = device.Credential
 	state.CredentialExpiresAt = device.CredentialExpiresAt
+	state.DeviceRole = device.Role
+
 	return nil
 }
 

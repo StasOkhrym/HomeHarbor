@@ -18,6 +18,7 @@ import (
 
 type State struct {
 	DeviceID            string          `json:"device_id,omitempty"`
+	DeviceRole          string          `json:"device_role,omitempty"`
 	CredentialExpiresAt time.Time       `json:"credential_expires_at,omitempty"`
 	DeviceCredential    string          `json:"device_credential,omitempty"`
 	IdentityPrivateKey  string          `json:"identity_private_key"`

@@ -9,4 +9,8 @@ import (
 )
 
 // NewCommand creates a fresh agent command without starting the node.
-func NewCommand() *cobra.Command { return nodecmd.NewCommand(nodeapp.Gateway) }
+func NewCommand() *cobra.Command {
+	command := nodecmd.NewCommand(nodeapp.Gateway)
+	command.AddCommand(newEnrollCommand())
+	return command
+}
