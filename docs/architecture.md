@@ -135,11 +135,19 @@ explicit zero is invalid. Restart the process after changing it. Domain consumer
 receive typed durations through their own options, not the runtime config package.
 
 For agent/client, `shutdown_timeout` bounds the whole process drain after the
-first termination signal, including joined workers and owned cleanup. It defaults
+first termination signal or unexpected essential-worker exit, including joined
+workers and owned cleanup. It defaults
 to 10 seconds and accepts 1 second through 1 minute. Choose it to cover the
 per-operation cleanup limits; expiration forces exit 130 without claiming that
 cleanup completed. A second signal forces exit immediately. Finite commands keep
 the signal host's default, and embedded commands never acquire an OS exit boundary.
+
+The shared lifecycle supervisor notifies the process host once when an essential
+worker fails or exits unexpectedly. The host freezes its original deadline;
+nested supervisors cannot reset it. The supervisor still joins all owners before
+returning, so a stuck worker forces process failure instead of early store closure.
+Application packages keep no dependency on CLI or `os.Exit`. A normally joined
+worker failure retains its original named error and operational exit status.
 
 Login/recovery defaults to 5 requests/minute/IP, onboarding to 10. Operators can
 raise these to 30 and 60 respectively; control warns above defaults. These ceilings

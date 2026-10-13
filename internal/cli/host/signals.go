@@ -8,6 +8,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 )
 
 const DefaultDrainTimeout = 10 * time.Second
@@ -15,9 +17,10 @@ const DefaultDrainTimeout = 10 * time.Second
 type drainContextKey struct{}
 
 type drainBudget struct {
-	mu      sync.Mutex
-	timeout time.Duration
-	started bool
+	mu       sync.Mutex
+	timeout  time.Duration
+	started  bool
+	deadline time.Time
 }
 
 // ConfigureDrain applies a validated role's process deadline before shutdown.
@@ -49,15 +52,21 @@ func ConfigureDrain(ctx context.Context, timeout time.Duration) error {
 	return nil
 }
 
-func (b *drainBudget) begin() time.Duration {
+func (b *drainBudget) begin() time.Time {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.started = true
-	return b.timeout
+
+	if !b.started {
+		b.started = true
+		b.deadline = time.Now().Add(b.timeout)
+	}
+
+	return b.deadline
 }
 
-// SignalContext cancels on the first termination signal. A second signal or
-// an expired drain deadline forces a non-success process exit.
+// SignalContext cancels on the first termination signal. An unexpected
+// essential exit starts the same process drain without changing caller
+// cancellation ownership. A second signal or expired deadline forces exit.
 func SignalContext(parent context.Context, drain time.Duration) (context.Context, func()) {
 	if drain <= 0 {
 		drain = DefaultDrainTimeout
@@ -101,9 +110,13 @@ func signalContext(
 	ctx, cancel := context.WithCancel(parent)
 	budget := &drainBudget{timeout: drain}
 	ctx = context.WithValue(ctx, drainContextKey{}, budget)
+	failures := make(chan time.Time, 1)
+	ctx = lifecycle.WithDrainObserver(ctx, func() { failures <- budget.begin() })
 	stop := make(chan struct{})
 	var once sync.Once
 	go func() {
+		var deadline time.Time
+		signaled := false
 		select {
 		case <-stop:
 			return
@@ -111,18 +124,31 @@ func signalContext(
 			cancel()
 			return
 		case <-signals:
+			signaled = true
+			deadline = budget.begin()
+			cancel()
+		case deadline = <-failures:
 		}
-		deadline := budget.begin()
-		cancel()
-		timer := time.NewTimer(deadline)
+
+		timer := time.NewTimer(time.Until(deadline))
 		defer timer.Stop()
-		select {
-		case <-stop:
-			return
-		case <-signals:
-			hardExit(130)
-		case <-timer.C:
-			hardExit(130)
+
+		for {
+			select {
+			case <-stop:
+				return
+			case <-signals:
+				if signaled {
+					hardExit(130)
+					return
+				}
+
+				signaled = true
+				cancel()
+			case <-timer.C:
+				hardExit(130)
+				return
+			}
 		}
 	}()
 	return ctx, func() {

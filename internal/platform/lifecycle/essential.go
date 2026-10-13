@@ -23,11 +23,14 @@ func RunEssential(ctx context.Context, workers ...Worker) error {
 			return fmt.Errorf("worker %q: %w", worker.Name, ErrNilComponent)
 		}
 	}
+
 	if ctx.Err() != nil {
 		return nil
 	}
+
 	owned, cancel := context.WithCancel(ctx)
 	defer cancel()
+
 	type result struct {
 		name       string
 		err        error
@@ -39,16 +42,20 @@ func RunEssential(ctx context.Context, workers ...Worker) error {
 	for _, worker := range workers {
 		go func(worker Worker) {
 			defer owners.Done()
+
 			err := worker.Component.Run(owned)
 			results <- result{worker.Name, err, owned.Err() == nil}
 		}(worker)
 	}
+
 	var errs []error
 	for range workers {
 		result := <-results
 		if result.unexpected {
 			cancel()
+			notifyDrain(ctx)
 		}
+
 		if result.err == nil {
 			if result.unexpected {
 				errs = append(
@@ -56,13 +63,16 @@ func RunEssential(ctx context.Context, workers ...Worker) error {
 					fmt.Errorf("essential worker %q exited unexpectedly", result.name),
 				)
 			}
+
 			continue
 		}
 		if !result.unexpected && cancellationOnly(result.err) {
 			continue
 		}
+
 		errs = append(errs, fmt.Errorf("essential worker %q: %w", result.name, result.err))
 	}
+
 	owners.Wait()
 	return errors.Join(errs...)
 }

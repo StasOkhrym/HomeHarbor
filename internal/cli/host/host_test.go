@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 )
 
 func TestExecuteClassifiesAndRoutesOutput(t *testing.T) {
@@ -189,5 +191,95 @@ func TestInvalidDrainDoesNotChangeLiveContext(t *testing.T) {
 
 	if err := ConfigureDrain(context.Background(), time.Second); err != nil {
 		t.Fatalf("embedded command without signal host rejected: %v", err)
+	}
+}
+
+func TestEssentialFailureFreezesBudgetWithoutChangingCallerCancellation(t *testing.T) {
+	hard := make(chan int, 1)
+
+	ctx, stop := signalContext(
+		context.Background(),
+		make(chan struct{}),
+		20*time.Millisecond,
+		func(code int) { hard <- code },
+	)
+	defer stop()
+
+	boom := errors.New("owner failed")
+
+	if err := lifecycle.RunEssential(
+		ctx,
+		lifecycle.Worker{
+			Name:      "owner",
+			Component: lifecycle.Func(func(context.Context) error { return boom }),
+		},
+	); !errors.Is(
+		err,
+		boom,
+	) {
+		t.Fatal(err)
+	}
+
+	if ctx.Err() != nil {
+		t.Fatal("unexpected failure replaced the caller's error with cancellation")
+	}
+
+	if err := ConfigureDrain(ctx, time.Minute); !errors.Is(err, context.Canceled) {
+		t.Fatalf("failure budget could be extended: %v", err)
+	}
+
+	select {
+	case code := <-hard:
+		if code != 130 {
+			t.Fatal(code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("essential failure did not start the hard deadline")
+	}
+}
+
+func TestFailureDrainPreservesFirstAndSecondTerminationSignals(t *testing.T) {
+	signals := make(chan struct{}, 2)
+	hard := make(chan int, 1)
+
+	ctx, stop := signalContext(
+		context.Background(),
+		signals,
+		time.Minute,
+		func(code int) { hard <- code },
+	)
+	defer stop()
+
+	if err := lifecycle.RunEssential(
+		ctx,
+		lifecycle.Worker{
+			Name:      "owner",
+			Component: lifecycle.Func(func(context.Context) error { return nil }),
+		},
+	); err == nil {
+		t.Fatal("essential nil exit accepted")
+	}
+
+	signals <- struct{}{}
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("first termination did not cancel")
+	}
+
+	select {
+	case <-hard:
+		t.Fatal("first termination was treated as a second signal")
+	default:
+	}
+
+	signals <- struct{}{}
+	select {
+	case code := <-hard:
+		if code != 130 {
+			t.Fatal(code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second termination did not force a hard failure")
 	}
 }
