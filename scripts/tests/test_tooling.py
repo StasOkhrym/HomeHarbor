@@ -557,12 +557,24 @@ exit 94
         source.write_text("package sample\n")
         self.cli(
             "golangci-lint",
-            "[ \"$1\" = fmt ] && [ \"$2\" = --diff ] || exit 88\nprintf '%s\\n' 'diff source.go'\n",
+            "[ \"$1\" = fmt ] && [ \"$2\" = --diff ] || exit 88\nprintf '%s\\n' 'diff source.go'\nexit 1\n",
         )
         result = self.run_script("verify")
+
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Run make fmt", result.stderr)
+        self.assertIn("diff source.go", result.stdout)
         self.assertEqual(source.read_text(), "package sample\n")
+
+    def test_format_check_preserves_formatter_failure_and_stops_other_tools(self):
+        self.dependencies()
+        self.cli("golangci-lint", "printf '%s\\n' 'formatter unavailable' >&2\nexit 7\n")
+        self.cli("ruff", "touch later-format-tool\n")
+        result = self.run_script("format-check")
+
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertIn("formatter unavailable", result.stderr)
+        self.assertFalse((self.root / "later-format-tool").exists())
 
     def test_verify_runs_race_and_build_without_duplicate_architecture(self):
         self.cli("node")
