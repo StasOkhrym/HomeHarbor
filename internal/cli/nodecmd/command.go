@@ -78,6 +78,9 @@ func newCommand(role nodeapp.Role, run runner) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := host.ConfigureDrain(cmd.Context(), cfg.Runtime.ShutdownTimeout); err != nil {
+				return err
+			}
 			return run(cmd.Context(), role, cfg)
 		},
 	}

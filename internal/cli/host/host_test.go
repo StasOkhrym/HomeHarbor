@@ -114,3 +114,80 @@ func TestSignalContextSecondSignalAndDeadlineAreHardFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestConfiguredDrainReplacesDefaultBeforeCancellation(t *testing.T) {
+	signals := make(chan struct{}, 2)
+	hard := make(chan int, 1)
+
+	ctx, stop := signalContext(
+		context.Background(),
+		signals,
+		time.Minute,
+		func(code int) { hard <- code },
+	)
+	defer stop()
+
+	if err := ConfigureDrain(ctx, 15*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+
+	signals <- struct{}{}
+	select {
+	case code := <-hard:
+		if code != 130 {
+			t.Fatalf("hard exit = %d", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("configured drain was ignored")
+	}
+}
+
+func TestDrainCannotBeExtendedAfterFirstSignal(t *testing.T) {
+	signals := make(chan struct{}, 2)
+	hard := make(chan int, 1)
+
+	ctx, stop := signalContext(
+		context.Background(),
+		signals,
+		20*time.Millisecond,
+		func(code int) { hard <- code },
+	)
+	defer stop()
+
+	signals <- struct{}{}
+	<-ctx.Done()
+
+	if err := ConfigureDrain(ctx, time.Minute); !errors.Is(err, context.Canceled) {
+		t.Fatalf("draining process allowed reconfiguration: %v", err)
+	}
+
+	select {
+	case <-hard:
+	case <-time.After(time.Second):
+		t.Fatal("active drain deadline was extended")
+	}
+}
+
+func TestInvalidDrainDoesNotChangeLiveContext(t *testing.T) {
+	ctx, stop := signalContext(
+		context.Background(),
+		make(chan struct{}),
+		time.Minute,
+		func(int) { t.Error("unexpected hard exit") },
+	)
+	defer stop()
+
+	for _, duration := range []time.Duration{0, -time.Second} {
+		if err := ConfigureDrain(ctx, duration); err == nil {
+			t.Fatal("nonpositive drain accepted")
+		}
+
+		if ctx.Err() != nil {
+			t.Fatal("invalid configuration canceled the process")
+		}
+	}
+
+	if err := ConfigureDrain(context.Background(), time.Second); err != nil {
+		t.Fatalf("embedded command without signal host rejected: %v", err)
+	}
+}

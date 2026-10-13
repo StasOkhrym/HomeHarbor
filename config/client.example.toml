@@ -31,5 +31,6 @@ network_id = "home"
 # candidates = "203.0.113.10:51820"
 
 [runtime]
+shutdown_timeout = "10s"
 operation_timeout = "30s"
 cleanup_timeout = "5s"

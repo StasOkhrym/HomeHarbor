@@ -134,6 +134,13 @@ It is decoded over role defaults before validation: omission keeps the default;
 explicit zero is invalid. Restart the process after changing it. Domain consumers
 receive typed durations through their own options, not the runtime config package.
 
+For agent/client, `shutdown_timeout` bounds the whole process drain after the
+first termination signal, including joined workers and owned cleanup. It defaults
+to 10 seconds and accepts 1 second through 1 minute. Choose it to cover the
+per-operation cleanup limits; expiration forces exit 130 without claiming that
+cleanup completed. A second signal forces exit immediately. Finite commands keep
+the signal host's default, and embedded commands never acquire an OS exit boundary.
+
 Login/recovery defaults to 5 requests/minute/IP, onboarding to 10. Operators can
 raise these to 30 and 60 respectively; control warns above defaults. These ceilings
 are conservative operational bounds, not a security-audit guarantee. Invite code

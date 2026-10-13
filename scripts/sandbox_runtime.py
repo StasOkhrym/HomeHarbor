@@ -16,6 +16,11 @@ from process_owner import run as run_foreground
 from sandbox_identity import read_public_file, unique_fields, validate_public_identity
 from tooling import atomic_write
 
+# The Go node accepts a process drain up to 60 seconds. Keep the outer owner
+# alive through that deadline and a separate bounded offline helper recovery.
+CLIENT_DRAIN_TIMEOUT = 65
+CLIENT_STOP_TIMEOUT = 115
+
 
 def socket_path(flow):
     path = flow.sandbox / "client.sock"
@@ -40,7 +45,9 @@ def stop_client(flow):
     except ValueError as error:
         if "active" not in str(error):
             raise
+
     path = socket_path(flow)
+
     try:
         with socket.socket(socket.AF_UNIX) as connection:
             connection.settimeout(5)
@@ -52,7 +59,8 @@ def stop_client(flow):
         raise ValueError(
             "active native client has no reachable owner; stop its original terminal before recovery"
         ) from None
-    deadline = time.monotonic() + 60
+
+    deadline = time.monotonic() + CLIENT_STOP_TIMEOUT
     while True:
         try:
             with flow.lock("client-runtime.lock"):
@@ -62,6 +70,7 @@ def stop_client(flow):
                 raise ValueError(
                     "native client has not stopped; identity and Docker state preserved"
                 ) from None
+
         time.sleep(0.1)
 
 
@@ -89,6 +98,7 @@ def build_client(flow):
 
 def run_client(flow):
     """The owner socket signals the live child object, never a saved/reusable PID."""
+
     process = None
     pending_signal = None
     stopped_by_owner = False
@@ -128,6 +138,7 @@ def run_client(flow):
             atomic_write(dirty, b"1\n")
             for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
                 handlers[sig] = signal.signal(sig, interrupted)
+
             try:
                 process = subprocess.Popen(
                     [str(binary), "--config", str(config)],
@@ -138,7 +149,9 @@ def run_client(flow):
             except BaseException:
                 for sig, handler in handlers.items():
                     signal.signal(sig, handler)
+
                 raise
+
         # Release the orchestration lock while retaining the process lifetime lock.
         # This lets sandbox-down request a graceful stop without a PID registry.
         try:
@@ -147,34 +160,41 @@ def run_client(flow):
                     connection, _ = server.accept()
                 except TimeoutError:
                     continue
+
                 with connection:
                     connection.settimeout(1)
+
                     try:
                         if connection.recv(16) == b"stop\n":
                             stopped_by_owner = True
                             connection.sendall(b"stopping\n")
                     except OSError:
                         continue
+
             if process.poll() is None:
                 process.terminate()
+
                 try:
-                    process.wait(timeout=30)
+                    process.wait(timeout=CLIENT_DRAIN_TIMEOUT)
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
                     raise ValueError(
                         "native client drain timed out; run sandbox-down for journal recovery"
                     ) from None
+
             flow.cleanup_native()
             if pending_signal is not None:
                 return 128 + pending_signal
             if stopped_by_owner:
                 return 0
+
             return process.returncode
         finally:
             if process.poll() is None:
                 process.kill()
                 process.wait(timeout=5)
+
             for sig, handler in handlers.items():
                 signal.signal(sig, handler)
 

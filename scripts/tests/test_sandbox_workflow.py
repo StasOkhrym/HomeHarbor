@@ -233,6 +233,25 @@ class SandboxWorkflowTests(unittest.TestCase):
             self.assertEqual(kwargs["env"]["SANDBOX_WORKSPACE"], str(flow.root))
             self.assertEqual(kwargs["env"]["RUNTIME_UID"], "501")
 
+    def test_production_config_environment_cannot_override_isolated_sandbox(self):
+        with tempfile.TemporaryDirectory() as temp:
+            flow = self.workflow(temp)
+            inherited = {
+                "HOMEHARBOR_NODE_CONTROL_URL": "https://production.example",
+                "HOMEHARBOR_COORDINATION_ROOT_PUBLIC_KEY_FILE": "/production/root.pub",
+                "HOMEHARBOR_RUNTIME_SHUTDOWN_TIMEOUT": "1s",
+                "COMPOSE_PROJECT_NAME": "production",
+            }
+
+            with patch.dict(os.environ, inherited):
+                env = flow.environment()
+
+            for key in inherited:
+                self.assertFalse(key in env, f"inherited sandbox override retained: {key}")
+
+            self.assertEqual(env["SANDBOX_WORKSPACE"], str(flow.root))
+            self.assertEqual(env["RUNTIME_UID"], "501")
+
     def test_commands_do_not_log_invite_code(self):
         with tempfile.TemporaryDirectory() as temp:
             flow = self.owned(temp)

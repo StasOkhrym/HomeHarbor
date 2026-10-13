@@ -28,7 +28,9 @@ ownership, including a matching Docker resource name without labels. Never add
 ownership labels to unexplained legacy resources to bypass that refusal.
 
 `sandbox-up` pins its Compose file, project and environment file; ambient
-`COMPOSE_*` overrides cannot select another project. Selected private/overlay
+`COMPOSE_*` overrides cannot select another project, and inherited `HOMEHARBOR_*`
+production settings cannot redirect sandbox clients or override their generated
+configuration. Selected private/overlay
 pools persist in `.sandbox/network.env`. Preflight rejects overlapping host/VPN
 or Docker networks and probes WireGuard/nftables/forwarding in the Docker VM.
 An unsupported VM is a failed prerequisite, not permission to bypass the fence.
@@ -225,6 +227,12 @@ graceful native shutdown, waits for its lifetime lock and runs bounded offline
 network-close before stopping owned Compose resources. It preserves identities,
 trust and volumes. Cleanup failure prevents Docker teardown and keeps its
 journal/identity for retry. There is no broad process kill or Docker prune.
+
+The node's configured `shutdown_timeout` covers its full signal drain (10 seconds
+by default, up to 60 seconds). The outer native launcher allows 65 seconds before
+forcing a stuck child, then uses bounded offline recovery. Down allows that drain
+plus recovery before declaring failure. Docker grants the gateway 70 seconds so
+its own stop deadline does not preempt a valid node drain.
 
 For a launcher crash, its child inherits the lifetime lock. If that child remains
 alive but its owner socket cannot respond, down refuses to signal an unverified

@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/signal"
 	"sync"
@@ -10,6 +11,50 @@ import (
 )
 
 const DefaultDrainTimeout = 10 * time.Second
+
+type drainContextKey struct{}
+
+type drainBudget struct {
+	mu      sync.Mutex
+	timeout time.Duration
+	started bool
+}
+
+// ConfigureDrain applies a validated role's process deadline before shutdown.
+// Embedded commands without a signal host do not own a process exit boundary.
+// Once cancellation begins, reconfiguration cannot extend the active deadline.
+func ConfigureDrain(ctx context.Context, timeout time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if timeout <= 0 {
+		return errors.New("process drain deadline must be positive")
+	}
+
+	budget, ok := ctx.Value(drainContextKey{}).(*drainBudget)
+	if !ok {
+		return nil
+	}
+
+	budget.mu.Lock()
+	defer budget.mu.Unlock()
+
+	if budget.started {
+		return context.Canceled
+	}
+
+	budget.timeout = timeout
+
+	return nil
+}
+
+func (b *drainBudget) begin() time.Duration {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.started = true
+	return b.timeout
+}
 
 // SignalContext cancels on the first termination signal. A second signal or
 // an expired drain deadline forces a non-success process exit.
@@ -54,6 +99,8 @@ func signalContext(
 	hardExit func(int),
 ) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(parent)
+	budget := &drainBudget{timeout: drain}
+	ctx = context.WithValue(ctx, drainContextKey{}, budget)
 	stop := make(chan struct{})
 	var once sync.Once
 	go func() {
@@ -64,9 +111,10 @@ func signalContext(
 			cancel()
 			return
 		case <-signals:
-			cancel()
 		}
-		timer := time.NewTimer(drain)
+		deadline := budget.begin()
+		cancel()
+		timer := time.NewTimer(deadline)
 		defer timer.Stop()
 		select {
 		case <-stop:

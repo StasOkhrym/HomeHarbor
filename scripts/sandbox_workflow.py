@@ -174,7 +174,7 @@ class Workflow:
         env = {
             key: value
             for key, value in os.environ.items()
-            if not key.startswith(("COMPOSE_", "SANDBOX_", "RUNTIME_"))
+            if not key.startswith(("COMPOSE_", "SANDBOX_", "RUNTIME_", "HOMEHARBOR_"))
             and key not in {"CONTROL_CONFIG", "RELAY_CONFIG", "DOCKER_DEFAULT_PLATFORM"}
         }
         env.update(
@@ -186,13 +186,16 @@ class Workflow:
         config = self.sandbox / "control.toml"
         if config.exists():
             self.check_path(config)
+
             try:
                 origin = urlsplit(tomllib.loads(config.read_text())["server"]["public_url"])
                 if origin.scheme != "https" or origin.hostname != "control.localhost":
                     raise ValueError
+
                 env["SANDBOX_HTTPS_PORT"] = str(port(str(origin.port), "sandbox HTTPS port"))
             except (KeyError, TypeError, ValueError):
                 raise ValueError("sandbox control must have its generated HTTPS origin") from None
+
         return env
 
     def compose(self, *args, timeout=180, input=None):

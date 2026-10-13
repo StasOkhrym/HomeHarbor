@@ -62,6 +62,7 @@ services:
       retries: 12
   gateway:
     labels: *sandbox-owner
+    stop_grace_period: 70s
     profiles: [native-client]
     build:
       context: ..
