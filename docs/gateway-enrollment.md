@@ -21,4 +21,22 @@ After a successful save, rerunning the same command returns the same public iden
 
 `agent enroll` finishes without starting tunnel, relay, coordination or forwarding. Start the ordinary `agent --config <gateway.toml>` runtime after supplying the signed network and appropriate peer configuration, using the same state path. The runtime owns its normal deny guard and credential recovery. Container networking and any sandbox isolation fence remain the container entrypoint's responsibility.
 
+`agent identity --state state/gateway.json` reads the same three public fields from validated existing joined state without a token, CA or control connection. It does not establish the control role/status again; the initial enrollment and normal runtime own those checks. Stop a runtime using that state before inspecting it.
+
+For the optional sandbox gateway, the container entrypoint accepts `enroll` and `identity` after installing its independent underlay/private fence. Supply the gateway-role token through a private stdin file, using the same volume state path as the later runtime:
+
+```sh
+docker compose --env-file .sandbox/network.env \
+  -f deploy/compose.sandbox.yaml --profile native-client \
+  run --rm --no-deps -T gateway enroll \
+  --control https://control.sandbox:8443 \
+  --ca-file /run/secrets/relay_tls_ca \
+  --state /var/lib/homeharbor/gateway.json \
+  --name "Sandbox gateway" \
+  < .sandbox/gateway-token > .sandbox/gateway-public.json
+python3 scripts/sandbox_bind.py
+```
+
+Run this after explicitly initializing/building the sandbox and starting its base control/proxy services, before starting the gateway runtime. Protect the token file with mode 0600 and remove it after confirmed enrollment. The binder validates public-only JSON and fills every initial gateway reference for the pinned profile; the companion must still sign and publish it with the existing `admin init-snapshot` command. Conflicting identity/profile/ACL changes require review.
+
 If a request fails, keep the generated state so its keys remain stable. No public success record is emitted until the credential is durably saved. If control consumed the token but the response/save failed, inspect the enrollment in the admin UI before retrying; a second token does not guarantee that an already registered identity can enroll again.

@@ -82,6 +82,7 @@ func newCommand(role nodeapp.Role, run runner) *cobra.Command {
 		},
 	}
 	bindFlags(cmd, &defaults, &path)
+	cmd.AddCommand(newIdentityCommand())
 	if role == nodeapp.Client {
 		f := cmd.Flags()
 		f.BoolVar(

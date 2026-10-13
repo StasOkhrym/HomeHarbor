@@ -26,6 +26,17 @@ type State struct {
 	WireGuard           tunnel.Identity `json:"wireguard"`
 }
 
+// PublicIdentity is the only node state permitted in setup manifests/output.
+type PublicIdentity struct {
+	DeviceID           string `json:"device_id"`
+	IdentityPublicKey  string `json:"identity_public_key"`
+	WireGuardPublicKey string `json:"wireguard_public_key"`
+}
+
+func (s State) PublicIdentity() PublicIdentity {
+	return PublicIdentity{s.DeviceID, s.IdentityPublicKey, s.WireGuard.PublicKey}
+}
+
 func NewState() (State, error) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

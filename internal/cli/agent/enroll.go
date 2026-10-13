@@ -107,9 +107,5 @@ func enrollGateway(command *cobra.Command, options enrollmentOptions) (result er
 	// Enrollment is finite. It never creates a WireGuard interface, starts a
 	// relay/coordination worker or enables forwarding. The sandbox fence is
 	// owned by its container entrypoint, separately from this command.
-	return json.NewEncoder(command.OutOrStdout()).Encode(struct {
-		DeviceID           string `json:"device_id"`
-		IdentityPublicKey  string `json:"identity_public_key"`
-		WireGuardPublicKey string `json:"wireguard_public_key"`
-	}{state.DeviceID, state.IdentityPublicKey, state.WireGuard.PublicKey})
+	return json.NewEncoder(command.OutOrStdout()).Encode(state.PublicIdentity())
 }

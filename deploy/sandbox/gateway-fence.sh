@@ -1,7 +1,11 @@
 #!/bin/sh
 set -eu
 
-test "$#" -eq 1
+test "$#" -gt 0
+case "$1" in
+enroll | identity) ;;
+*) test "$#" -eq 1 ;;
+esac
 test -n "${SANDBOX_UNDERLAY_IP:-}"
 test -n "${SANDBOX_PRIVATE_GATEWAY_IP:-}"
 underlay=$(ip -o -4 addr show | awk -v address="$SANDBOX_UNDERLAY_IP/24" '$4 == address { print $2 }')
@@ -29,4 +33,7 @@ table inet homeharbor_sandbox_fence {
 }
 EOF
 
-exec /agent --config "$1"
+case "$1" in
+enroll | identity) exec /agent "$@" ;;
+*) exec /agent --config "$1" ;;
+esac
