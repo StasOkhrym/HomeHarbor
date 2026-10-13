@@ -126,17 +126,46 @@ func (c *Controller) ApplySigned(
 func (c *Controller) Close(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	if !c.touched {
 		return nil
 	}
-	operation, cancel := context.WithTimeout(ctx, c.timeout)
+
+	if err := CloseOwned(ctx, c.authority, c.timeout, c.helper); err != nil {
+		return err
+	}
+
+	c.touched = false
+
+	return nil
+}
+
+// CloseOwned requests scoped journal cleanup without private keys or control
+// connectivity. The installed policy independently validates the public owner.
+func CloseOwned(
+	ctx context.Context,
+	authority Authority,
+	timeout time.Duration,
+	helper HelperExecutor,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if len(authority.Root) != ed25519.PublicKeySize || authority.NetworkID == "" ||
+		authority.DeviceID == "" || timeout <= 0 || helper == nil {
+		return errors.New("native cleanup requires public ownership and a bounded helper")
+	}
+
+	operation, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if err := c.helper.Execute(
+
+	if err := helper.Execute(
 		operation,
-		HelperRequest{Version: 1, Action: "close", Owner: helperOwner(c.authority)},
+		HelperRequest{Version: 1, Action: "close", Owner: helperOwner(authority)},
 	); err != nil {
 		return fmt.Errorf("close native owned network: %w", err)
 	}
-	c.touched = false
+
 	return nil
 }
