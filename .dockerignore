@@ -3,6 +3,7 @@
 .superpowers
 .worktrees
 .local
+.sandbox
 state
 secrets
 .env
