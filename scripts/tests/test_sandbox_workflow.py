@@ -296,10 +296,11 @@ class SandboxWorkflowTests(unittest.TestCase):
             self.assertFalse(any("down" in args for args, _ in docker.calls))
 
     def test_sandbox_excluded_from_every_required_gate(self):
-        targets = ("up", "client", "status", "logs", "check", "down", "reset")
+        targets = ("up", "client", "status", "logs", "check", "down", "reset", "trust-ca")
         makefile = (ROOT / "Makefile").read_text()
         for target in targets:
             self.assertIn(f"sandbox-{target}", makefile)
+
         files = [
             ROOT / "scripts/verify.sh",
             ROOT / "scripts/integration.py",
@@ -308,13 +309,17 @@ class SandboxWorkflowTests(unittest.TestCase):
         files.extend((ROOT / ".github").rglob("*.yml"))
         for path in files:
             text = path.read_text()
+
             self.assertNotIn("scripts/sandbox.sh", text, str(path))
             self.assertNotIn("sandbox_workflow.py", text, str(path))
+
             for target in targets:
                 self.assertNotIn(f"make sandbox-{target}", text, str(path))
+
         # Required target recipes must not depend on or launch sandbox orchestration.
         for name in ("verify", "test", "lint", "integration", "acceptance", "security"):
             recipe = makefile.split(f"\n{name}:", 1)[1].split("\n\n", 1)[0]
+
             self.assertNotIn("sandbox-", recipe)
             self.assertNotIn("sandbox.sh", recipe)
 

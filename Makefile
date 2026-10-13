@@ -25,7 +25,7 @@ help:
 	  'verify FULL=1: additionally integration, security, local Compose and Linux acceptance' \
 	  'security / integration / acceptance: explicit heavier gates' \
 	  'dev-up / dev-down / dev-logs / dev-trust-ca: local UI stack and test CA' \
-	  'sandbox-up/client/gateway/prepare/status/logs/check/down/reset: optional manual Mac flow'
+	  'sandbox-up/trust-ca/client/gateway/prepare/status/logs/check/down/reset: optional manual Mac flow'
 
 doctor:
 	cd "$(ROOT)" && sh scripts/doctor.sh $(or $(PROFILE),backend)
@@ -74,9 +74,9 @@ dev-up dev-down dev-logs:
 dev-trust-ca:
 	cd "$(ROOT)" && sh scripts/dev-trust-ca.sh
 
-.PHONY: sandbox-up sandbox-client sandbox-gateway sandbox-prepare sandbox-status sandbox-logs sandbox-check sandbox-down sandbox-reset
+.PHONY: sandbox-up sandbox-client sandbox-gateway sandbox-prepare sandbox-status sandbox-logs sandbox-check sandbox-down sandbox-reset sandbox-trust-ca
 
-sandbox-up sandbox-status sandbox-logs sandbox-down sandbox-reset:
+sandbox-up sandbox-status sandbox-logs sandbox-down sandbox-reset sandbox-trust-ca:
 	cd "$(ROOT)" && PYTHON="$(PYTHON)" sh scripts/sandbox.sh $(patsubst sandbox-%,%,$@)
 
 sandbox-client sandbox-gateway:

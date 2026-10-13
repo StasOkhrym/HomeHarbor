@@ -363,12 +363,28 @@ class Workflow:
 
         stop_client(self)
 
+    def trust_ca(self):
+        from sandbox_trust import trust_ca
+
+        trust_ca(self)
+
 
 def dispatch_command():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("up", "client", "gateway", "prepare", "status", "logs", "check", "down", "reset"),
+        choices=(
+            "up",
+            "client",
+            "gateway",
+            "prepare",
+            "status",
+            "logs",
+            "check",
+            "down",
+            "reset",
+            "trust-ca",
+        ),
     )
     parser.add_argument("action", nargs="?")
     parser.add_argument(
@@ -384,7 +400,7 @@ def dispatch_command():
         return dispatch(workflow, args.command, args.action, args.trust_fingerprint)
     if args.action is not None:
         parser.error("this command takes no extra arguments")
-    getattr(workflow, args.command)()
+    getattr(workflow, args.command.replace("-", "_"))()
 
 
 def main():

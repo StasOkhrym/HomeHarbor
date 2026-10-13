@@ -49,9 +49,26 @@ published ports separate; stop an occupying stack before this flow. Repeated
 up requires down first, preserving selected pools, trust, database and identities.
 
 Inspect `.sandbox/secrets/relay_tls_ca` and its SHA-256 fingerprint through a
-trusted local operator channel. Import that public CA into the **login** keychain
-and explicitly trust it for this disposable browser session. Follow [Apple's
-certificate trust instructions](https://support.apple.com/guide/keychain-access/kyca11871/mac).
+trusted local operator channel. Then run the explicit trust scenario:
+
+```sh
+make sandbox-trust-ca
+```
+
+For a new certificate, the command requires a terminal and asks you to type its
+displayed public fingerprint. Complete any macOS authentication prompt yourself.
+It adds only SSL trust for `control.localhost` in your **login** keychain; it
+does not alter system trust. Before/after user trust snapshots are kept privately
+under `.sandbox/browser-trust/`. A matching repeated run verifies the existing
+rule without rewriting it; a broader or different existing rule is refused.
+The command also checks that native macOS trust accepts `control.localhost` and
+rejects `relay.localhost` for the same frontend certificate.
+
+Use **Safari** for this hostname-scoped trust. Chromium skips
+hostname-scoped macOS trust entries; Chrome can still show a certificate error.
+Do not broaden the rule or bypass that warning to make Chrome work. See the
+[Chromium trust implementation](https://chromium.googlesource.com/chromium/src/+/2ec986dc720f5ce63b218a6ede134a29df4b726b/net/cert/internal/trust_store_mac.cc)
+and [Apple's trust settings](https://support.apple.com/guide/keychain-access/kyca11871/mac).
 The CLI uses its explicit CA file; it never changes browser or system trust.
 Do not disable TLS verification, trust an arbitrary downloaded replacement root,
 or capture secret token/passkey screens.
