@@ -13,6 +13,9 @@ CHECK ?= allowed
 ifneq ($(strip $(TRUST_FINGERPRINT)),)
 export SANDBOX_TRUST_FINGERPRINT := $(TRUST_FINGERPRINT)
 endif
+ifneq ($(strip $(TRUST_BROWSER)),)
+export SANDBOX_TRUST_BROWSER := $(TRUST_BROWSER)
+endif
 FUZZ_TIME ?= 5s
 SECURITY ?= all
 

@@ -3,8 +3,11 @@
 import base64
 import hashlib
 import importlib
+import inspect
 import io
+import os
 import plistlib
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -23,6 +26,12 @@ DER = b"public-certificate-fixture"
 PEM = b"-----BEGIN CERTIFICATE-----\n" + base64.b64encode(DER) + b"\n-----END CERTIFICATE-----\n"
 CERT_ID = hashlib.sha1(DER).hexdigest().upper()
 FINGERPRINT = hashlib.sha256(DER).hexdigest().upper()
+LEAF_DER = b"public-server-certificate-fixture"
+LEAF_PEM = (
+    b"-----BEGIN CERTIFICATE-----\n" + base64.b64encode(LEAF_DER) + b"\n-----END CERTIFICATE-----\n"
+)
+LEAF_ID = hashlib.sha1(LEAF_DER).hexdigest().upper()
+LEAF_FINGERPRINT = hashlib.sha256(LEAF_DER).hexdigest().upper()
 
 
 def scoped_entry(host="control.localhost"):
@@ -32,6 +41,18 @@ def scoped_entry(host="control.localhost"):
                 "kSecTrustSettingsPolicyName": "sslServer",
                 "kSecTrustSettingsPolicy": b"ssl-policy",
                 "kSecTrustSettingsPolicyString": host,
+            }
+        ]
+    }
+
+
+def chrome_entry():
+    return {
+        "trustSettings": [
+            {
+                "kSecTrustSettingsPolicyName": "sslServer",
+                "kSecTrustSettingsPolicy": b"ssl-policy",
+                "kSecTrustSettingsResult": 2,
             }
         ]
     }
@@ -49,38 +70,69 @@ class SecurityBoundary:
 
     def __call__(self, args, **kwargs):
         self.calls.append(args)
+        if args[0] == "/usr/bin/openssl":
+            output = (
+                b"X509v3 Basic Constraints: critical\n CA:FALSE\n"
+                b"X509v3 Subject Alternative Name:\n"
+                b" DNS:control.localhost, DNS:relay.localhost, DNS:control.sandbox, DNS:relay.sandbox\n"
+            )
+            return SimpleNamespace(returncode=0, stdout=output, stderr=b"")
+
         if args[1] == "trust-settings-export":
             Path(args[-1]).write_bytes(plistlib.dumps({"trustList": self.entries}))
+
         if args[1] == "add-trusted-cert":
             if self.fail_add:
                 return SimpleNamespace(
                     returncode=1, stdout=b"private-sentinel", stderr=b"private-sentinel"
                 )
-            self.entries[CERT_ID] = scoped_entry()
+
+            der = ssl.PEM_cert_to_DER_cert(Path(args[-1]).read_text())
+            cert_id = hashlib.sha1(der).hexdigest().upper()
+            self.entries[cert_id] = chrome_entry() if "trustAsRoot" in args else scoped_entry()
             if self.change_other:
                 self.entries["OTHER"] = scoped_entry("foreign.example")
-        if args[1] == "verify-cert" and args[args.index("-n") + 1] == "relay.localhost":
-            return SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+
+        if args[1] == "verify-cert":
+            host = args[args.index("-n") + 1]
+            if host not in {"control.localhost", "relay.localhost"} or (
+                host == "relay.localhost" and LEAF_ID not in self.entries
+            ):
+                return SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+
         return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
 
 class SandboxTrustTests(unittest.TestCase):
-    def invoke(self, temp, security, *, terminal=True, confirmation=FINGERPRINT):
+    def invoke(self, temp, security, *, terminal=True, confirmation=FINGERPRINT, browser="safari"):
         from sandbox_workflow import Workflow
 
         try:
             trust = importlib.import_module("sandbox_trust")
         except ModuleNotFoundError:
             self.fail("sandbox CA trust scenario is not implemented")
+
         flow = Workflow(Path(temp), run=DockerBoundary(), uid=501)
         flow.create_owner()
         ca = flow.sandbox / "secrets/relay_tls_ca"
         ca.parent.mkdir(exist_ok=True)
         if not ca.exists() and not ca.is_symlink():
             ca.write_bytes(PEM)
-        (ca.parent / "frontend_tls_cert").write_bytes(PEM)
+
+        (ca.parent / "frontend_tls_cert").write_bytes(LEAF_PEM)
+        options = {"run": security, "terminal": terminal, "prompt": lambda _: confirmation}
+        if browser != "safari":
+            self.assertIn(
+                "browser",
+                inspect.signature(trust.trust_ca).parameters,
+                "Chrome leaf trust mode is not implemented",
+            )
+
+            options["browser"] = browser
+
         with patch("sandbox_trust.sys.platform", "darwin"):
-            trust.trust_ca(flow, run=security, terminal=terminal, prompt=lambda _: confirmation)
+            trust.trust_ca(flow, **options)
+
         return flow
 
     def test_make_exposes_explicit_trust_scenario(self):
@@ -94,6 +146,128 @@ class SandboxTrustTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("scripts/sandbox.sh trust-ca", result.stdout)
+
+    def test_make_passes_browser_as_environment_without_shell_interpolation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "scripts").mkdir()
+            (root / "Makefile").write_bytes((ROOT / "Makefile").read_bytes())
+            (root / "scripts/sandbox.sh").write_bytes((ROOT / "scripts/sandbox.sh").read_bytes())
+            (root / "scripts/sandbox_workflow.py").write_text(
+                "import os; print(os.environ.get('SANDBOX_TRUST_BROWSER'))\n"
+            )
+            value = 'chrome";touch INJECTION_SENTINEL;#'
+            result = subprocess.run(
+                [
+                    "make",
+                    "--silent",
+                    "sandbox-trust-ca",
+                    f"TRUST_BROWSER={value}",
+                    f"PYTHON={sys.executable}",
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), value)
+            self.assertFalse((root / "INJECTION_SENTINEL").exists())
+
+    def test_cli_browser_option_is_scoped_and_overrides_environment(self):
+        import sandbox_workflow
+
+        selected = []
+        fake = SimpleNamespace(trust_ca=lambda browser: selected.append(browser))
+        with (
+            patch.object(sandbox_workflow, "Workflow", return_value=fake),
+            patch.dict(os.environ, {"SANDBOX_TRUST_BROWSER": "safari"}),
+            patch.object(sys, "argv", ["sandbox", "trust-ca", "--browser", "chrome"]),
+        ):
+            sandbox_workflow.dispatch_command()
+        self.assertEqual(selected, ["chrome"])
+        for command in ["status", "up", "client"]:
+            with (
+                patch.object(sandbox_workflow, "Workflow") as constructor,
+                patch.object(sys, "argv", ["sandbox", command, "--browser", "chrome"]),
+                self.assertRaises(SystemExit),
+                redirect_stdout(io.StringIO()),
+            ):
+                with patch("sys.stderr", io.StringIO()):
+                    sandbox_workflow.dispatch_command()
+            constructor.assert_not_called()
+
+    def test_cancelled_fingerprint_confirmation_does_not_mutate_trust(self):
+        from sandbox_trust import trust_ca
+
+        with tempfile.TemporaryDirectory() as temp:
+            security = SecurityBoundary()
+            flow = self.invoke(temp, SecurityBoundary(scoped_entry()), terminal=False)
+
+            def cancel(_):
+                raise KeyboardInterrupt
+
+            with patch("sandbox_trust.sys.platform", "darwin"):
+                try:
+                    result = trust_ca(flow, run=security, terminal=True, prompt=cancel)
+                except KeyboardInterrupt:
+                    self.fail("cancelled browser trust propagates a traceback instead of exit130")
+
+            self.assertEqual(result, 130)
+            self.assertFalse(any(a[1] == "add-trusted-cert" for a in security.calls))
+
+    def test_chrome_trusts_only_current_server_leaf_and_preserves_ca_rule(self):
+        with tempfile.TemporaryDirectory() as temp, redirect_stdout(io.StringIO()) as output:
+            security = SecurityBoundary(scoped_entry())
+            self.invoke(temp, security, browser="chrome", confirmation=LEAF_FINGERPRINT)
+            command = next(a for a in security.calls if a[1] == "add-trusted-cert")
+
+            self.assertEqual(
+                command[:6],
+                ["/usr/bin/security", "add-trusted-cert", "-r", "trustAsRoot", "-p", "ssl"],
+            )
+            self.assertNotIn("-s", command)
+            self.assertNotIn("-d", command)
+            self.assertEqual(security.entries[CERT_ID], scoped_entry())
+            self.assertEqual(security.entries[LEAF_ID], chrome_entry())
+            self.assertIn(LEAF_FINGERPRINT, output.getvalue())
+
+    def test_chrome_validation_uses_system_libressl_compatible_arguments(self):
+        with tempfile.TemporaryDirectory() as temp:
+            security = SecurityBoundary()
+            self.invoke(temp, security, browser="chrome", confirmation=LEAF_FINGERPRINT)
+            commands = [a for a in security.calls if a[0] == "/usr/bin/openssl"]
+
+            self.assertTrue(commands)
+
+            for command in commands:
+                self.assertNotIn("-verify_hostname", command)
+                self.assertNotIn("-ext", command)
+
+    def test_chrome_repeat_and_safari_after_chrome_do_not_rewrite_trust(self):
+        with tempfile.TemporaryDirectory() as temp:
+            security = SecurityBoundary(scoped_entry())
+            security.entries[LEAF_ID] = chrome_entry()
+            for browser in ["chrome", "safari"]:
+                self.invoke(temp, security, browser=browser, terminal=False)
+
+            self.assertFalse(any(a[1] == "add-trusted-cert" for a in security.calls))
+
+    def test_chrome_rejects_ca_or_unexpected_san_before_trust_mutation(self):
+        for properties in [b"CA:TRUE\nDNS:control.localhost", b"CA:FALSE\nDNS:*.example.com"]:
+            with self.subTest(properties=properties), tempfile.TemporaryDirectory() as temp:
+                security = SecurityBoundary()
+
+                def run(args, *, properties=properties, boundary=security, **kwargs):
+                    if args[0] == "/usr/bin/openssl" and args[1] == "x509":
+                        return SimpleNamespace(returncode=0, stdout=properties, stderr=b"")
+
+                    return boundary(args, **kwargs)
+
+                with self.assertRaisesRegex(ValueError, "server|SAN|CA"):
+                    self.invoke(temp, run, browser="chrome", confirmation=LEAF_FINGERPRINT)
+
+                self.assertFalse(any(a[1] == "add-trusted-cert" for a in security.calls))
 
     def test_confirmed_trust_has_only_hostname_ssl_and_user_keychain(self):
         with tempfile.TemporaryDirectory() as temp, redirect_stdout(io.StringIO()) as output:

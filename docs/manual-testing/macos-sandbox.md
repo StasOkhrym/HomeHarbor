@@ -64,9 +64,23 @@ rule without rewriting it; a broader or different existing rule is refused.
 The command also checks that native macOS trust accepts `control.localhost` and
 rejects `relay.localhost` for the same frontend certificate.
 
-Use **Safari** for this hostname-scoped trust. Chromium skips
-hostname-scoped macOS trust entries; Chrome can still show a certificate error.
-Do not broaden the rule or bypass that warning to make Chrome work. See the
+Use **Safari** for this hostname-scoped CA trust. For Chrome, run the separate
+explicit server-certificate mode:
+
+```sh
+make sandbox-trust-ca TRUST_BROWSER=chrome
+```
+
+Chrome skips hostname-scoped macOS trust entries. This mode instead verifies and
+trusts only the current `CA:FALSE` frontend certificate for SSL. Its SANs must be
+exactly `control.localhost`, `relay.localhost`, `control.sandbox` and
+`relay.sandbox`. Confirm the displayed **server certificate** fingerprint; it
+differs from the CA fingerprint. The existing CA rule is preserved. A renewed
+server certificate needs explicit trust of its new fingerprint. Both modes
+reject an unrelated hostname; when the explicit Chrome leaf is installed,
+`relay.localhost` is also accepted for that exact certificate.
+
+Do not bypass a browser warning. See the
 [Chromium trust implementation](https://chromium.googlesource.com/chromium/src/+/2ec986dc720f5ce63b218a6ede134a29df4b726b/net/cert/internal/trust_store_mac.cc)
 and [Apple's trust settings](https://support.apple.com/guide/keychain-access/kyca11871/mac).
 The CLI uses its explicit CA file; it never changes browser or system trust.

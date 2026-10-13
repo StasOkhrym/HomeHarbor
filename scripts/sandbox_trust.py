@@ -2,6 +2,7 @@
 
 import hashlib
 import plistlib
+import re
 import ssl
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from tooling import atomic_write
 
 SECURITY = "/usr/bin/security"
 HOST = "control.localhost"
+SERVER_NAMES = frozenset({HOST, "relay.localhost", "control.sandbox", "relay.sandbox"})
 
 
 def security_command(args, *, timeout=30):
@@ -48,32 +50,77 @@ def export_trust(path, run):
     return entries
 
 
-def scoped_trust(entry):
+def scoped_trust(entry, browser="safari"):
     if not isinstance(entry, dict):
         return False
     rules = entry.get("trustSettings")
     if not isinstance(rules, list) or len(rules) != 1 or not isinstance(rules[0], dict):
         return False
     rule = rules[0]
-    required = {
-        "kSecTrustSettingsPolicy",
-        "kSecTrustSettingsPolicyName",
-        "kSecTrustSettingsPolicyString",
-    }
+    required = {"kSecTrustSettingsPolicy", "kSecTrustSettingsPolicyName"}
+    if browser == "safari":
+        required.add("kSecTrustSettingsPolicyString")
     # Apple defines an omitted result as trustRoot. Reject extra usage/error rules.
     return (
         required <= set(rule) <= required | {"kSecTrustSettingsResult"}
         and rule["kSecTrustSettingsPolicyName"] == "sslServer"
-        and rule["kSecTrustSettingsPolicyString"] == HOST
+        and (browser == "chrome" or rule["kSecTrustSettingsPolicyString"] == HOST)
         and type(rule.get("kSecTrustSettingsResult", 1)) is int
-        and rule.get("kSecTrustSettingsResult", 1) == 1
+        and rule.get("kSecTrustSettingsResult", 1) == (2 if browser == "chrome" else 1)
         and isinstance(rule["kSecTrustSettingsPolicy"], bytes)
         and bool(rule["kSecTrustSettingsPolicy"])
     )
 
 
-def verify_scope(certificate, ca, run):
-    for host, accepted in ((HOST, True), ("relay.localhost", False)):
+def validate_server_leaf(certificate, ca, run):
+    result = run(
+        [
+            "/usr/bin/openssl",
+            "verify",
+            "-purpose",
+            "sslserver",
+            "-CAfile",
+            str(ca),
+            str(certificate),
+        ]
+    )
+    if result.returncode:
+        raise ValueError("server certificate does not verify against the sandbox CA")
+    result = run(
+        [
+            "/usr/bin/openssl",
+            "x509",
+            "-in",
+            str(certificate),
+            "-noout",
+            "-text",
+        ]
+    )
+    if result.returncode:
+        raise ValueError("cannot inspect sandbox server certificate")
+    try:
+        properties = result.stdout.decode("ascii")
+        san = re.search(r"X509v3 Subject Alternative Name:\s*\n([^\n]+)", properties)
+        names = [part.strip() for part in san[1].split(",")] if san else []
+        if (
+            "CA:FALSE" not in properties
+            or "CA:TRUE" in properties
+            or len(names) != 4
+            or set(names) != {"DNS:" + name for name in SERVER_NAMES}
+        ):
+            raise ValueError
+    except (UnicodeError, ValueError):
+        raise ValueError(
+            "server certificate must be CA:FALSE with exactly the four sandbox SAN names"
+        ) from None
+
+
+def verify_scope(certificate, ca, run, *, relay_accepted=False):
+    for host, accepted in (
+        (HOST, True),
+        ("relay.localhost", relay_accepted),
+        ("unrelated.localhost", False),
+    ):
         result = run(
             [
                 SECURITY,
@@ -94,7 +141,9 @@ def verify_scope(certificate, ca, run):
             raise ValueError("macOS hostname trust verification failed; inspect saved trust state")
 
 
-def trust_ca(flow, *, run=security_command, terminal=None, prompt=input):
+def trust_ca(flow, *, run=security_command, terminal=None, prompt=input, browser="safari"):
+    if browser not in {"safari", "chrome"}:
+        raise ValueError("TRUST_BROWSER must be safari or chrome")
     flow.require_owner()
     if sys.platform != "darwin":
         raise ValueError("sandbox browser trust requires macOS")
@@ -109,7 +158,8 @@ def trust_ca(flow, *, run=security_command, terminal=None, prompt=input):
         if content is None or leaf is None:
             raise ValueError("run sandbox-up before browser trust; CA/certificate missing")
         try:
-            text = content.decode("ascii")
+            trusted = leaf if browser == "chrome" else content
+            text = trusted.decode("ascii")
             if text.count("-----BEGIN CERTIFICATE-----") != 1:
                 raise ValueError
             der = ssl.PEM_cert_to_DER_cert(text)
@@ -117,58 +167,79 @@ def trust_ca(flow, *, run=security_command, terminal=None, prompt=input):
             raise ValueError("sandbox CA must contain one public PEM certificate") from None
         fingerprint = hashlib.sha256(der).hexdigest().upper()
         cert_id = hashlib.sha1(der).hexdigest().upper()
-        print(f"Sandbox browser CA SHA-256: {fingerprint}")
+        print(
+            f"Sandbox browser {'server certificate' if browser == 'chrome' else 'CA'} SHA-256: {fingerprint}"
+        )
         history.mkdir(mode=0o700, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="inspect-", dir=history) as temporary:
             staged = Path(temporary)
             atomic_write(staged / "ca.pem", content)
             atomic_write(staged / "frontend.pem", leaf)
+            if browser == "chrome":
+                validate_server_leaf(staged / "frontend.pem", staged / "ca.pem", run)
+                print("Chrome mode trusts only this CA:FALSE server certificate for SSL.")
+                print("Certificate SANs: " + ", ".join(sorted(SERVER_NAMES)))
             before = export_trust(staged / "before.plist", run)
+            leaf_id = (
+                hashlib.sha1(ssl.PEM_cert_to_DER_cert(leaf.decode("ascii"))).hexdigest().upper()
+            )
+            relay_accepted = browser == "chrome" or scoped_trust(before.get(leaf_id), "chrome")
             if cert_id in before:
-                if not scoped_trust(before[cert_id]):
+                if not scoped_trust(before[cert_id], browser):
                     raise ValueError("existing certificate trust differs; refusing to replace it")
-                verify_scope(staged / "frontend.pem", staged / "ca.pem", run)
-                print("Exact SSL hostname trust already installed; no change.")
-                print("Use Safari for this scoped trust; Chrome ignores hostname constraints.")
+                verify_scope(
+                    staged / "frontend.pem", staged / "ca.pem", run, relay_accepted=relay_accepted
+                )
+                print("Exact browser SSL trust already installed; no change.")
+                if browser == "safari":
+                    print(
+                        "Use Safari for scoped CA trust; Chrome requires explicit server certificate trust."
+                    )
                 return
             if terminal is None:
                 terminal = sys.stdin.isatty()
             if not terminal:
                 raise ValueError("new browser trust needs terminal fingerprint confirmation")
-            answer = prompt(f"Trust only SSL {HOST}? Type the displayed SHA-256 fingerprint: ")
+            try:
+                answer = prompt("Confirm the displayed browser certificate SHA-256 fingerprint: ")
+            except KeyboardInterrupt:
+                print("Browser trust confirmation cancelled; no change.")
+                return 130
+            except EOFError:
+                raise ValueError("browser trust confirmation ended; no change") from None
             if answer.strip().replace(":", "").upper() != fingerprint:
                 raise ValueError("browser CA fingerprint confirmation did not match; no change")
             # Retain before/after records only when a mutation may have occurred.
             record = Path(tempfile.mkdtemp(prefix="approved-", dir=history))
-            atomic_write(record / "ca.pem", content)
+            atomic_write(record / "trusted.pem", trusted)
             atomic_write(record / "before.plist", (staged / "before.plist").read_bytes())
-            result = run(
-                [
-                    SECURITY,
-                    "add-trusted-cert",
-                    "-r",
-                    "trustRoot",
-                    "-p",
-                    "ssl",
-                    "-s",
-                    HOST,
-                    "-k",
-                    str(Path.home() / "Library/Keychains/login.keychain-db"),
-                    str(record / "ca.pem"),
-                ],
-                timeout=180,
-            )
+            args = [
+                SECURITY,
+                "add-trusted-cert",
+                "-r",
+                "trustAsRoot" if browser == "chrome" else "trustRoot",
+                "-p",
+                "ssl",
+            ]
+            if browser == "safari":
+                args += ["-s", HOST]
+            args += [
+                "-k",
+                str(Path.home() / "Library/Keychains/login.keychain-db"),
+                str(record / "trusted.pem"),
+            ]
+            result = run(args, timeout=180)
             after = export_trust(record / "after.plist", run)
             if result.returncode:
                 raise ValueError("browser CA trust command failed; private output withheld")
             if (
                 set(after) != set(before) | {cert_id}
                 or any(after.get(key) != value for key, value in before.items())
-                or not scoped_trust(after.get(cert_id))
+                or not scoped_trust(after.get(cert_id), browser)
             ):
                 raise ValueError("user trust changed unexpectedly; inspect saved trust snapshots")
-            verify_scope(staged / "frontend.pem", staged / "ca.pem", run)
-        print("Verified user SSL trust for control.localhost; previous trust entries preserved.")
-        print(
-            "Open sandbox login in Safari; complete passkey setup and retain recovery codes privately."
-        )
+            verify_scope(
+                staged / "frontend.pem", staged / "ca.pem", run, relay_accepted=relay_accepted
+            )
+        print(f"Verified {browser} user SSL trust; previous trust entries preserved.")
+        print("A renewed Chrome server certificate requires explicit trust of its new fingerprint.")
