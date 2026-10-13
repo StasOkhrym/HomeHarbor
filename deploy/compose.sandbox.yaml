@@ -1,20 +1,29 @@
 name: homeharbor-sandbox
 
+x-owner: &sandbox-owner
+  io.homeharbor.sandbox.workspace: ${SANDBOX_WORKSPACE:?use scripts/sandbox.sh}
+  io.homeharbor.sandbox.owner: ${SANDBOX_OWNER_UID:?use scripts/sandbox.sh}
+
 services:
   db:
+    labels: *sandbox-owner
     extends: { file: compose.yaml, service: db }
     networks: [backend]
     volumes: [sandbox-postgres:/var/lib/postgresql/data]
   redis:
+    labels: *sandbox-owner
     extends: { file: compose.yaml, service: redis }
     networks: [backend]
   migrate:
+    labels: *sandbox-owner
     extends: { file: compose.yaml, service: migrate }
     networks: [backend]
   control:
+    labels: *sandbox-owner
     extends: { file: compose.yaml, service: control }
     networks: [backend]
   relay:
+    labels: *sandbox-owner
     extends: { file: compose.yaml, service: relay }
     networks:
       backend:
@@ -22,6 +31,7 @@ services:
         ipv4_address: ${SANDBOX_RELAY_UNDERLAY_IP:-172.28.40.20}
     ports: ["127.0.0.1:52000-52015:52000-52015/udp"]
   proxy:
+    labels: *sandbox-owner
     image: traefik:v3.7.13
     user: "${RUNTIME_UID:-65532}:${RUNTIME_GID:-65532}"
     command: ["--configFile=/etc/traefik/traefik.toml"]
@@ -51,6 +61,7 @@ services:
       timeout: 3s
       retries: 12
   gateway:
+    labels: *sandbox-owner
     profiles: [native-client]
     build:
       context: ..
@@ -78,6 +89,7 @@ services:
       proxy: { condition: service_healthy }
     init: true
   dns:
+    labels: *sandbox-owner
     build:
       context: ..
       dockerfile: deploy/sandbox/Dockerfile.fixture
@@ -98,6 +110,7 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
   site:
+    labels: *sandbox-owner
     build:
       context: ..
       dockerfile: deploy/sandbox/Dockerfile.fixture
@@ -108,6 +121,7 @@ services:
       - >-
         ip route replace ${SANDBOX_OVERLAY_SUBNET:-10.200.0.0/24}
         via ${SANDBOX_PRIVATE_GATEWAY_IP:-172.29.50.2} &&
+        httpd -p 8081 -h /site &&
         exec httpd -f -p 8080 -h /site
     networks:
       private:
@@ -118,13 +132,16 @@ services:
 
 networks:
   backend:
+    labels: *sandbox-owner
     internal: true
     ipam:
       config: [{ subnet: "${SANDBOX_BACKEND_SUBNET:-172.30.60.0/24}" }]
   underlay:
+    labels: *sandbox-owner
     ipam:
       config: [{ subnet: "${SANDBOX_UNDERLAY_SUBNET:-172.28.40.0/24}" }]
   private:
+    labels: *sandbox-owner
     internal: true
     ipam:
       config: [{ subnet: "${SANDBOX_PRIVATE_SUBNET:-172.29.50.0/24}" }]
@@ -151,4 +168,6 @@ secrets:
 
 volumes:
   sandbox-postgres:
+    labels: *sandbox-owner
   sandbox-gateway-state:
+    labels: *sandbox-owner

@@ -217,6 +217,24 @@ class ToolingTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("limactl", result.stderr)
 
+    def test_sandbox_doctor_is_explicit_macos_without_installs(self):
+        self.dependencies()
+        self.cli("uname", "printf Darwin\n")
+        for name in ("docker", "openssl", "wireguard-go", "wg", "netstat", "scutil"):
+            self.cli(name)
+
+        result = self.run_script("doctor", "sandbox")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("wireguard-go", result.stdout)
+        self.assertIn("Explicit helper provisioning", result.stdout)
+
+        self.cli("uname", "printf Linux\n")
+        result = self.run_script("doctor", "sandbox")
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("macOS", result.stderr)
+
     def test_integration_requires_redis_before_running_go(self):
         self.cli("go", "exit 99\n")
         self.env["TEST_DATABASE_URL"] = "postgres://test"

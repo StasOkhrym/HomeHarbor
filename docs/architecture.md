@@ -19,9 +19,11 @@ an invalid trust configuration is rejected before creating identity or tunnels.
 Gateway/client wiring lives in `internal/app/node`, not duplicated in `cmd`.
 
 Docker packages these processes; it does not replace the operating system.
-TUN/WireGuard, routing and nftables require a Linux kernel. Mac Compose is for
-backend/UI development. Linux namespaces and Lima exercise privileged network
-operations without modifying the Mac's home-network forwarding.
+The gateway's TUN/WireGuard, routing and nftables require a Linux kernel. Mac
+Compose supports backend/UI development; the separate optional
+[manual sandbox](manual-testing/macos-sandbox.md) pairs a Linux Docker gateway
+with a native macOS utun/scoped-DNS client and a bounded root helper. Linux
+namespaces and Lima exercise their own privileged network component checks.
 
 ## Module boundaries
 

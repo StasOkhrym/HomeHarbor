@@ -53,6 +53,14 @@ Dockerfiles and configuration formats; generated/vendor files are excluded.
 CI selects gates conservatively; docs-only changes do not build Go. A milestone
 requires the full gate on its exact commit, not just a successful fast job.
 
+## Optional manual macOS sandbox
+
+The [one-Mac sandbox flow](docs/manual-testing/macos-sandbox.md) uses isolated
+Docker services and a host-native WireGuard client. `make sandbox-up` provisions
+the Docker side; join, companion approval, privileged helper provisioning and
+browser trust are explicit steps. `sandbox-down` preserves identities; reset
+requires stopped, owned resources. No sandbox provisioning runs in required gates.
+
 ## Structure and trust
 
 - Thin `cmd/*` entrypoints; explicit application wiring in `internal/app/*`.

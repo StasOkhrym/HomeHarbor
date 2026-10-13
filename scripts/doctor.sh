@@ -1,15 +1,19 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")/.."
+
 profile=${1:-backend}
+
 case "$profile" in
-backend | compose | e2e | all) ;;
+backend | compose | e2e | sandbox | all) ;;
 *)
-    printf 'usage: %s [backend|compose|e2e|all]\n' "$0" >&2
+    printf 'usage: %s [backend|compose|e2e|sandbox|all]\n' "$0" >&2
     exit 2
     ;;
 esac
+
 missing=0
+
 require_command() {
     if command -v "$1" >/dev/null 2>&1; then
         printf '%s: %s\n' "$1" "$(command -v "$1")"
@@ -18,11 +22,14 @@ require_command() {
         missing=1
     fi
 }
+
 case "$profile" in
 backend | all) for name in go git golangci-lint python3 node npm ruff djlint shellcheck yamllint sqlfluff hadolint; do require_command "$name"; done ;;
 compose) for name in docker openssl python3; do require_command "$name"; done ;;
 e2e) for name in go python3 curl; do require_command "$name"; done ;;
+sandbox) for name in go python3 docker openssl wireguard-go wg netstat scutil; do require_command "$name"; done ;;
 esac
+
 if command -v python3 >/dev/null 2>&1; then
     version=$(python3 --version)
     version=${version#Python }
@@ -40,12 +47,14 @@ if command -v python3 >/dev/null 2>&1; then
     fi ;;
     esac
 fi
+
 case "$profile" in
-compose | all)
+compose | sandbox | all)
     if [ "$profile" = all ]; then
         require_command docker
         require_command openssl
     fi
+
     if command -v docker >/dev/null 2>&1; then
         if ! docker compose version >/dev/null 2>&1; then
             echo 'docker compose: missing' >&2
@@ -58,6 +67,7 @@ compose | all)
     fi
     ;;
 esac
+
 case "$profile" in
 e2e | all)
     if [ "$profile" = all ]; then require_command curl; fi
@@ -76,4 +86,12 @@ e2e | all)
     fi
     ;;
 esac
+if [ "$profile" = sandbox ]; then
+    if [ "$(uname -s)" != Darwin ]; then
+        echo 'The optional native sandbox requires macOS' >&2
+        missing=1
+    fi
+    echo 'Explicit helper provisioning and browser CA trust are separate manual steps.'
+fi
+
 exit "$missing"

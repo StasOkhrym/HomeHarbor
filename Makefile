@@ -8,6 +8,8 @@ FULL ?= 0
 export GO_PACKAGES := ./cmd/... ./internal/... ./migrations/...
 export SHFMT_PACKAGE := mvdan.cc/sh/v3/cmd/shfmt@v3.14.1
 export ACTIONLINT_PACKAGE := github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+ACTION ?= run
+CHECK ?= allowed
 FUZZ_TIME ?= 5s
 SECURITY ?= all
 
@@ -15,11 +17,12 @@ SECURITY ?= all
 
 help:
 	@printf '%s\n' \
-	  'doctor: report missing local dependencies (PROFILE=backend|compose|e2e)' \
+	  'doctor: report missing local dependencies (PROFILE=backend|compose|e2e|sandbox)' \
 	  'fmt / lint / test / verify: format, read-only checks, tests, portable gate' \
 	  'verify FULL=1: additionally integration, security, local Compose and Linux acceptance' \
 	  'security / integration / acceptance: explicit heavier gates' \
-	  'dev-up / dev-down / dev-logs / dev-trust-ca: local UI stack and test CA'
+	  'dev-up / dev-down / dev-logs / dev-trust-ca: local UI stack and test CA' \
+	  'sandbox-up/client/gateway/prepare/status/logs/check/down/reset: optional manual Mac flow'
 
 doctor:
 	cd "$(ROOT)" && sh scripts/doctor.sh $(or $(PROFILE),backend)
@@ -67,3 +70,19 @@ dev-up dev-down dev-logs:
 
 dev-trust-ca:
 	cd "$(ROOT)" && sh scripts/dev-trust-ca.sh
+
+.PHONY: sandbox-up sandbox-client sandbox-gateway sandbox-prepare sandbox-status sandbox-logs sandbox-check sandbox-down sandbox-reset
+
+sandbox-up sandbox-status sandbox-logs sandbox-down sandbox-reset:
+	cd "$(ROOT)" && PYTHON="$(PYTHON)" sh scripts/sandbox.sh $(patsubst sandbox-%,%,$@)
+
+sandbox-client sandbox-gateway:
+	@case "$(ACTION)" in run|join|close|enroll) ;; *) echo "Invalid sandbox ACTION" >&2; exit 2;; esac
+	cd "$(ROOT)" && PYTHON="$(PYTHON)" sh scripts/sandbox.sh $(patsubst sandbox-%,%,$@) "$(ACTION)"
+
+sandbox-prepare:
+	cd "$(ROOT)" && PYTHON="$(PYTHON)" sh scripts/sandbox.sh prepare
+
+sandbox-check:
+	@case "$(CHECK)" in allowed|denied) ;; *) echo "Invalid sandbox CHECK" >&2; exit 2;; esac
+	cd "$(ROOT)" && PYTHON="$(PYTHON)" sh scripts/sandbox.sh check "$(CHECK)"

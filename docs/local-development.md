@@ -54,7 +54,8 @@ That command mutates the supplied test services. Skipped required contracts fail
 Failure and signal cleanup preserves the original exit code and removes only the
 integration project's containers, volumes and temporary secrets.
 
-The next network milestone must use isolated gateway, external client and dummy
-LAN environments, a real signed invite/code and WireGuard relay, blocked direct
-paths, and a browser viewer fetching only its fixed dummy target through the
-client tunnel. The viewer must never become a general-purpose proxy.
+The separate [manual macOS sandbox](manual-testing/macos-sandbox.md) uses isolated
+gateway/private fixtures and a native host client, real signed invitation and
+ordinary-browser private hostname access through WireGuard. It requires explicit
+helper provisioning and browser CA trust. Its optional commands never run in the
+required gates above; backend/UI development remains independent.

@@ -23,10 +23,17 @@ After a successful save, rerunning the same command returns the same public iden
 
 `agent identity --state state/gateway.json` reads the same three public fields from validated existing joined state without a token, CA or control connection. It does not establish the control role/status again; the initial enrollment and normal runtime own those checks. Stop a runtime using that state before inspecting it.
 
-For the optional sandbox gateway, the container entrypoint accepts `enroll` and `identity` after installing its independent underlay/private fence. Supply the gateway-role token through a private stdin file, using the same volume state path as the later runtime:
+For the optional sandbox gateway, use `make sandbox-gateway ACTION=enroll` after
+`make sandbox-up`; the [manual flow](manual-testing/macos-sandbox.md) checks
+ownership and safely projects the public output. The container entrypoint accepts
+`enroll` and `identity` after installing its independent underlay/private fence.
+The equivalent low-level command must retain the exact workspace/owner labels
+and project. Supply the gateway-role token through a private stdin file, using
+the same volume state path as the later runtime:
 
 ```sh
-docker compose --env-file .sandbox/network.env \
+SANDBOX_WORKSPACE="$PWD" SANDBOX_OWNER_UID="$(id -u)" \
+docker compose --project-name homeharbor-sandbox --env-file .sandbox/network.env \
   -f deploy/compose.sandbox.yaml --profile native-client \
   run --rm --no-deps -T gateway enroll \
   --control https://control.sandbox:8443 \

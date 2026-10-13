@@ -6,10 +6,11 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/agent ./cmd/agent
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS probe
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates iproute2 nftables procps wireguard-tools && \
     rm -rf /var/lib/apt/lists/*
+FROM probe
 COPY --from=build /out/agent /agent
 COPY --chmod=0755 deploy/sandbox/gateway-fence.sh /usr/local/bin/gateway-fence
 ENTRYPOINT ["/usr/local/bin/gateway-fence"]
