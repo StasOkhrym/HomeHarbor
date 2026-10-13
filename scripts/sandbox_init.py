@@ -9,6 +9,7 @@ from pathlib import Path
 
 import tomlkit
 from dev_init import SECRET_BYTES, complete, issue, verify_pair
+from sandbox_identity import load_public_identity, validate_public_identity
 from sandbox_preflight import NETWORK_FILE, PROFILES, load_profile
 from tooling import ROOT, atomic_write, cli, port, quiet_run, require_commands
 
@@ -120,7 +121,7 @@ def configuration(
     }
 
 
-def render_manifest(selected: dict[str, str]) -> bytes:
+def render_manifest(selected: dict[str, str], gateway: dict[str, str] | None = None) -> bytes:
     template = (ROOT / "deploy/sandbox/initial-snapshot.toml").read_text()
     for original, replacement in (
         ("10.200.0.2", selected["SANDBOX_GATEWAY_OVERLAY_IP"]),
@@ -129,7 +130,29 @@ def render_manifest(selected: dict[str, str]) -> bytes:
         ("172.29.50.80", selected["SANDBOX_SITE_IP"]),
     ):
         template = template.replace(original, replacement)
-    return template.encode()
+    if gateway is None:
+        return template.encode()
+    gateway = validate_public_identity(gateway)
+    manifest = tomlkit.parse(template)
+    device = manifest["devices"][0]
+    previous_id = device["id"]
+    device["id"] = gateway["device_id"]
+    device["identity_public_key"] = gateway["identity_public_key"]
+    device["wireguard_public_key"] = gateway["wireguard_public_key"]
+    for item in manifest["gateways"]:
+        if item["device_id"] == previous_id:
+            item["device_id"] = gateway["device_id"]
+    for item in manifest["routes"]:
+        if item["gateway_id"] == previous_id:
+            item["gateway_id"] = gateway["device_id"]
+    for item in manifest["profiles"]:
+        item["device_ids"] = [
+            gateway["device_id"] if value == previous_id else value for value in item["device_ids"]
+        ]
+    for item in manifest["acl"]:
+        if item["source_device_id"] == previous_id:
+            item["source_device_id"] = gateway["device_id"]
+    return tomlkit.dumps(manifest).encode()
 
 
 def legacy_manifest_without_acl(selected: dict[str, str]) -> bytes:
@@ -142,6 +165,29 @@ def legacy_manifest_without_acl(selected: dict[str, str]) -> bytes:
     )
 
     return prefix.encode()
+
+
+def resolve_manifest(
+    existing: bytes | None, selected: dict[str, str], gateway: dict[str, str] | None
+) -> bytes:
+    desired = render_manifest(selected, gateway)
+    migratable = {
+        render_manifest(selected),
+        render_manifest(PROFILES[0].environment()),
+        legacy_manifest_without_acl(PROFILES[0].environment()),
+        legacy_manifest_without_acl(selected),
+    }
+    if existing is None or existing == desired or existing in migratable:
+        return desired
+    raise ValueError(
+        "existing sandbox manifest differs from selected profile or enrolled gateway; review it before replacing"
+    )
+
+
+def gateway_public_identity() -> dict[str, str] | None:
+    path = SANDBOX / "gateway-public.json"
+    check_destination(path)
+    return load_public_identity(path)
 
 
 def initialize() -> None:
@@ -238,16 +284,15 @@ def initialize() -> None:
             ):
                 pending[destination] = (content, mode)
     manifest = SANDBOX / "initial-snapshot.toml"
-    desired_manifest = render_manifest(selected)
-    migratable = {
-        render_manifest(PROFILES[0].environment()),
-        legacy_manifest_without_acl(PROFILES[0].environment()),
-        legacy_manifest_without_acl(selected),
-    }
-    if not manifest.exists() or manifest.read_bytes() in migratable:
-        pending[manifest] = (desired_manifest, 0o600)
-    elif manifest.read_bytes() != desired_manifest:
-        raise ValueError("existing customized sandbox manifest uses another network profile")
+    check_destination(manifest)
+    pending[manifest] = (
+        resolve_manifest(
+            manifest.read_bytes() if manifest.exists() else None,
+            selected,
+            gateway_public_identity(),
+        ),
+        0o600,
+    )
     for path in pending:
         check_destination(path)
     for path, (content, mode) in pending.items():
