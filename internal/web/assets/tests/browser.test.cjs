@@ -17,6 +17,7 @@ function adminDocument() {
     },
   };
   const navigation = { open: true };
+  let policyButtons = [];
   const context = {
     document: {
       addEventListener(name, listener) {
@@ -29,7 +30,9 @@ function adminDocument() {
 
         return null;
       },
-      querySelectorAll() {
+      querySelectorAll(selector) {
+        if (selector === "[data-add-rule], [data-remove-rule]") return policyButtons;
+
         return [];
       },
     },
@@ -40,8 +43,18 @@ function adminDocument() {
       },
     },
   };
+
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../static/admin.js"), "utf8"), context);
-  return { listeners, navigations, status, heading, navigation };
+  return {
+    listeners,
+    navigations,
+    status,
+    heading,
+    navigation,
+    setPolicyButtons(buttons) {
+      policyButtons = buttons;
+    },
+  };
 }
 
 test("expired history navigation returns to sign-in", () => {
@@ -74,6 +87,21 @@ test("background swaps do not steal heading focus or close mobile navigation", (
 
   assert.equal(page.heading.focusCount, 1);
   assert.equal(page.navigation.open, false);
+});
+
+test("history restoration enhances policy controls without moving focus", () => {
+  const page = adminDocument();
+  const buttons = [{ hidden: true }, { hidden: true }];
+
+  page.setPolicyButtons(buttons);
+  page.listeners.get("htmx:historyRestore")?.({ detail: { cacheMiss: true } });
+
+  assert.deepEqual(
+    buttons.map((button) => button.hidden),
+    [false, false],
+  );
+  assert.equal(page.heading.focusCount, 0);
+  assert.equal(page.navigation.open, true);
 });
 
 function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), options = {}) {
@@ -217,12 +245,31 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
     },
     navigateAway() {
       for (const listener of listeners.get("htmx:beforeSwap") || []) {
-        listener({ detail: { target: { id: "admin-shell" } } });
+        listener({ detail: { target: { id: "admin-shell" }, shouldSwap: true } });
       }
+
       assert.equal(timers.size, 0);
+
       activityVisible = false;
       for (const listener of listeners.get("htmx:afterSwap") || []) {
         listener({ detail: { target: { id: "admin-shell" } } });
+      }
+    },
+    restoreHistory(visible) {
+      activityVisible = visible;
+
+      const body = { tagName: "BODY" };
+      for (const listener of listeners.get("htmx:afterSwap") || []) {
+        listener({ target: body, detail: { target: body } });
+      }
+
+      for (const listener of listeners.get("htmx:historyRestore") || []) {
+        listener({ target: body, detail: { cacheMiss: true } });
+      }
+    },
+    rejectNavigation() {
+      for (const listener of listeners.get("htmx:beforeSwap") || []) {
+        listener({ detail: { target: { id: "admin-shell" }, shouldSwap: false } });
       }
     },
     readAt(scrollY) {
@@ -332,6 +379,72 @@ test("activity keeps one request in flight and retains old content on failure", 
     [...page.timers.values()].map((timer) => timer.delay),
     [32000],
   );
+});
+
+test("activity polling follows body history restoration in both directions", () => {
+  const page = activityPage();
+
+  page.navigateAway();
+  page.restoreHistory(true);
+
+  assert.deepEqual(
+    [...page.timers.values()].map((timer) => timer.delay),
+    [4000],
+  );
+
+  page.restoreHistory(false);
+
+  assert.equal(page.timers.size, 0);
+});
+
+test("a rejected navigation keeps the visible activity poller running", () => {
+  const page = activityPage();
+
+  page.rejectNavigation();
+
+  assert.deepEqual(
+    [...page.timers.values()].map((timer) => timer.delay),
+    [4000],
+  );
+
+  page.fireTimer();
+
+  assert.equal(page.requests.length, 1);
+});
+
+test("applying pending activity keeps stale status until a successful refresh", async () => {
+  let failed = false;
+  const page = activityPage(
+    async () =>
+      failed
+        ? { ok: false, status: 503 }
+        : { ok: true, status: 200, text: async () => "<section id='activity-feed'>" },
+    { initialIds: ["1"], openDetails: true },
+  );
+
+  page.setIncoming(["2", "1"]);
+  page.fireTimer();
+  await flush();
+
+  assert.equal(page.apply.hidden, false);
+
+  failed = true;
+  page.fireTimer();
+  await flush();
+
+  assert.equal(page.status.dataset.state, "stale");
+
+  page.applyPending();
+
+  assert.equal(page.replacements, 1);
+  assert.equal(page.status.dataset.state, "stale");
+
+  failed = false;
+  page.setReading();
+  page.fireTimer();
+  await flush();
+
+  assert.equal(page.status.dataset.state, "live");
 });
 
 test("activity marks a hung request stale after ten seconds", async () => {

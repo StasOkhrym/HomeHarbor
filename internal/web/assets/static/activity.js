@@ -226,11 +226,16 @@ class ActivityPoller {
       return;
     }
     if (!this.pendingFeed) return;
+
     this.reconcile(this.pendingFeed);
     this.pendingFeed = null;
     this.pendingIDs.clear();
     this.applyButton.hidden = true;
-    this.setStatus("Live · activity is current", "live");
+    if (this.failures) {
+      this.setStatus("Stale · latest activity could not be loaded", "stale");
+    } else {
+      this.setStatus("Live · activity is current", "live");
+    }
   }
 
   setStatus(message, state) {
@@ -243,6 +248,7 @@ class ActivityPoller {
 syncActivityPoller();
 
 document.addEventListener("htmx:beforeSwap", (event) => {
+  if (event.detail?.shouldSwap === false) return;
   if (event.detail?.target?.id === "admin-shell" || event.target?.id === "admin-shell") {
     activeActivityPoller?.stop();
   }
@@ -253,5 +259,7 @@ document.addEventListener("htmx:afterSwap", (event) => {
     syncActivityPoller();
   }
 });
+
+document.addEventListener("htmx:historyRestore", syncActivityPoller);
 
 window.addEventListener("pagehide", () => activeActivityPoller?.stop());

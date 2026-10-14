@@ -58,6 +58,7 @@ function enhancePolicyEditor() {
     button.hidden = false;
   });
 }
+document.addEventListener("htmx:historyRestore", enhancePolicyEditor);
 document.addEventListener("click", (event) => {
   if (event.target.closest("[data-add-rule]")) {
     const form = event.target.closest("[data-policy-editor]");
