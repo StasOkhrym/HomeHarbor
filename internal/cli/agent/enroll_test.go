@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/StasOkhrym/homeharbor/internal/cli/host"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
@@ -365,5 +368,44 @@ func TestGatewayEnrollCanceledContextDoesNotCreateIdentity(t *testing.T) {
 
 	if _, err := os.Lstat(f.state); !os.IsNotExist(err) {
 		t.Fatal("canceled enrollment created identity")
+	}
+}
+
+func TestGatewayEnrollSavesSuccessfulResponseBeforeReportingCancellation(t *testing.T) {
+	f := newEnrollFixture(t, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	command := &cobra.Command{}
+	command.SetContext(ctx)
+	command.SetIn(strings.NewReader(f.token + "\n"))
+	var output bytes.Buffer
+	command.SetOut(&output)
+	options := enrollmentOptions{
+		control: f.server.URL, ca: f.ca, state: f.state,
+		name: "sandbox gateway", timeout: time.Minute,
+	}
+	err := enrollGatewayWith(command, options, func(
+		_ context.Context, _ *http.Client, _ string, token, _ string, state *node.State,
+	) error {
+		if token != f.token || state.IdentityPublicKey == "" || state.WireGuard.PublicKey == "" {
+			t.Fatal("enrollment did not use the existing local identity and private token")
+		}
+		state.DeviceID = "gateway-1"
+		state.DeviceCredential = "private-device-credential"
+		state.CredentialExpiresAt = time.Now().Add(15 * time.Minute)
+		state.DeviceRole = "gateway"
+		cancel() // The control response was validated, then the caller was canceled.
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("late cancellation was not reported: %v", err)
+	}
+	stored, err := node.Load(f.state)
+	if err != nil || stored.DeviceID != "gateway-1" ||
+		stored.DeviceCredential != "private-device-credential" || stored.DeviceRole != "gateway" {
+		t.Fatalf("committed enrollment response was lost: %v", err)
+	}
+	if strings.Contains(output.String(), stored.DeviceCredential) {
+		t.Fatal("credential disclosed after cancellation")
 	}
 }

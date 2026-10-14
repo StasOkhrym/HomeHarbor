@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -47,9 +48,20 @@ func newEnrollCommand() *cobra.Command {
 }
 
 func enrollGateway(command *cobra.Command, options enrollmentOptions) (result error) {
+	return enrollGatewayWith(command, options, node.EnrollGateway)
+}
+
+type gatewayEnrollRequest func(context.Context, *http.Client, string, string, string, *node.State) error
+
+func enrollGatewayWith(
+	command *cobra.Command,
+	options enrollmentOptions,
+	enroll gatewayEnrollRequest,
+) (result error) {
 	if err := command.Context().Err(); err != nil {
 		return err
 	}
+
 	origin, err := url.Parse(options.control)
 	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil ||
 		origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
@@ -61,30 +73,37 @@ func enrollGateway(command *cobra.Command, options enrollmentOptions) (result er
 			"gateway enrollment requires CA, state, name and a positive deadline up to 2 minutes",
 		)
 	}
+
 	client, err := trust.NewHTTPClientFromCAFile(options.ca)
 	if err != nil {
 		return err
 	}
 	defer client.CloseIdleConnections()
+
 	store, err := localstate.Open(options.state)
 	if err != nil {
 		return err
 	}
 	defer func() { result = errors.Join(result, store.Close()) }()
+
 	state, err := node.LoadOrCreateFrom(store)
 	if err != nil {
 		return err
 	}
+
 	if state.DeviceCredential == "" {
 		scanner := bufio.NewScanner(command.InOrStdin())
 		scanner.Buffer(make([]byte, 4096), 16*1024)
+
 		token, err := host.ReadPrivateLine(scanner, command, "Gateway enrollment token")
 		if err != nil {
 			return err
 		}
+
 		ctx, cancel := context.WithTimeout(command.Context(), options.timeout)
 		defer cancel()
-		if err := node.EnrollGateway(
+
+		if err := enroll(
 			ctx,
 			client,
 			options.control,
@@ -94,16 +113,20 @@ func enrollGateway(command *cobra.Command, options enrollmentOptions) (result er
 		); err != nil {
 			return err
 		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+
 		if err := state.SaveTo(store); err != nil {
 			return err
 		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 	}
+
 	if state.DeviceRole != "gateway" {
 		return errors.New("existing state has no verified gateway role; refusing bootstrap export")
 	}
+
 	// Enrollment is finite. It never creates a WireGuard interface, starts a
 	// relay/coordination worker or enables forwarding. The sandbox fence is
 	// owned by its container entrypoint, separately from this command.
