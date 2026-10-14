@@ -263,6 +263,35 @@ class SandboxPoolTests(unittest.TestCase):
         routes.assert_not_called()
         save.assert_not_called()
 
+    def test_pool_preflight_checks_overlap_without_provisioning_or_probe(self):
+        import sys
+
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from sandbox_preflight import PROFILES, preflight
+
+        with (
+            patch("sandbox_preflight.require_commands"),
+            patch("sandbox_preflight.project_containers", return_value=False),
+            patch("sandbox_preflight.host_routes", return_value=[]),
+            patch("sandbox_preflight.docker_networks", return_value=[]),
+            patch("sandbox_preflight.NETWORK_FILE") as network_file,
+            patch("sandbox_preflight.probe_kernel") as probe,
+            patch("sandbox_preflight.save_profile") as save,
+        ):
+            network_file.exists.return_value = False
+
+            self.assertEqual(preflight(check_only=True), PROFILES[0])
+
+            with patch(
+                "sandbox_preflight.docker_networks",
+                return_value=[profile.underlay for profile in PROFILES],
+            ):
+                with self.assertRaisesRegex(ValueError, "no collision-free"):
+                    preflight(check_only=True)
+
+        probe.assert_not_called()
+        save.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

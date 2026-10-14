@@ -205,6 +205,51 @@ class SandboxWorkflowTests(unittest.TestCase):
             self.assertFalse(flow.sandbox.exists())
             self.assertEqual(flow.run.calls, [])
 
+    def test_up_rejects_pool_preflight_before_building_probe_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            docker = DockerBoundary()
+            flow = self.workflow(temp, docker)
+
+            with (
+                patch("sandbox_workflow.sys.platform", "darwin"),
+                patch.object(flow, "script", side_effect=ValueError("overlapping pools")) as script,
+            ):
+                with self.assertRaisesRegex(ValueError, "overlapping pools"):
+                    flow.up()
+
+            self.assertEqual(script.call_args.args[:1], ("sandbox_preflight.py",))
+            self.assertFalse(any(args[:2] == ["docker", "build"] for args, _ in docker.calls))
+
+    def test_up_uses_checkout_scoped_probe_image_for_kernel_preflight(self):
+        tags = []
+        for _ in range(2):
+            with tempfile.TemporaryDirectory() as temp:
+                docker = DockerBoundary()
+                flow = self.workflow(temp, docker)
+
+                with (
+                    patch("sandbox_workflow.sys.platform", "darwin"),
+                    patch.object(flow, "script", return_value="") as script,
+                ):
+                    flow.up()
+
+                build = next(args for args, _ in docker.calls if args[:2] == ["docker", "build"])
+                tag = build[build.index("--tag") + 1]
+
+                self.assertRegex(tag, r"^homeharbor-sandbox-gateway-probe:[0-9a-f]{16}$")
+
+                full_preflight = [
+                    call.args
+                    for call in script.call_args_list
+                    if call.args[:1] == ("sandbox_preflight.py",)
+                ][-1]
+
+                self.assertEqual(full_preflight, ("sandbox_preflight.py", "--probe-image", tag))
+
+                tags.append(tag)
+
+        self.assertNotEqual(tags[0], tags[1])
+
     def test_named_unlabeled_resources_cannot_be_adopted_or_deleted(self):
         for kind in ("container", "network", "volume"):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temp:
@@ -294,6 +339,31 @@ class SandboxWorkflowTests(unittest.TestCase):
 
             self.assertEqual((flow.sandbox / "client.json").read_text(), "private")
             self.assertFalse(any("down" in args for args, _ in docker.calls))
+
+    def test_opaque_root_journal_blocks_down_and_reset_before_docker_mutation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            docker = DockerBoundary()
+            flow = self.owned(temp, docker)
+            root_journal_dir = Path(temp) / "root-journal"
+            root_journal_dir.mkdir()
+            journal = root_journal_dir / "client-network.json"
+            journal.write_text("root-owned-revision-fence")
+            root_journal_dir.chmod(0)
+
+            try:
+                with (
+                    patch("sandbox_workflow.SYSTEM_POLICY", Path(temp) / "missing-policy"),
+                    patch("sandbox_workflow.SYSTEM_JOURNAL", journal),
+                ):
+                    for operation in ("down", "reset"):
+                        with self.subTest(operation=operation):
+                            with self.assertRaisesRegex(ValueError, "inspect|journal|permission"):
+                                getattr(flow, operation)()
+
+                self.assertFalse(any("down" in args for args, _ in docker.calls))
+                self.assertTrue(flow.owner_file.exists())
+            finally:
+                root_journal_dir.chmod(0o700)
 
     def test_sandbox_excluded_from_every_required_gate(self):
         targets = ("up", "client", "status", "logs", "check", "down", "reset", "trust-ca")

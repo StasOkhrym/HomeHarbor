@@ -33,6 +33,8 @@ production settings cannot redirect sandbox clients or override their generated
 configuration. Selected private/overlay
 pools persist in `.sandbox/network.env`. Preflight rejects overlapping host/VPN
 or Docker networks and probes WireGuard/nftables/forwarding in the Docker VM.
+Pool overlap is checked before the probe image is built; its tag is scoped to
+this checkout and owner. The full check repeats after the build.
 An unsupported VM is a failed prerequisite, not permission to bypass the fence.
 
 ## Start and bootstrap the gateway
@@ -301,6 +303,11 @@ identity. First complete offline close and inspect that owned utun/routes/resolv
 are gone, then explicitly retire that installation's sudo rule, public policy
 and closed root journal/revision fence in a reviewed privileged session. Never
 delete an active or foreign journal merely to make reset pass.
+The unprivileged launcher cannot inspect a child of the root-only
+`/private/var/db/homeharbor` directory. After confirming that the closed
+journal and any other installation's state are absent, remove the **empty**
+directory in that privileged session too. Reset fails closed while the
+directory is inaccessible, even if its journal file was already removed.
 
 Reset removes only this project's volumes and archives previous local state
 inside `.sandbox/archives/`, still excluded from Git/Docker contexts. Archives may

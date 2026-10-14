@@ -3,6 +3,7 @@
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import shutil
@@ -15,7 +16,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from sandbox_identity import read_public_file, unique_fields
-from sandbox_preflight import load_profile
+from sandbox_preflight import GATEWAY_PROBE_IMAGE, load_profile
 from tooling import ROOT, atomic_write, cli, port
 
 PROJECT = "homeharbor-sandbox"
@@ -23,6 +24,19 @@ WORKSPACE_LABEL = "io.homeharbor.sandbox.workspace"
 OWNER_LABEL = "io.homeharbor.sandbox.owner"
 SYSTEM_POLICY = Path("/private/etc/homeharbor/network-helper.json")
 SYSTEM_JOURNAL = Path("/private/var/db/homeharbor/client-network.json")
+
+
+def installed_path_exists(path):
+    """Refuse to infer absence from an unreadable privileged parent."""
+
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        raise ValueError("cannot inspect installed native helper state") from None
+
+    return True
 
 
 class CommandFailure(ValueError):
@@ -57,6 +71,10 @@ class Workflow:
     @property
     def owner(self):
         return {"version": 1, "project": PROJECT, "workspace": str(self.root), "uid": self.uid}
+
+    def probe_image(self):
+        owner = f"{self.root}\0{self.uid}".encode()
+        return f"{GATEWAY_PROBE_IMAGE}:{hashlib.sha256(owner).hexdigest()[:16]}"
 
     def check_path(self, path):
         if not path.is_relative_to(self.sandbox):
@@ -225,9 +243,9 @@ class Workflow:
             input=input,
         )
 
-    def script(self, name, *, timeout=180):
+    def script(self, name, *args, timeout=180):
         return self.command(
-            [sys.executable, str(self.root / "scripts" / name)],
+            [sys.executable, str(self.root / "scripts" / name), *args],
             env=self.environment(),
             timeout=timeout,
         )
@@ -235,12 +253,18 @@ class Workflow:
     def up(self):
         if sys.platform != "darwin":
             raise ValueError("the optional native sandbox requires macOS")
+
         with self.lock():
             self.create_owner()
             resources = self.inventory()
             if resources["container"] or resources["network"]:
                 raise ValueError("existing sandbox containers/networks; run sandbox-down before up")
-            # Build the bounded kernel probe before selecting pools or issuing trust.
+
+            # Reject occupied pools before creating a Docker image.
+            self.script("sandbox_preflight.py", "--check-pools")
+            # The kernel capability probe needs this bounded image. Full preflight
+            # rechecks pools after the build, before any Compose provisioning.
+            probe_image = self.probe_image()
             self.command(
                 [
                     "docker",
@@ -248,14 +272,14 @@ class Workflow:
                     "--target",
                     "probe",
                     "--tag",
-                    "homeharbor-sandbox-gateway-probe",
+                    probe_image,
                     "--file",
                     str(self.root / "deploy/sandbox/Dockerfile.gateway"),
                     str(self.root),
                 ],
                 timeout=600,
             )
-            self.script("sandbox_preflight.py")
+            self.script("sandbox_preflight.py", "--probe-image", probe_image)
             self.script("sandbox_init.py")
             self.compose("config", "--quiet")
             self.compose("build", timeout=900)
@@ -285,14 +309,20 @@ class Workflow:
     def cleanup_native(self):
         dirty = self.sandbox / "native-dirty"
         self.check_path(dirty)
-        if not dirty.exists() and not SYSTEM_POLICY.exists() and not SYSTEM_JOURNAL.exists():
+        if (
+            not dirty.exists()
+            and not installed_path_exists(SYSTEM_POLICY)
+            and not installed_path_exists(SYSTEM_JOURNAL)
+        ):
             return
+
         config = self.sandbox / "native-client.toml"
         binary = self.sandbox / "bin/client"
         for path in (config, binary):
             self.check_path(path)
             if not path.is_file():
                 raise ValueError("native cleanup requires existing config and client binary")
+
         self.command([str(binary), "network-close", "--config", str(config)], timeout=45)
         dirty.unlink(missing_ok=True)
 
@@ -309,25 +339,30 @@ class Workflow:
 
     def reset(self):
         self.require_owner()
+
         with self.lock():
             resources = self.inventory()
             if any(item.get("State", {}).get("Running") for item in resources["container"]):
                 raise ValueError("sandbox is running; sandbox-down is required before reset")
+
             # Validate the entire local tree before any destructive Docker operation.
             for path in self.sandbox.rglob("*"):
                 self.check_path(path)
+
             with self.lock("client-runtime.lock"):
                 self.cleanup_native()
-                if SYSTEM_POLICY.exists() or SYSTEM_JOURNAL.exists():
+                if installed_path_exists(SYSTEM_POLICY) or installed_path_exists(SYSTEM_JOURNAL):
                     raise ValueError(
                         "retire the installed native helper binding before resetting its identity"
                     )
+
                 self.compose("down", "--volumes", "--timeout", "140", timeout=180)
                 archive = self.sandbox / "archives" / uuid.uuid4().hex
                 archive.mkdir(parents=True, mode=0o700)
                 for path in self.sandbox.iterdir():
                     if path.name not in {"archives", "workflow.lock", "client-runtime.lock"}:
                         shutil.move(path, archive / path.name)
+
         print(
             "Stopped sandbox volumes removed. Prior identity/trust archived privately inside .sandbox."
         )

@@ -1,7 +1,9 @@
 """Read-only macOS/Docker checks for the opt-in native sandbox."""
 
+import argparse
 import ipaddress
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -253,10 +255,11 @@ def probe_kernel(image=GATEWAY_PROBE_IMAGE):
         raise ValueError("Docker VM lacks WireGuard/nft/forwarding capability or probe image")
 
 
-def preflight():
+def preflight(*, check_only=False, probe_image=GATEWAY_PROBE_IMAGE):
     require_commands("docker", "netstat")
     if project_containers():
         raise ValueError("stop and remove the existing sandbox project before preflight")
+
     existing = [*host_routes(), *docker_networks()]
     if NETWORK_FILE.exists():
         values = load_profile()
@@ -264,11 +267,29 @@ def preflight():
         reject_overlaps(existing, selected.pools)
     else:
         selected = select_profile(existing)
-    probe_kernel()
+
+    if check_only:
+        return selected
+
+    probe_kernel(probe_image)
     save_profile(selected)
     print("Sandbox pools selected: " + ", ".join(map(str, selected.pools)))
     print("Docker VM WireGuard/nft/forwarding capability passed")
+    return selected
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check-pools", action="store_true")
+    parser.add_argument("--probe-image", default=GATEWAY_PROBE_IMAGE)
+    args = parser.parse_args()
+    if args.probe_image != GATEWAY_PROBE_IMAGE and not re.fullmatch(
+        r"homeharbor-sandbox-gateway-probe:[0-9a-f]{16}", args.probe_image
+    ):
+        raise ValueError("sandbox probe image must use its checkout-scoped tag")
+
+    preflight(check_only=args.check_pools, probe_image=args.probe_image)
 
 
 if __name__ == "__main__":
-    raise SystemExit(cli(preflight))
+    raise SystemExit(cli(main))
