@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -14,6 +15,93 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 	"github.com/StasOkhrym/homeharbor/internal/tunnel"
 )
+
+func TestCompositeClientRemovalClearsOwnedRoutesAndWireGuard(t *testing.T) {
+	gateway, _ := tunnel.NewIdentity()
+	client, _ := tunnel.NewIdentity()
+	value := snapshot.NetworkSnapshot{
+		NetworkID: "home", Revision: 1,
+		Devices: []snapshot.Device{
+			{
+				ID:                 "gateway",
+				Role:               "gateway",
+				WireGuardPublicKey: gateway.PublicKey,
+				OverlayAddress:     "100.64.0.1/32",
+			},
+			{
+				ID:                 "client",
+				Role:               "client",
+				WireGuardPublicKey: client.PublicKey,
+				OverlayAddress:     "100.64.0.2/32",
+			},
+		},
+		Gateways: []snapshot.Gateway{{DeviceID: "gateway"}},
+		Routes:   []snapshot.Route{{ID: "lan", GatewayID: "gateway", Prefix: "192.168.50.0/24"}},
+	}
+	ensures := 0
+	link := NewClientReconcilerWithEnsurer(
+		"wg0",
+		"client",
+		func(context.Context, string, string, []netip.Prefix) error {
+			ensures++
+			return nil
+		},
+	)
+	var deleted [][]string
+	link.routes.run = func(_ context.Context, args ...string) error {
+		deleted = append(deleted, append([]string(nil), args...))
+		return nil
+	}
+	var applied wgtypes.Config
+
+	wg, err := NewSnapshotWireGuardReconcilerWithApplier("wg0", "client", client.PrivateKey, 51820,
+		func(_ string, cfg wgtypes.Config) error { applied = cfg; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewCompositeSnapshotApplier(nil, link, wg)
+	ctx := context.Background()
+
+	if err := app.Apply(ctx, value); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(applied.Peers) != 1 || len(link.routes.installed) != 1 {
+		t.Fatal("fixture did not install a peer and owned route")
+	}
+
+	if err := wg.SetPeerEndpoint(
+		ctx,
+		gateway.PublicKey,
+		netip.MustParseAddrPort("127.0.0.1:51821"),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	value.Revision = 2
+	value.Devices = value.Devices[:1] // Other clients still use the global LAN route.
+
+	if err := app.Apply(ctx, value); err != nil {
+		t.Fatalf("client removal retained old networking: %v", err)
+	}
+
+	if !applied.ReplacePeers || len(applied.Peers) != 0 || len(wg.endpoints) != 0 ||
+		len(link.routes.installed) != 0 ||
+		ensures != 1 {
+		t.Fatal("removed client kept peers/routes or reinstalled networking")
+	}
+
+	want := [][]string{{"route", "del", "192.168.50.0/24", "dev", "wg0"}}
+
+	if !reflect.DeepEqual(deleted, want) {
+		t.Fatalf("removed client route cleanup = %v", deleted)
+	}
+
+	if err := app.Apply(ctx, value); err != nil || len(deleted) != 1 || ensures != 1 {
+		t.Fatalf("client removal was not idempotent: %v", err)
+	}
+}
 
 func TestCompositeGatewayRemovalClearsFirewallAndWireGuard(t *testing.T) {
 	gateway, _ := tunnel.NewIdentity()

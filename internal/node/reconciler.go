@@ -102,14 +102,18 @@ func (r *ClientReconciler) Apply(ctx context.Context, value snapshot.NetworkSnap
 	if r == nil {
 		return errors.New("client reconciler is not configured")
 	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	if err := r.Prepare(ctx, value); err != nil {
 		return err
 	}
+
 	if r == nil || r.interfaceName == "" || r.deviceID == "" || r.ensure == nil {
 		return errors.New("client reconciler is not configured")
 	}
+
 	var local *snapshot.Device
 	for index := range value.Devices {
 		if value.Devices[index].ID == r.deviceID {
@@ -117,23 +121,30 @@ func (r *ClientReconciler) Apply(ctx context.Context, value snapshot.NetworkSnap
 			break
 		}
 	}
+
 	if local == nil {
-		return fmt.Errorf("client device %s is missing from snapshot", r.deviceID)
+		// A verified removal retires this owner's routes without reinstalling
+		// global routes still used by other clients. The peer owner clears WG.
+		return r.routes.reconcile(ctx, r.interfaceName, nil, func() error { return nil })
 	}
 	if local.Role != "client" {
 		return fmt.Errorf("device %s is not a client", r.deviceID)
 	}
+
 	if _, err := netip.ParsePrefix(local.OverlayAddress); err != nil {
 		return fmt.Errorf("client overlay address: %w", err)
 	}
+
 	routes := make([]netip.Prefix, 0, len(value.Routes))
 	for _, route := range value.Routes {
 		prefix, err := netip.ParsePrefix(route.Prefix)
 		if err != nil || !prefix.IsValid() || prefix.Bits() == 0 {
 			return fmt.Errorf("route %s has invalid non-default prefix", route.ID)
 		}
+
 		routes = append(routes, prefix)
 	}
+
 	return r.routes.reconcile(
 		ctx,
 		r.interfaceName,
@@ -146,9 +157,11 @@ func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSn
 	if r == nil || r.ensure == nil || r.deviceID == "" {
 		return errors.New("client reconciler is not configured")
 	}
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	if _, err := nft.Compile(
 		r.interfaceName,
 		nil,
@@ -156,16 +169,19 @@ func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSn
 	); err != nil {
 		return err
 	}
+
 	found := false
 	peers := make(map[string]netip.Prefix, len(value.Devices))
 	for _, d := range value.Devices {
 		if _, exists := peers[d.ID]; exists {
 			return errors.New("duplicate client device identity")
 		}
+
 		p, err := netip.ParsePrefix(d.OverlayAddress)
 		if err != nil {
 			return fmt.Errorf("device %s overlay: %w", d.ID, err)
 		}
+
 		peers[d.ID] = p
 		if d.ID == r.deviceID {
 			found = true
@@ -176,9 +192,19 @@ func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSn
 			}
 		}
 	}
+
 	if !found {
-		return fmt.Errorf("client device %s is missing from snapshot", r.deviceID)
+		if value.Revision == 0 {
+			return fmt.Errorf("client device %s is missing from snapshot", r.deviceID)
+		}
+
+		for _, gateway := range value.Gateways {
+			if gateway.DeviceID == r.deviceID {
+				return errors.New("removed client retains a gateway binding")
+			}
+		}
 	}
+
 	if _, err := nft.Compile(
 		r.interfaceName,
 		peers,
@@ -186,13 +212,16 @@ func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSn
 	); err != nil {
 		return err
 	}
+
 	for _, route := range value.Routes {
 		p, err := netip.ParsePrefix(route.Prefix)
 		if err != nil || !p.IsValid() || p.Bits() == 0 {
 			return fmt.Errorf("route %s has invalid non-default prefix", route.ID)
 		}
 	}
+
 	_, _, err := prepareDNS(value)
+
 	return err
 }
 
