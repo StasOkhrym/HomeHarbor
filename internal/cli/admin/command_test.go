@@ -14,6 +14,26 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/cli/host"
 )
 
+func TestAdminRejectsUnknownSubcommands(t *testing.T) {
+	for _, args := range [][]string{{"bogus"}, {"bogus", "extra"}} {
+		t.Run(strings.Join(args, "/"), func(t *testing.T) {
+			var out, errOut bytes.Buffer
+
+			status := host.Execute(context.Background(), args, &out, &errOut, NewCommand())
+
+			if status != 2 || out.Len() != 0 ||
+				!strings.Contains(errOut.String(), "unknown command") {
+				t.Fatalf(
+					"unknown subcommand reported success: status=%d stdout=%q stderr=%q",
+					status,
+					out.String(),
+					errOut.String(),
+				)
+			}
+		})
+	}
+}
+
 func TestAdminRemoteAcceptsExplicitCAFlag(t *testing.T) {
 	var out, errOut bytes.Buffer
 

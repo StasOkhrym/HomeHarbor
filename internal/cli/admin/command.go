@@ -32,7 +32,6 @@ func NewCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "admin",
 		Short: "Manage HomeHarbor trusted companion keys and invites",
-		Args:  host.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return host.ExactArgs(1)(cmd, args)
 		},
