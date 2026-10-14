@@ -18,9 +18,9 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/cli/host"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
-	"github.com/StasOkhrym/homeharbor/internal/node"
 	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
+	nodetest "github.com/StasOkhrym/homeharbor/internal/testutil/node"
 )
 
 func TestJoinIsSeparateFromNormalClientRunAndNeverAcceptsSecretsAsFlags(t *testing.T) {
@@ -180,21 +180,27 @@ func TestJoinRejectsWrongRootOrNetwork(t *testing.T) {
 
 func TestInvalidOrExpiredInviteLeavesUnenrolled(t *testing.T) {
 	calls := 0
+
 	fixture := newJoinFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
+
 	expiredLink, expiredCode := fixture.link(t, "home", time.Now().Add(-2*time.Hour))
+
 	validLink, validCode := fixture.link(t, "home", time.Now())
 	for _, candidate := range []struct{ link, code string }{
 		{expiredLink, expiredCode},
 		{validLink + "&unexpected=1", validCode},
 	} {
 		exit, _, _ := fixture.execute(context.Background(), "home", candidate.link, candidate.code)
+
 		if exit == 0 || calls != 0 {
 			t.Fatalf("invalid invite accepted or transmitted: exit=%d calls=%d", exit, calls)
 		}
-		state, err := node.Load(fixture.state)
+
+		state, err := nodetest.Load(fixture.state)
+
 		if err != nil || state.DeviceCredential != "" || state.DeviceID != "" {
 			t.Fatalf("invalid invite enrolled a client: device=%q credential_present=%t err=%v",
 				state.DeviceID, state.DeviceCredential != "", err)
@@ -207,16 +213,20 @@ func TestPendingDoesNotApplyTunnelAndPrivateInputNotPrinted(t *testing.T) {
 	lockDenied := false
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	var fixture joinFixture
+
 	fixture = newJoinFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/invites/proof":
 			proofs++
+
 			other, err := localstate.Open(fixture.state)
 			lockDenied = err != nil
 			if err == nil {
 				_ = other.Close()
 			}
+
 			w.WriteHeader(http.StatusAccepted)
 		case strings.HasSuffix(r.URL.Path, "/challenge"):
 			cancel()
@@ -228,8 +238,11 @@ func TestPendingDoesNotApplyTunnelAndPrivateInputNotPrinted(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+
 	link, code := fixture.link(t, "home", time.Now())
+
 	exit, stdout, stderr := fixture.execute(ctx, "home", link, code)
+
 	if exit == 0 || proofs != 1 || claims != 0 || !lockDenied ||
 		!strings.Contains(stdout, "Pending") ||
 		strings.Contains(stdout, "applied") ||
@@ -245,7 +258,9 @@ func TestPendingDoesNotApplyTunnelAndPrivateInputNotPrinted(t *testing.T) {
 			stderr,
 		)
 	}
-	state, err := node.Load(fixture.state)
+
+	state, err := nodetest.Load(fixture.state)
+
 	if err != nil || state.DeviceCredential != "" || state.DeviceID != "" {
 		t.Fatalf("pending client has credential: device=%q credential_present=%t err=%v",
 			state.DeviceID, state.DeviceCredential != "", err)
@@ -255,16 +270,20 @@ func TestPendingDoesNotApplyTunnelAndPrivateInputNotPrinted(t *testing.T) {
 func TestJoinClaimsOnlyTheGeneratedClientIdentity(t *testing.T) {
 	var submitted invite.Proof
 	claimCount := 0
+
 	fixture := newJoinFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/invites/proof":
 			var input struct {
 				Proof invite.Proof `json:"proof"`
 			}
+
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Error(err)
 			}
+
 			submitted = input.Proof
+
 			w.WriteHeader(http.StatusAccepted)
 		case strings.HasSuffix(r.URL.Path, "/challenge"):
 			_ = json.NewEncoder(w).Encode(protocol.ClaimChallenge{
@@ -276,12 +295,15 @@ func TestJoinClaimsOnlyTheGeneratedClientIdentity(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/claim"):
 			claimCount++
 			var proof protocol.ClaimProof
+
 			if err := json.NewDecoder(r.Body).Decode(&proof); err != nil {
 				t.Error(err)
 			}
+
 			if proof.Challenge.DeviceID != submitted.DeviceID {
 				t.Error("claim changed the device ID")
 			}
+
 			_ = json.NewEncoder(w).Encode(map[string]any{"device": map[string]any{
 				"id":     submitted.DeviceID,
 				"role":   "client",
@@ -299,19 +321,26 @@ func TestJoinClaimsOnlyTheGeneratedClientIdentity(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+
 	link, code := fixture.link(t, "home", time.Now())
+
 	exit, stdout, stderr := fixture.execute(context.Background(), "home", link, code)
+
 	if exit != 0 || claimCount != 1 || !strings.Contains(stdout, "Pending") ||
 		!strings.Contains(stdout, "Approved") || !strings.Contains(stdout, "Credential claimed") ||
 		strings.Contains(stdout+stderr, link) || strings.Contains(stdout+stderr, code) {
 		t.Fatalf("join status=%d claims=%d stdout=%q stderr=%q", exit, claimCount, stdout, stderr)
 	}
-	state, err := node.Load(fixture.state)
+
+	state, err := nodetest.Load(fixture.state)
+
 	if err != nil || state.DeviceID != submitted.DeviceID || state.DeviceCredential == "" {
 		t.Fatalf("claim was not persisted: device=%q credential_present=%t err=%v",
 			state.DeviceID, state.DeviceCredential != "", err)
 	}
+
 	exit, _, _ = fixture.execute(context.Background(), "home", link, code)
+
 	if exit == 0 || claimCount != 1 {
 		t.Fatalf("joined client replayed claim: exit=%d claims=%d", exit, claimCount)
 	}

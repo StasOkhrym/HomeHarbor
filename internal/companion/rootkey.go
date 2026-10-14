@@ -63,15 +63,6 @@ func (s *RootKeyStore) Create(passphrase string) (ed25519.PublicKey, error) {
 	return append(ed25519.PublicKey(nil), publicKey...), nil
 }
 
-// Save stores a caller-provided key for test/recovery tooling. Production
-// setup should prefer Create so accidental key replacement is impossible.
-func (s *RootKeyStore) Save(privateKey ed25519.PrivateKey, passphrase string) error {
-	if len(privateKey) != ed25519.PrivateKeySize || passphrase == "" {
-		return errors.New("private key and passphrase are required")
-	}
-	return s.save(privateKey, passphrase)
-}
-
 func (s *RootKeyStore) save(privateKey ed25519.PrivateKey, passphrase string) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err

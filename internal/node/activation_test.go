@@ -1,4 +1,4 @@
-package node
+package node_test
 
 import (
 	"context"
@@ -14,21 +14,26 @@ import (
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/invite"
+	"github.com/StasOkhrym/homeharbor/internal/node"
+	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 )
 
 func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing.T) {
 	root, key, _ := ed25519.GenerateKey(rand.Reader)
-	state, err := NewState()
+
+	state, err := node.NewState()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	original := state
 	now := time.Now()
 	local, err := invite.New("home", "family", time.Hour, now, rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	permit, _ := invite.SignPermit(local.Permit, key, "root-1")
 	ready := false
 	polls := 0
@@ -36,15 +41,18 @@ func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing
 		if r.URL.Fragment != "" || strings.Contains(r.URL.String(), local.Code) {
 			t.Error("invite secret transmitted in URL")
 		}
+
 		switch {
 		case r.URL.Path == "/api/v1/invites/proof":
 			var input struct {
 				Permit invite.SignedPermit `json:"permit"`
 				Proof  invite.Proof        `json:"proof"`
 			}
+
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Error(err)
 			}
+
 			if err := invite.VerifyProofWithCode(
 				input.Permit,
 				input.Proof,
@@ -54,10 +62,13 @@ func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing
 			); err != nil {
 				t.Error(err)
 			}
+
 			if string(input.Proof.DevicePublicKey) != string(mustPublic(state.IdentityPublicKey)) {
 				t.Error("identity replaced")
 			}
+
 			ready = true
+
 			w.WriteHeader(http.StatusAccepted)
 		case strings.HasSuffix(r.URL.Path, "/challenge"):
 			polls++
@@ -65,35 +76,52 @@ func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing
 				w.WriteHeader(http.StatusConflict)
 				return
 			}
+
 			_ = json.NewEncoder(w).
 				Encode(protocol.ClaimChallenge{Version: 1, NetworkID: "home", InviteID: local.Permit.InviteID, DeviceID: "linux", Nonce: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), ExpiresAt: time.Now().Add(time.Minute).Unix()})
 		case strings.HasSuffix(r.URL.Path, "/claim"):
 			var p protocol.ClaimProof
+
 			if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 				t.Error(err)
 			}
+
 			private, _ := base64.RawURLEncoding.DecodeString(state.IdentityPrivateKey)
+
 			expected, _ := protocol.SignClaim(p.Challenge, ed25519.PrivateKey(private))
+
 			if expected.Signature != p.Signature {
 				t.Error("invalid possession proof")
 			}
+
 			_ = json.NewEncoder(w).
 				Encode(map[string]any{"device": map[string]any{"credential_expires_at": time.Now().Add(15 * time.Minute), "id": "linux", "role": "client", "status": "active", "identity_public_key": state.IdentityPublicKey, "wireguard_public_key": state.WireGuard.PublicKey, "credential": base64.RawURLEncoding.EncodeToString(make([]byte, 32))}})
 		default:
 			t.Errorf("unexpected request %s", r.URL)
+
 			w.WriteHeader(404)
 		}
 	}))
 	defer server.Close()
+
 	link, err := local.Link("https://control.example", permit)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	path := filepath.Join(t.TempDir(), "state.json")
-	err = EnrollByInvite(
+
+	store, err := localstate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = store.Close() })
+
+	err = node.EnrollByInviteFrom(
 		context.Background(),
 		server.Client(),
-		InviteEnrollment{
+		node.InviteEnrollment{
 			ControlURL:    server.URL,
 			InviteLink:    link,
 			Code:          local.Code,
@@ -104,14 +132,17 @@ func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing
 			PollInterval:  time.Millisecond,
 		},
 		&state,
+		store,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := Load(path)
+
+	loaded, err := node.LoadFrom(store)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if loaded.DeviceID != "linux" || loaded.DeviceCredential == "" ||
 		loaded.IdentityPrivateKey != original.IdentityPrivateKey ||
 		loaded.WireGuard.PrivateKey != original.WireGuard.PrivateKey {
@@ -121,14 +152,17 @@ func TestEnrollByInviteReusesStateKeysAndNeverTransmitsFragmentOrCode(t *testing
 func mustPublic(raw string) []byte { b, _ := base64.RawURLEncoding.DecodeString(raw); return b }
 func TestPrepareInviteProofRejectsWrongRootAndMalformedFragment(t *testing.T) {
 	root, key, _ := ed25519.GenerateKey(rand.Reader)
+
 	wrong, _, _ := ed25519.GenerateKey(rand.Reader)
-	state, _ := NewState()
+	state, _ := node.NewState()
 	now := time.Now()
 	local, _ := invite.New("home", "family", time.Hour, now, rand.Reader)
+
 	permit, _ := invite.SignPermit(local.Permit, key, "root-1")
+
 	link, _ := local.Link("https://control.example", permit)
-	for _, params := range []InviteEnrollment{{InviteLink: link, Code: local.Code, DeviceID: "linux", RootPublicKey: wrong, NetworkID: "home"}, {InviteLink: link, Code: local.Code, DeviceID: "linux", RootPublicKey: root, NetworkID: "other"}, {InviteLink: link + "&permit=bad", Code: local.Code, DeviceID: "linux", RootPublicKey: root, NetworkID: "home"}} {
-		if _, _, err := PrepareInviteProof(params, state, now); err == nil {
+	for _, params := range []node.InviteEnrollment{{InviteLink: link, Code: local.Code, DeviceID: "linux", RootPublicKey: wrong, NetworkID: "home"}, {InviteLink: link, Code: local.Code, DeviceID: "linux", RootPublicKey: root, NetworkID: "other"}, {InviteLink: link + "&permit=bad", Code: local.Code, DeviceID: "linux", RootPublicKey: root, NetworkID: "home"}} {
+		if _, _, err := node.PrepareInviteProof(params, state, now); err == nil {
 			t.Fatal("untrusted invite accepted")
 		}
 	}

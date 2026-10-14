@@ -30,6 +30,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
 	"github.com/StasOkhrym/homeharbor/internal/node"
+	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
 	"github.com/StasOkhrym/homeharbor/internal/platform/redissecurity"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
@@ -567,12 +568,15 @@ func TestPostgresHTTPResponseLossRequestsFreshChallengeAndPersistsReplacement(t 
 	if os.Getenv("TEST_REDIS_URL") == "" {
 		t.Skip("TEST_REDIS_URL is not set")
 	}
+
 	f := newFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
 	if _, err := f.activation.ApproveSigned(ctx, f.approval); err != nil {
 		t.Fatal(err)
 	}
+
 	f.publish(t)
 	records := invites.NewService(
 		invitepg.New(f.pool),
@@ -583,6 +587,7 @@ func TestPostgresHTTPResponseLossRequestsFreshChallengeAndPersistsReplacement(t 
 	)
 	mux := http.NewServeMux()
 	handler := httpapi.NewActivationHandler(f.activation, f.activation)
+
 	mux.HandleFunc("POST /api/v1/invites/{id}/challenge", handler.Challenge)
 	mux.HandleFunc("POST /api/v1/invites/{id}/claim", handler.Claim)
 	mux.HandleFunc("POST /api/v1/invites/proof", func(w http.ResponseWriter, r *http.Request) {
@@ -590,20 +595,26 @@ func TestPostgresHTTPResponseLossRequestsFreshChallengeAndPersistsReplacement(t 
 			Permit invite.SignedPermit `json:"permit"`
 			Proof  invite.Proof        `json:"proof"`
 		}
+
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Error(err)
+
 			w.WriteHeader(400)
 			return
 		}
+
 		if err := records.SubmitProof(r.Context(), input.Permit, input.Proof); err != nil {
 			t.Error(err)
+
 			w.WriteHeader(400)
 			return
 		}
+
 		w.WriteHeader(202)
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
+
 	transport := &lostClaimResponse{transport: server.Client().Transport}
 	client := &http.Client{Transport: transport}
 	state := node.State{
@@ -615,7 +626,15 @@ func TestPostgresHTTPResponseLossRequestsFreshChallengeAndPersistsReplacement(t 
 		},
 	}
 	path := filepath.Join(t.TempDir(), "linux.json")
-	err := node.EnrollByInvite(
+
+	store, err := localstate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = store.Close() })
+
+	err = node.EnrollByInviteFrom(
 		ctx,
 		client,
 		node.InviteEnrollment{
@@ -629,21 +648,26 @@ func TestPostgresHTTPResponseLossRequestsFreshChallengeAndPersistsReplacement(t 
 			PollInterval:  time.Millisecond,
 		},
 		&state,
+		store,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !transport.lost {
 		t.Fatal("test did not lose a committed response")
 	}
-	loaded, err := node.Load(path)
+
+	loaded, err := node.LoadFrom(store)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if loaded.IdentityPublicKey == f.gateway.IdentityPublicKey ||
 		loaded.WireGuard.PublicKey == f.gateway.WireGuard.PublicKey {
 		t.Fatal("client reused the independently generated gateway identity")
 	}
+
 	if _, err = f.devices.AuthenticateCredential(
 		ctx,
 		sha256.Sum256([]byte(loaded.DeviceCredential)),
@@ -651,14 +675,18 @@ func TestPostgresHTTPResponseLossRequestsFreshChallengeAndPersistsReplacement(t 
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	var total, active int
+
 	if err := f.pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE revoked_at IS NULL) FROM device_credentials`).
 		Scan(&total, &active); err != nil ||
 		total != 2 ||
 		active != 1 {
 		t.Fatalf("credentials total=%d active=%d err=%v", total, active, err)
 	}
+
 	d, err := f.devices.Device(ctx, "linux")
+
 	if err != nil || d.Credential != "" {
 		t.Fatal("plaintext credential was persisted")
 	}

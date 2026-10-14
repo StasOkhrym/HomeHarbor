@@ -17,7 +17,8 @@ import (
 func TestRelayConstructorRejectsInvalidConfigBeforeRun(t *testing.T) {
 	cfg := config.RelayServer{Runtime: config.DefaultRuntime(true)}
 	cfg.Runtime.HTTPHeaderTimeout = -time.Second
-	if app, err := New(cfg, nil); err == nil || app != nil {
+
+	if app, err := NewWithOptions(cfg, nil, Options{}); err == nil || app != nil {
 		t.Fatal("invalid relay configuration deferred its error until Run")
 	}
 }
@@ -28,15 +29,18 @@ func TestRelayConfiguredRuntimeReachesHTTPServer(t *testing.T) {
 	cfg.Server.UDPListenAddress = "127.0.0.1:0"
 	cfg.Security.TicketKey = "01234567890123456789012345678901"
 	cfg.Runtime.HTTPReadTimeout = 3 * time.Second
-	a, err := New(cfg, nil)
+
+	a, err := NewWithOptions(cfg, nil, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() {
 		if a.udpPair != nil {
 			_ = a.udpPair.Close()
 		}
 	})
+
 	if a.server.ReadTimeout != 3*time.Second {
 		t.Fatal("configured HTTP read timeout ignored")
 	}
@@ -47,26 +51,32 @@ func TestRelayReadinessFollowsUDPListenerLifecycle(t *testing.T) {
 	cfg.Server.ListenAddress = "127.0.0.1:0"
 	cfg.Server.UDPListenAddress = "127.0.0.1:0"
 	cfg.Security.TicketKey = "01234567890123456789012345678901"
-	app, err := New(cfg, slog.Default())
+
+	app, err := NewWithOptions(cfg, slog.Default(), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	handler := app.server.Handler
+
 	if status := readinessStatus(handler); status != http.StatusServiceUnavailable {
 		t.Fatalf("initial readiness status=%d, want %d", status, http.StatusServiceUnavailable)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	errCh := make(chan error, 1)
 	go func() { errCh <- app.Run(ctx) }()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) && readinessStatus(handler) != http.StatusOK {
 		time.Sleep(10 * time.Millisecond)
 	}
+
 	if status := readinessStatus(handler); status != http.StatusOK {
 		t.Fatalf("running readiness status=%d, want %d", status, http.StatusOK)
 	}
+
 	cancel()
 	select {
 	case err := <-errCh:
@@ -76,6 +86,7 @@ func TestRelayReadinessFollowsUDPListenerLifecycle(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("relay did not stop after cancellation")
 	}
+
 	if status := readinessStatus(handler); status != http.StatusServiceUnavailable {
 		t.Fatalf("stopped readiness status=%d, want %d", status, http.StatusServiceUnavailable)
 	}
@@ -86,19 +97,24 @@ func TestRelayAppDoesNotExposeLegacyUDPTicketIngress(t *testing.T) {
 	cfg.Server.ListenAddress = "127.0.0.1:0"
 	cfg.Server.UDPListenAddress = "127.0.0.1:0"
 	cfg.Security.TicketKey = "01234567890123456789012345678901"
-	a, err := New(cfg, nil)
+
+	a, err := NewWithOptions(cfg, nil, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	tcp, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	udp, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
 	if err != nil {
 		_ = tcp.Close()
+
 		t.Fatal(err)
 	}
+
 	handler := a.server.Handler
 	address := udp.LocalAddr().(*net.UDPAddr)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -112,11 +128,13 @@ func TestRelayAppDoesNotExposeLegacyUDPTicketIngress(t *testing.T) {
 			t.Error("relay shutdown timeout")
 		}
 	})
+
 	sender, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = sender.Close() }()
+
 	ticket, _ := (relayruntime.TicketIssuer{Key: []byte(cfg.Security.TicketKey)}).IssueForPeer(
 		"s",
 		"a",
@@ -125,19 +143,26 @@ func TestRelayAppDoesNotExposeLegacyUDPTicketIngress(t *testing.T) {
 	)
 	// Keep the obsolete wire fixture, not its removed production encoder.
 	packet := []byte{'G', 'T', 'U', 'P', 1, 1, 0, 0}
+
 	binary.BigEndian.PutUint16(packet[6:8], uint16(len(ticket)))
 	packet = append(packet, ticket...)
 	packet = append(packet, "legacy"...)
+
 	if _, err := sender.WriteToUDP(packet, address); err != nil {
 		t.Fatal(err)
 	}
+
 	_ = sender.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+
 	if _, _, err := sender.ReadFromUDP(make([]byte, 512)); err == nil {
 		t.Fatal("production app admitted a UDP v1 bearer packet")
 	}
+
 	request := httptest.NewRequest(http.MethodGet, "/relay/udp", nil)
 	recorder := httptest.NewRecorder()
+
 	handler.ServeHTTP(recorder, request)
+
 	if recorder.Code != http.StatusUpgradeRequired {
 		t.Fatalf("relay plaintext status=%d, want TLS requirement", recorder.Code)
 	}
@@ -148,20 +173,27 @@ func TestOldRelayEndpointRejected(t *testing.T) {
 	cfg.Server.ListenAddress = "127.0.0.1:0"
 	cfg.Server.UDPListenAddress = "127.0.0.1:0"
 	cfg.Security.TicketKey = "01234567890123456789012345678901"
-	app, err := New(cfg, nil)
+
+	app, err := NewWithOptions(cfg, nil, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() { _ = app.udpPair.Close() })
 	for _, path := range []string{"/relay/udp/v2", "/relay/v1"} {
 		recorder := httptest.NewRecorder()
+
 		app.server.Handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+
 		if recorder.Code != http.StatusNotFound {
 			t.Errorf("old endpoint %q status=%d, want 404", path, recorder.Code)
 		}
 	}
+
 	recorder := httptest.NewRecorder()
+
 	app.server.Handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/relay/udp", nil))
+
 	if recorder.Code != http.StatusUpgradeRequired {
 		t.Fatalf("canonical endpoint status=%d, want TLS requirement", recorder.Code)
 	}
@@ -176,17 +208,23 @@ func TestRelayReadinessStaysFalseWhenUDPBindFails(t *testing.T) {
 
 	cfg := config.RelayServer{}
 	cfg.Server.ListenAddress = "127.0.0.1:0"
+
 	cfg.Server.UDPListenAddress = occupied.LocalAddr().String()
 	cfg.Security.TicketKey = "01234567890123456789012345678901"
-	app, err := New(cfg, slog.Default())
+
+	app, err := NewWithOptions(cfg, slog.Default(), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	handler := app.server.Handler
+
 	err = app.Run(context.Background())
+
 	if err == nil {
 		t.Fatal("Run() error=nil, want UDP bind failure")
 	}
+
 	if status := readinessStatus(handler); status != http.StatusServiceUnavailable {
 		t.Fatalf(
 			"failed startup readiness status=%d, want %d",

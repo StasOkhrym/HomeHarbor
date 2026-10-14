@@ -225,23 +225,9 @@ func (r *ClientReconciler) Prepare(ctx context.Context, value snapshot.NetworkSn
 	return err
 }
 
-// NewGatewayReconciler composes firewall and optional split-DNS ownership.
-// The firewall is applied before DNS so a failed policy transaction never
-// leaves a new resolver route active without its matching access controls.
-func NewGatewayReconciler(
-	interfaceName, deviceID string,
-	dnsReconcilers ...*DNSReconciler,
-) *GatewayReconciler {
-	var dnsReconciler *DNSReconciler
-	if len(dnsReconcilers) > 0 {
-		dnsReconciler = dnsReconcilers[0]
-	}
-	return NewGatewayReconcilerWithOptions(interfaceName, deviceID, dnsReconciler, false)
-}
-
 // NewGatewayReconcilerWithOptions exposes host-wide forwarding as an explicit
-// deployment choice. The default constructor remains fail-safe for developers
-// and hosts where another network manager owns sysctl state.
+// deployment choice. Callers pass false when another network manager owns
+// host sysctl state.
 func NewGatewayReconcilerWithOptions(
 	interfaceName, deviceID string,
 	dnsReconciler *DNSReconciler,

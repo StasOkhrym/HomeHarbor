@@ -9,7 +9,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
-	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 )
 
 // runtimeStores closes acquired resources in reverse order, at most once.
@@ -27,11 +26,6 @@ func (s *runtimeStores) close() {
 			s.closers[i]()
 		}
 	})
-}
-
-func (s *runtimeStores) run(ctx context.Context, components ...lifecycle.Component) error {
-	defer s.close()
-	return lifecycle.Run(ctx, components...)
 }
 
 func openStores(

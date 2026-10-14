@@ -68,6 +68,7 @@ func TestRunCoordinationVerifiesAndAppliesSignedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	envelope, err := snapshot.Sign(
 		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1},
 		privateKey,
@@ -76,12 +77,16 @@ func TestRunCoordinationVerifiesAndAppliesSignedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	server := newCoordinationTestServer(t, envelope)
 	defer server.Close()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+
 	recorder := &snapshotRecorder{cancel: cancel}
-	err = RunCoordination(
+
+	err = runCoordinationOnce(
 		ctx,
 		CoordinationConfig{
 			URL:            "ws" + server.URL[len("http"):],
@@ -96,6 +101,7 @@ func TestRunCoordinationVerifiesAndAppliesSignedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !recorder.called || recorder.value.Revision != 1 {
 		t.Fatalf("recorder=%#v", recorder)
 	}
@@ -106,34 +112,44 @@ func TestRunCoordinationUsesExplicitCAForSignedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	envelope, err := snapshot.Sign(
 		snapshot.NetworkSnapshot{NetworkID: "home", Revision: 1}, privateKey, "root-1",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	server := httptest.NewTLSServer(coordinationTestHandler(t, envelope))
 	defer server.Close()
+
 	caFile := filepath.Join(t.TempDir(), "control-ca.pem")
+
 	certificate := pem.EncodeToMemory(
 		&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw},
 	)
+
 	if err := os.WriteFile(caFile, certificate, 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	client, err := trust.NewHTTPClientFromCAFile(caFile)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client.CloseIdleConnections()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+
 	recorder := &snapshotRecorder{cancel: cancel}
-	err = RunCoordination(ctx, CoordinationConfig{
+
+	err = runCoordinationOnce(ctx, CoordinationConfig{
 		URL: "wss" + server.URL[len("https"):], HTTPClient: client,
 		Credential: "credential", DeviceID: "device-1", NetworkID: "home",
 		RootPublicKey: publicKey, HeartbeatEvery: time.Hour,
 	}, recorder)
+
 	if err != nil || !recorder.called || recorder.value.Revision != 1 {
 		t.Fatalf("trusted signed snapshot was not applied: called=%t revision=%d err=%v",
 			recorder.called, recorder.value.Revision, err)
@@ -284,21 +300,28 @@ func TestRunCoordinationPublishesCandidateUpdatesAfterWelcome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+
 	var received controlprotocol.CandidateUpdate
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		connection, acceptErr := websocket.Accept(w, r, nil)
 		if acceptErr != nil {
 			t.Errorf("accept: %v", acceptErr)
+
 			return
 		}
 		defer func() { _ = connection.CloseNow() }()
+
 		var hello controlprotocol.Hello
+
 		if readErr := wsjson.Read(r.Context(), connection, &hello); readErr != nil {
 			t.Errorf("hello: %v", readErr)
+
 			return
 		}
+
 		if writeErr := wsjson.Write(
 			r.Context(),
 			connection,
@@ -314,25 +337,35 @@ func TestRunCoordinationPublishesCandidateUpdatesAfterWelcome(t *testing.T) {
 			},
 		); writeErr != nil {
 			t.Errorf("welcome: %v", writeErr)
+
 			return
 		}
+
 		var message controlprotocol.Message
+
 		if readErr := wsjson.Read(r.Context(), connection, &message); readErr != nil {
 			t.Errorf("candidate message: %v", readErr)
+
 			return
 		}
+
 		if message.Type != "candidate.update" {
 			t.Errorf("message type=%q, want candidate.update", message.Type)
+
 			return
 		}
+
 		if unmarshalErr := json.Unmarshal(message.Payload, &received); unmarshalErr != nil {
 			t.Errorf("candidate payload: %v", unmarshalErr)
+
 			return
 		}
+
 		cancel()
 	}))
 	defer server.Close()
-	err = RunCoordination(ctx, CoordinationConfig{
+
+	err = runCoordinationOnce(ctx, CoordinationConfig{
 		URL:           "ws" + server.URL[len("http"):],
 		Credential:    "credential",
 		DeviceID:      "client",
@@ -356,6 +389,7 @@ func TestRunCoordinationPublishesCandidateUpdatesAfterWelcome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if received.DestinationDeviceID != "gateway" || len(received.Candidates) != 1 {
 		t.Fatalf("received candidate update=%#v", received)
 	}
@@ -531,4 +565,17 @@ func TestCandidatePublisherJoined(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("session did not join publisher")
 	}
+}
+
+func runCoordinationOnce(
+	ctx context.Context,
+	cfg CoordinationConfig,
+	applier SnapshotApplier,
+) error {
+	cursor, err := restoreSnapshotCursor(ctx, cfg, applier)
+	if err != nil {
+		return err
+	}
+
+	return runCoordination(ctx, cfg, applier, &cursor)
 }

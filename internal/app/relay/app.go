@@ -34,11 +34,6 @@ type App struct {
 
 var _ lifecycle.Component = (*App)(nil)
 
-// New creates a relay runtime from validated configuration.
-func New(cfg config.RelayServer, logger *slog.Logger) (*App, error) {
-	return NewWithOptions(cfg, logger, Options{})
-}
-
 // Options is the integration boundary for relay configuration owned by the
 // parent. TLSConfig must contain the serving certificate (or GetCertificate).
 // No proxy header substitutes for the TLS-authenticated control connection.

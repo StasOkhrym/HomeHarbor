@@ -24,9 +24,13 @@ func TestCanonicalRelayRoundTrip(t *testing.T) {
 	// Use a trusted test certificate on the actual production listener. The
 	// temporary server supplies only certificate material, not the relay path.
 	certServer := httptest.NewTLSServer(http.NotFoundHandler())
+
 	client := certServer.Client()
+
 	tlsConfig := certServer.TLS.Clone()
+
 	certServer.Close()
+
 	app, err := NewWithOptions(cfg, slog.Default(), Options{TLSConfig: tlsConfig})
 	if err != nil {
 		t.Fatal(err)
@@ -36,14 +40,17 @@ func TestCanonicalRelayRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	udpListener, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
 	if err != nil {
 		_ = tcpListener.Close()
+
 		t.Fatal(err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	appErrors := make(chan error, 1)
 	go func() { appErrors <- app.runWithListeners(ctx, tcpListener, udpListener) }()
 
@@ -51,22 +58,27 @@ func TestCanonicalRelayRoundTrip(t *testing.T) {
 
 	const sessionID = "production-relay-acceptance"
 	issuer := relayruntime.TicketIssuer{Key: []byte(cfg.Security.TicketKey)}
+
 	ticketGateway, err := issuer.IssueForPeer(sessionID, "gateway", "client", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	ticketClient, err := issuer.IssueForPeer(sessionID, "client", "gateway", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	bridgeListenGateway := freeRelayUDPAddress(t)
+
 	bridgeListenClient := freeRelayUDPAddress(t)
+
 	wireGuardGateway := listenRelayUDP(t)
+
 	wireGuardClient := listenRelayUDP(t)
 	bridgeErrors := make(chan error, 2)
 	go func() {
-		bridgeErrors <- node.RunRelayBridge(ctx, node.RelayBridgeConfig{
+		bridgeErrors <- node.RunRelayBridgeLoop(ctx, node.RelayBridgeConfig{
 			RelayURL:            "wss://" + tcpListener.Addr().String() + "/relay/udp",
 			RelayTransport:      relayruntime.UDPPairProtocol,
 			RelayHTTPClient:     client,
@@ -76,10 +88,10 @@ func TestCanonicalRelayRoundTrip(t *testing.T) {
 			DestinationDeviceID: "client",
 			ListenAddress:       bridgeListenGateway.String(),
 			WireGuardAddress:    wireGuardGateway.LocalAddr().String(),
-		})
+		}, nil)
 	}()
 	go func() {
-		bridgeErrors <- node.RunRelayBridge(ctx, node.RelayBridgeConfig{
+		bridgeErrors <- node.RunRelayBridgeLoop(ctx, node.RelayBridgeConfig{
 			RelayURL:            "wss://" + tcpListener.Addr().String() + "/relay/udp",
 			RelayTransport:      relayruntime.UDPPairProtocol,
 			RelayHTTPClient:     client,
@@ -89,7 +101,7 @@ func TestCanonicalRelayRoundTrip(t *testing.T) {
 			DestinationDeviceID: "gateway",
 			ListenAddress:       bridgeListenClient.String(),
 			WireGuardAddress:    wireGuardClient.LocalAddr().String(),
-		})
+		}, nil)
 	}()
 
 	waitForRelayUDP(
@@ -118,6 +130,7 @@ func TestCanonicalRelayRoundTrip(t *testing.T) {
 			t.Fatal("relay bridge did not stop after cancellation")
 		}
 	}
+
 	select {
 	case err := <-appErrors:
 		if err != nil {

@@ -22,6 +22,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/platform/trust"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
+	nodetest "github.com/StasOkhrym/homeharbor/internal/testutil/node"
 )
 
 type nativeRuntimeHelper struct {
@@ -219,20 +220,25 @@ func TestNativeCoordinationUsesSignedControllerAndCleansAfterWorkers(t *testing.
 
 func TestNativeStartupClosesOwnedNetworkingBeforeOfflineCredentialRecovery(t *testing.T) {
 	cfg := nativeRuntimeFixture(t)
+
 	state, err := node.NewState()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	state.DeviceID = "client-1"
 	state.DeviceCredential = "expired-credential"
 	state.CredentialExpiresAt = time.Now().Add(-time.Minute)
-	if err := state.Save(cfg.Identity.StatePath); err != nil {
+
+	if err := nodetest.Save(state, cfg.Identity.StatePath); err != nil {
 		t.Fatal(err)
 	}
+
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
+
 	if err := os.WriteFile(
 		cfg.Identity.CAFile,
 		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}),
@@ -240,9 +246,11 @@ func TestNativeStartupClosesOwnedNetworkingBeforeOfflineCredentialRecovery(t *te
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	cfg.Identity.ControlURL = server.URL
 	cfg.Runtime.OperationTimeout = 250 * time.Millisecond
 	helper := &nativeRuntimeHelper{}
+
 	if _, err := startRuntimeWithNativeHelper(
 		context.Background(),
 		Client,
@@ -251,6 +259,7 @@ func TestNativeStartupClosesOwnedNetworkingBeforeOfflineCredentialRecovery(t *te
 	); err == nil {
 		t.Fatal("offline credential recovery unexpectedly admitted startup")
 	}
+
 	if len(helper.requests) != 1 || helper.requests[0].Action != "close" {
 		t.Fatalf(
 			"previous owned native networking was not closed before credential recovery: %+v",

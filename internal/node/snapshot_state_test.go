@@ -593,3 +593,13 @@ func TestSnapshotCheckpointCommitFailureKeepsCursorAndStopsLoop(t *testing.T) {
 		t.Fatalf("loop persistence failure=%v", err)
 	}
 }
+
+func persistSnapshotState(path string, envelope snapshot.Envelope) error {
+	p, err := prepareSnapshotState(path, envelope)
+	if err != nil {
+		return err
+	}
+	defer p.abort()
+
+	return p.commit()
+}

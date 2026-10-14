@@ -3,9 +3,7 @@ package invites
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
 	"errors"
-	"io"
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/invite"
@@ -74,7 +72,6 @@ type Service struct {
 	root      ed25519.PublicKey
 	networkID string
 	now       func() time.Time
-	random    io.Reader
 	workflow  ApprovalWorkflow
 }
 
@@ -83,14 +80,6 @@ type Option func(*Service)
 
 func WithApprovalWorkflow(workflow ApprovalWorkflow) Option {
 	return func(service *Service) { service.workflow = workflow }
-}
-
-func WithRandom(random io.Reader) Option {
-	return func(service *Service) {
-		if random != nil {
-			service.random = random
-		}
-	}
 }
 
 func NewService(
@@ -103,16 +92,17 @@ func NewService(
 	if now == nil {
 		now = time.Now
 	}
+
 	service := &Service{
 		store:     store,
 		root:      append(ed25519.PublicKey(nil), root...),
 		networkID: networkID,
 		now:       now,
-		random:    rand.Reader,
 	}
 	for _, option := range options {
 		option(service)
 	}
+
 	return service
 }
 

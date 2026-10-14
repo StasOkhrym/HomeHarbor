@@ -198,21 +198,6 @@ func activationOrigin(raw string) (string, error) {
 	return "", errors.New("control URL must use HTTPS or local HTTP")
 }
 
-// EnrollByInvite submits the proof, polls until approval appears in signed
-// topology, then claims and atomically saves a credential using existing State
-// keys. Lost claim responses are recovered with a fresh challenge/credential.
-// Context cancellation bounds polling; a caller may retry with the same state.
-func EnrollByInvite(
-	ctx context.Context,
-	httpClient *http.Client,
-	p InviteEnrollment,
-	state *State,
-) error {
-	return enrollByInvite(ctx, httpClient, p, state, func(current State) error {
-		return current.Save(p.StatePath)
-	})
-}
-
 // EnrollByInviteFrom keeps the caller's lifetime state lock across proof,
 // approval polling and credential persistence.
 func EnrollByInviteFrom(

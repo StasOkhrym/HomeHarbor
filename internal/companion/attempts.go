@@ -25,38 +25,6 @@ type InviteAttemptStore interface {
 	RecordFailure(string) error
 }
 
-type memoryInviteAttemptStore struct {
-	mu       sync.Mutex
-	attempts map[string]int
-}
-
-// NewMemoryInviteAttemptStore is used by tests and an in-process companion.
-func NewMemoryInviteAttemptStore() InviteAttemptStore {
-	return &memoryInviteAttemptStore{attempts: make(map[string]int)}
-}
-
-func (s *memoryInviteAttemptStore) Check(inviteID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.attempts[inviteID] >= MaxInviteCodeAttempts {
-		return ErrInviteAttemptsLocked
-	}
-	return nil
-}
-
-func (s *memoryInviteAttemptStore) RecordFailure(inviteID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.attempts[inviteID] >= MaxInviteCodeAttempts {
-		return ErrInviteAttemptsLocked
-	}
-	s.attempts[inviteID]++
-	if s.attempts[inviteID] >= MaxInviteCodeAttempts {
-		return ErrInviteAttemptsLocked
-	}
-	return nil
-}
-
 type fileInviteAttemptState struct {
 	Attempts map[string]int `json:"attempts"`
 }

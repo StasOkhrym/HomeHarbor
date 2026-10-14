@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
-	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 )
 
 func TestControlRunConstructionFailureClosesAcquiredResources(t *testing.T) {
@@ -32,28 +31,6 @@ func TestControlRunConstructionFailureClosesAcquiredResources(t *testing.T) {
 
 	if !reflect.DeepEqual(closed, []string{"database", "redis"}) {
 		t.Fatalf("acquired resources must close once in reverse order: %v", closed)
-	}
-}
-
-func TestControlShutdownWaitsForAuditBeforeClosingStores(t *testing.T) {
-	var stopped bool
-	stores := &runtimeStores{closers: []func(){func() {
-		if !stopped {
-			t.Error("stores closed before audit worker stopped")
-		}
-	}}}
-	ctx, cancel := context.WithCancel(context.Background())
-	worker := lifecycle.Func(func(ctx context.Context) error {
-		cancel()
-		<-ctx.Done()
-		stopped = true
-		return nil
-	})
-	if err := stores.run(ctx, worker); err != nil {
-		t.Fatal(err)
-	}
-	if !stopped {
-		t.Fatal("audit worker was not supervised")
 	}
 }
 

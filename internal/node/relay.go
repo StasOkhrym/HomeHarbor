@@ -126,19 +126,6 @@ func ParsePrefixList(value string) ([]netip.Prefix, error) {
 	return prefixes, nil
 }
 
-// RunRelayBridge owns the authenticated UDP bridge until cancellation or failure.
-func RunRelayBridge(ctx context.Context, cfg RelayBridgeConfig) error {
-	if err := validateRelayBridgeConfig(cfg); err != nil {
-		return err
-	}
-	bridge, err := newUDPPairBridge(cfg)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = bridge.Close() }()
-	return bridge.Run(ctx)
-}
-
 func validateRelayBridgeConfig(cfg RelayBridgeConfig) error {
 	if cfg.RelayTransport != "" && cfg.RelayTransport != relay.UDPPairProtocol {
 		return errors.New("unsupported relay transport")
@@ -169,20 +156,6 @@ func validateRelayBridgeConfig(cfg RelayBridgeConfig) error {
 	}
 
 	return nil
-}
-
-// RunKernelRelay reconciles Linux WireGuard before opening the UDP bridge.
-func RunKernelRelay(ctx context.Context, cfg KernelRelayConfig) error {
-	if err := validateKernelRelayConfig(cfg); err != nil {
-		return err
-	}
-	bridge, err := newUDPPairBridge(cfg.RelayBridgeConfig)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = bridge.Close() }()
-	address := bridge.LocalAddr()
-	return runKernelRelayBridge(ctx, cfg, bridge, address.AddrPort())
 }
 
 func validateKernelRelayConfig(cfg KernelRelayConfig) error {

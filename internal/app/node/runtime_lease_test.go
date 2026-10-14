@@ -18,6 +18,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 	"github.com/StasOkhrym/homeharbor/internal/platform/trust"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
+	nodetest "github.com/StasOkhrym/homeharbor/internal/testutil/node"
 )
 
 type leaseValue struct{ value protocol.CredentialLease }
@@ -255,24 +256,30 @@ func TestRuntimeStartupRenewsPersistedLeaseUnderExistingStateOwner(t *testing.T)
 func TestRuntimeRenewsClaimedCredentialWithExplicitCA(t *testing.T) {
 	cfg := config.DefaultClient()
 	cfg.Identity.StatePath = filepath.Join(t.TempDir(), "state.json")
-	state, err := node.LoadOrCreate(cfg.Identity.StatePath)
+
+	state, err := nodetest.LoadOrCreate(cfg.Identity.StatePath)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	state.DeviceID = "client-1"
 	state.DeviceCredential = "persisted"
 	state.CredentialExpiresAt = time.Now().Add(10 * time.Minute)
-	if err := state.Save(cfg.Identity.StatePath); err != nil {
+
+	if err := nodetest.Save(state, cfg.Identity.StatePath); err != nil {
 		t.Fatal(err)
 	}
+
 	rotated := make(chan struct{}, 1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/devices/credentials/rotate" ||
 			r.Header.Get("Authorization") != "Bearer persisted" {
 			t.Errorf("unexpected runtime control request %s", r.URL.Path)
+
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+
 		_ = json.NewEncoder(w).Encode(protocol.CredentialLease{
 			DeviceID:   "client-1",
 			Credential: "renewed",
@@ -281,51 +288,68 @@ func TestRuntimeRenewsClaimedCredentialWithExplicitCA(t *testing.T) {
 		rotated <- struct{}{}
 	}))
 	defer server.Close()
+
 	caFile := filepath.Join(t.TempDir(), "ca.pem")
+
 	certificate := pem.EncodeToMemory(
 		&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw},
 	)
+
 	if err := os.WriteFile(caFile, certificate, 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	cfg.Identity.ControlURL = server.URL
 	cfg.Identity.CAFile = caFile
+
 	app, err := NewRuntime(context.Background(), Client, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	done := make(chan error, 1)
 	go func() { done <- app.Run(ctx) }()
 	select {
 	case <-rotated:
 	case <-time.After(5 * time.Second):
 		cancel()
+
 		t.Fatal("runtime did not use its explicit control CA")
 	}
+
 	deadline := time.After(5 * time.Second)
 	for {
 		saved, err := os.ReadFile(cfg.Identity.StatePath)
 		if err != nil {
 			cancel()
+
 			t.Fatal(err)
 		}
+
 		if strings.Contains(string(saved), `"device_credential": "renewed"`) {
 			break
 		}
+
 		select {
 		case <-deadline:
 			cancel()
+
 			t.Fatal("runtime received but did not persist renewed credential")
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+
 	cancel()
+
 	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	reloaded, err := node.Load(cfg.Identity.StatePath)
+
+	reloaded, err := nodetest.Load(cfg.Identity.StatePath)
+
 	if err != nil || reloaded.DeviceCredential != "renewed" {
 		t.Fatalf("renewed credential was not saved: renewed=%t err=%v",
 			reloaded.DeviceCredential == "renewed", err)

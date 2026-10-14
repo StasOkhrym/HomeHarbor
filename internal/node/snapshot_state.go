@@ -194,12 +194,3 @@ func (p *preparedSnapshotState) commit() error {
 
 	return dir.Sync()
 }
-
-func persistSnapshotState(path string, envelope snapshot.Envelope) error {
-	p, err := prepareSnapshotState(path, envelope)
-	if err != nil {
-		return err
-	}
-	defer p.abort()
-	return p.commit()
-}

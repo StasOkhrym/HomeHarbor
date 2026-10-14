@@ -18,6 +18,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/client/macos"
 	"github.com/StasOkhrym/homeharbor/internal/node"
 	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
+	nodetest "github.com/StasOkhrym/homeharbor/internal/testutil/node"
 )
 
 type cleanupHelper struct {
@@ -39,33 +40,42 @@ func networkCloseFixture(t *testing.T) (string, string, node.State, string) {
 	t.Helper()
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "client.json")
+
 	state, err := node.NewState()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	state.DeviceID, state.DeviceCredential = "client-1", "expired-private-credential"
 	state.CredentialExpiresAt = time.Now().Add(-time.Hour)
-	if err := state.Save(statePath); err != nil {
+
+	if err := nodetest.Save(state, statePath); err != nil {
 		t.Fatal(err)
 	}
+
 	root, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	public := base64.RawURLEncoding.EncodeToString(root)
 	rootPath := filepath.Join(dir, "root.pub")
+
 	if err := os.WriteFile(rootPath, []byte(public), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	configPath := filepath.Join(dir, "client.toml")
 	config := fmt.Sprintf(
 		"[node]\nstate_path = %q\ncontrol_url = 'https://unreachable.invalid'\nca_file = '/unavailable-ca'\n[coordination]\nnetwork_id = 'sandbox-network'\nroot_public_key_file = %q\n[native]\nenabled = true\n",
 		statePath,
 		rootPath,
 	)
+
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	t.Setenv("HOMEHARBOR_NODE_STATE_PATH", statePath)
 	t.Setenv("HOMEHARBOR_NODE_ENROLLMENT_TOKEN_FILE", "")
 	t.Setenv("HOMEHARBOR_NODE_RELAY_TICKET_FILE", "")

@@ -234,17 +234,6 @@ func LoadPublicKeyFile(path string) (ed25519.PublicKey, error) {
 	return ed25519.PublicKey(decoded), nil
 }
 
-// RunCoordination maintains the authenticated control WebSocket and verifies
-// every snapshot before applying it. A reconnect should call this function
-// again; it intentionally does not invent a snapshot during control outage.
-func RunCoordination(ctx context.Context, cfg CoordinationConfig, applier SnapshotApplier) error {
-	cursor, err := restoreSnapshotCursor(ctx, cfg, applier)
-	if err != nil {
-		return err
-	}
-	return runCoordination(ctx, cfg, applier, &cursor)
-}
-
 type coordinationCursor struct {
 	revision   uint64
 	hash       []byte

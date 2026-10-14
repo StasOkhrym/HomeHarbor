@@ -17,10 +17,6 @@ type PeerConfig struct {
 	PersistentKeepalive time.Duration
 }
 
-func BuildWireGuardConfig(privateKey string, peers []PeerConfig) (wgtypes.Config, error) {
-	return BuildWireGuardConfigWithListenPort(privateKey, 0, peers)
-}
-
 // BuildWireGuardConfigWithListenPort creates the kernel configuration without
 // applying it. Keeping construction pure lets snapshot reconciliation validate
 // every key, endpoint, and allowed prefix before changing the live interface.

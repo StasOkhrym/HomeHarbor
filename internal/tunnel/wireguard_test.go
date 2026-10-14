@@ -11,12 +11,15 @@ func TestBuildWireGuardConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	remote, err := NewIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := BuildWireGuardConfig(
+
+	config, err := BuildWireGuardConfigWithListenPort(
 		local.PrivateKey,
+		0,
 		[]PeerConfig{
 			{
 				PublicKey:           remote.PublicKey,
@@ -29,6 +32,7 @@ func TestBuildWireGuardConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if config.PrivateKey == nil || len(config.Peers) != 1 ||
 		config.Peers[0].Endpoint.String() != "203.0.113.1:51820" {
 		t.Fatalf("config=%#v", config)
@@ -56,12 +60,15 @@ func TestBuildWireGuardConfigRejectsDefaultRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	remote, err := NewIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := BuildWireGuardConfig(
+
+	if _, err := BuildWireGuardConfigWithListenPort(
 		local.PrivateKey,
+		0,
 		[]PeerConfig{
 			{
 				PublicKey:       remote.PublicKey,

@@ -216,19 +216,23 @@ func TestRemoteApproverBlocksInviteAfterFiveInvalidCodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	now := time.Now().UTC()
 	local, err := invite.New("home", "family", time.Hour, now, rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	permit, err := invite.SignPermit(local.Permit, rootPrivate, "root-1")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	_, devicePrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	proof, err := local.Proof(
 		"phone",
 		devicePrivate,
@@ -238,29 +242,34 @@ func TestRemoteApproverBlocksInviteAfterFiveInvalidCodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	service := controlinvites.NewService(
 		memoryinvites.NewRepository(),
 		rootPublic,
 		"home",
 		func() time.Time { return now },
 	)
+
 	if err := service.SubmitProof(context.Background(), permit, proof); err != nil {
 		t.Fatal(err)
 	}
+
 	server := httptest.NewServer(companionHTTPFixture(t, httpapi.ResourceDependencies{
 		Devices: devices.NewService(memorydevices.NewRepository(), time.Now, nil),
 		Invites: service,
 	}, nil, allowAllAuthorizer{}))
 	defer server.Close()
+
 	approver := RemoteApprover{
 		Endpoint: server.URL,
 		KeyID:    "root-1",
-		Attempts: NewMemoryInviteAttemptStore(),
+		Attempts: newMemoryInviteAttemptStore(),
 	}
 	wrongCode := "00000000"
 	if wrongCode == local.Code {
 		wrongCode = "00000001"
 	}
+
 	for range 5 {
 		if err := approver.Approve(
 			context.Background(),
@@ -271,6 +280,7 @@ func TestRemoteApproverBlocksInviteAfterFiveInvalidCodes(t *testing.T) {
 			t.Fatal("invalid code unexpectedly approved")
 		}
 	}
+
 	if err := approver.Approve(
 		context.Background(),
 		local.Permit.InviteID,

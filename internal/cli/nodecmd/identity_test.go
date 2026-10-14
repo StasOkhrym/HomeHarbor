@@ -13,6 +13,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/cli/host"
 	"github.com/StasOkhrym/homeharbor/internal/node"
 	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
+	nodetest "github.com/StasOkhrym/homeharbor/internal/testutil/node"
 )
 
 func TestIdentityCommandExportsOnlyJoinedPublicIdentityForBothRoles(t *testing.T) {
@@ -20,17 +21,22 @@ func TestIdentityCommandExportsOnlyJoinedPublicIdentityForBothRoles(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	state.DeviceID, state.DeviceCredential = "joined-device", "private-credential"
 	path := filepath.Join(t.TempDir(), "identity.json")
-	if err := state.Save(path); err != nil {
+
+	if err := nodetest.Save(state, path); err != nil {
 		t.Fatal(err)
 	}
+
 	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, role := range []nodeapp.Role{nodeapp.Client, nodeapp.Gateway} {
 		var out, errOut bytes.Buffer
+
 		code := host.Execute(
 			context.Background(),
 			[]string{"identity", "--state", path},
@@ -38,24 +44,31 @@ func TestIdentityCommandExportsOnlyJoinedPublicIdentityForBothRoles(t *testing.T
 			&errOut,
 			NewCommand(role),
 		)
+
 		if code != 0 {
 			t.Fatalf("identity command failed: %d %s", code, errOut.String())
 		}
+
 		var public map[string]string
+
 		if err := json.Unmarshal(out.Bytes(), &public); err != nil {
 			t.Fatal(err)
 		}
+
 		if len(public) != 3 || public["device_id"] != "joined-device" ||
 			public["identity_public_key"] != state.IdentityPublicKey ||
 			public["wireguard_public_key"] != state.WireGuard.PublicKey {
 			t.Fatal("identity output was not the exact public projection")
 		}
+
 		for _, secret := range []string{state.DeviceCredential, state.IdentityPrivateKey, state.WireGuard.PrivateKey} {
 			if strings.Contains(out.String()+errOut.String(), secret) {
 				t.Fatal("identity exposed private state")
 			}
 		}
+
 		after, err := os.ReadFile(path)
+
 		if err != nil || !bytes.Equal(before, after) {
 			t.Fatal("inspection changed state")
 		}
@@ -67,13 +80,16 @@ func TestIdentityCommandRejectsUnsafeOrUnjoinedState(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "node.json")
+
 			state, err := node.NewState()
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			if mode != "unjoined" {
 				state.DeviceID, state.DeviceCredential = "joined", "private"
 			}
+
 			switch mode {
 			case "missing":
 			case "corrupt":
@@ -82,17 +98,20 @@ func TestIdentityCommandRejectsUnsafeOrUnjoinedState(t *testing.T) {
 				}
 			case "symlink":
 				target := filepath.Join(dir, "target.json")
-				if err := state.Save(target); err != nil {
+
+				if err := nodetest.Save(state, target); err != nil {
 					t.Fatal(err)
 				}
+
 				if err := os.Symlink(target, path); err != nil {
 					t.Fatal(err)
 				}
 			default:
-				if err := state.Save(path); err != nil {
+				if err := nodetest.Save(state, path); err != nil {
 					t.Fatal(err)
 				}
 			}
+
 			if mode == "active" {
 				store, err := localstate.Open(path)
 				if err != nil {
@@ -100,7 +119,9 @@ func TestIdentityCommandRejectsUnsafeOrUnjoinedState(t *testing.T) {
 				}
 				defer func() { _ = store.Close() }()
 			}
+
 			var out, errOut bytes.Buffer
+
 			code := host.Execute(
 				context.Background(),
 				[]string{"identity", "--state", path},
@@ -108,9 +129,11 @@ func TestIdentityCommandRejectsUnsafeOrUnjoinedState(t *testing.T) {
 				&errOut,
 				NewCommand(nodeapp.Client),
 			)
+
 			if code == 0 || out.Len() != 0 {
 				t.Fatal("unsafe/unjoined state emitted public admission")
 			}
+
 			if mode == "missing" {
 				if _, err := os.Lstat(path); !os.IsNotExist(err) {
 					t.Fatal("inspection created identity")
