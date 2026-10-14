@@ -7,12 +7,26 @@ import (
 	"testing"
 )
 
+func privateTestDir(t *testing.T) string {
+	t.Helper()
+	path := t.TempDir()
+
+	// testing creates its numbered directory with 0777 before applying umask.
+	// State fixtures explicitly own their permissions, even with umask 0002.
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	return path
+}
+
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, e := Open(filepath.Join(t.TempDir(), "state.json"))
+	s, e := Open(filepath.Join(privateTestDir(t), "state.json"))
 	if e != nil {
 		t.Fatal(e)
 	}
+
 	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
@@ -92,18 +106,23 @@ func TestPrivateMode(t *testing.T) {
 }
 
 func TestRejectSymlink(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateTestDir(t)
 	target := filepath.Join(dir, "target")
+
 	if e := os.WriteFile(target, []byte("secret"), 0o600); e != nil {
 		t.Fatal(e)
 	}
+
 	path := filepath.Join(dir, "state")
+
 	if e := os.Symlink(target, path); e != nil {
 		t.Fatal(e)
 	}
+
 	s, e := Open(path)
 	if e == nil {
 		_ = s.Close()
+
 		t.Fatal("symlink accepted")
 	}
 }
@@ -111,14 +130,16 @@ func TestRejectSymlink(t *testing.T) {
 func TestRejectUnsafePaths(t *testing.T) {
 	for _, kind := range []string{"parent symlink", "writable parent", "lock symlink", "public state", "hardlinked state"} {
 		t.Run(kind, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := privateTestDir(t)
 			path := filepath.Join(dir, "state.json")
 			switch kind {
 			case "parent symlink":
-				link := filepath.Join(t.TempDir(), "link")
+				link := filepath.Join(privateTestDir(t), "link")
+
 				if err := os.Symlink(dir, link); err != nil {
 					t.Fatal(err)
 				}
+
 				path = filepath.Join(link, "state.json")
 			case "writable parent":
 				if err := os.Chmod(dir, 0o777); err != nil {
@@ -126,9 +147,11 @@ func TestRejectUnsafePaths(t *testing.T) {
 				}
 			case "lock symlink":
 				target := filepath.Join(dir, "other")
+
 				if err := os.WriteFile(target, nil, 0o600); err != nil {
 					t.Fatal(err)
 				}
+
 				if err := os.Symlink(target, path+".lock"); err != nil {
 					t.Fatal(err)
 				}
@@ -138,16 +161,20 @@ func TestRejectUnsafePaths(t *testing.T) {
 				}
 			case "hardlinked state":
 				target := filepath.Join(dir, "other")
+
 				if err := os.WriteFile(target, nil, 0o600); err != nil {
 					t.Fatal(err)
 				}
+
 				if err := os.Link(target, path); err != nil {
 					t.Fatal(err)
 				}
 			}
+
 			s, err := Open(path)
 			if err == nil {
 				_ = s.Close()
+
 				t.Fatal("unsafe path accepted")
 			}
 		})
@@ -155,9 +182,10 @@ func TestRejectUnsafePaths(t *testing.T) {
 }
 
 func TestReplaceUsesOwnedDirectory(t *testing.T) {
-	root := t.TempDir()
+	root := privateTestDir(t)
 	dir := filepath.Join(root, "owned")
 	path := filepath.Join(dir, "state.json")
+
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -167,20 +195,27 @@ func TestReplaceUsesOwnedDirectory(t *testing.T) {
 			t.Error(err)
 		}
 	}()
+
 	moved := filepath.Join(root, "moved")
+
 	if err := os.Rename(dir, moved); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := s.Replace([]byte("owned bytes")); err != nil {
 		t.Fatal(err)
 	}
+
 	bytes, err := os.ReadFile(filepath.Join(moved, "state.json"))
+
 	if err != nil || string(bytes) != "owned bytes" {
 		t.Fatalf("owned directory = %q, %v", bytes, err)
 	}
+
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("replacement escaped owned directory: %v", err)
 	}
