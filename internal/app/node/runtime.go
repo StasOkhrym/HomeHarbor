@@ -43,6 +43,15 @@ func NewRuntime(_ context.Context, role Role, cfg config.Node) (*App, error) {
 // then denies gateway traffic before identity writes or network admission.
 // Ownership failure cannot safely mutate a competing process's firewall.
 func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, result error) {
+	return startRuntimeWithNativeHelper(ctx, role, cfg, macos.NewInstalledHelper())
+}
+
+func startRuntimeWithNativeHelper(
+	ctx context.Context,
+	role Role,
+	cfg config.Node,
+	helper macos.HelperExecutor,
+) (_ *App, result error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -91,6 +100,19 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 	if err != nil {
 		return nil, err
 	}
+	var nativeOwner *macos.Controller
+	if cfg.Native.Enabled {
+		nativeOwner, err = prepareNativeController(cfg, state, root, helper)
+		if err != nil {
+			return nil, err
+		}
+		operation, cancel := context.WithTimeout(ctx, cfg.Runtime.OperationTimeout)
+		err = nativeOwner.Close(operation)
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+	}
 	var leases *credentials.Owner
 	if cfg.Identity.ControlURL != "" {
 		leases = prepareCredentials(cfg, state, store, httpClient)
@@ -104,19 +126,6 @@ func startRuntime(ctx context.Context, role Role, cfg config.Node) (_ *App, resu
 	}
 	var peers *node.SnapshotWireGuardReconciler
 	var paths *nodepath.PathSelector
-	var nativeOwner *macos.Controller
-	if cfg.Native.Enabled {
-		nativeOwner, err = prepareNativeController(cfg, state, root, macos.NewInstalledHelper())
-		if err != nil {
-			return nil, err
-		}
-		operation, cancel := context.WithTimeout(ctx, cfg.Runtime.OperationTimeout)
-		err = nativeOwner.Close(operation)
-		cancel()
-		if err != nil {
-			return nil, err
-		}
-	}
 	if kernel && !cfg.Native.Enabled {
 		peers, err = node.NewSnapshotWireGuardReconciler(
 			cfg.WireGuard.InterfaceName,
