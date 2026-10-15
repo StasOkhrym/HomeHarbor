@@ -102,7 +102,9 @@ def configuration(
     )
     agent["coordination"]["root_public_key_file"] = "/run/secrets/root_public_key"
     agent["coordination"]["network_id"] = "sandbox-network"
-    agent["dns"]["enable_forwarding"] = True
+    # Compose owns IPv4 forwarding through its namespaced sysctl. The
+    # unprivileged container mount makes /proc/sys read-only at runtime.
+    agent["dns"]["enable_forwarding"] = False
     admin = document("admin")
     admin["endpoint"] = host.control
     admin["ca_file"] = str(SANDBOX / "secrets/relay_tls_ca")

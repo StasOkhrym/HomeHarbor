@@ -55,6 +55,32 @@ func TestBuildWireGuardConfigWithListenPort(t *testing.T) {
 	}
 }
 
+func TestBuildWireGuardConfigOmitsUndiscoveredEndpoint(t *testing.T) {
+	local, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	remote, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := BuildWireGuardConfigWithListenPort(local.PrivateKey, 51820, []PeerConfig{{
+		PublicKey:       remote.PublicKey,
+		AllowedPrefixes: []netip.Prefix{netip.MustParsePrefix("10.243.0.1/32")},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(config.Peers) != 1 || config.Peers[0].Endpoint != nil {
+		t.Fatal(
+			"undiscovered endpoint must be omitted; a UDPAddr with nil IP is rejected by the Linux kernel adapter",
+		)
+	}
+}
+
 func TestBuildWireGuardConfigRejectsDefaultRoute(t *testing.T) {
 	local, err := NewIdentity()
 	if err != nil {

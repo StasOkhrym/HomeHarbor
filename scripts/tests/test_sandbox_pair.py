@@ -47,6 +47,7 @@ class SandboxPairTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             sandbox = Path(temp) / ".sandbox"
             docs = self.documents(temp)
+
             self.assertEqual(
                 set(docs),
                 {
@@ -56,9 +57,11 @@ class SandboxPairTests(unittest.TestCase):
                 },
             )
             self.assertTrue(all(mode == 0o600 for _, mode in docs.values()))
+
             native = tomllib.loads(docs[sandbox / "native-client.toml"][0].decode())
             gateway = tomllib.loads(docs[sandbox / "gateway.toml"][0].decode())
             policy = json.loads(docs[sandbox / "network-helper.json"][0])
+
             self.assertEqual(native["node"]["control_url"], "https://control.localhost:8553")
             self.assertEqual(native["node"]["state_path"], str(sandbox / "client.json"))
             self.assertEqual(native["node"]["ca_file"], str(sandbox / "secrets/relay_tls_ca"))
@@ -73,8 +76,10 @@ class SandboxPairTests(unittest.TestCase):
                 identity("_gateway", 1)["wireguard_public_key"],
             )
             self.assertEqual(native["wireguard"]["listen_port"], 51830)
+
             for field in ("interface", "overlay_address", "allowed_prefixes", "routes"):
                 self.assertEqual(native["wireguard"][field], "")
+
             self.assertEqual(
                 native["native"],
                 {
@@ -105,6 +110,10 @@ class SandboxPairTests(unittest.TestCase):
             self.assertEqual(gateway["wireguard"]["overlay_address"], "10.243.0.2/32")
             self.assertEqual(gateway["wireguard"]["allowed_prefixes"], "")
             self.assertEqual(gateway["wireguard"]["routes"], "")
+            self.assertFalse(
+                gateway["dns"]["enable_forwarding"],
+                "paired gateway must preserve Docker's forwarding ownership",
+            )
             self.assertEqual(
                 policy,
                 {
@@ -124,6 +133,7 @@ class SandboxPairTests(unittest.TestCase):
                     "wireguard_listen_port": 51830,
                 },
             )
+
             for doc in (native, gateway):
                 self.assertNotIn("token", doc["node"])
                 self.assertNotIn("enrollment_token_file", doc["node"])

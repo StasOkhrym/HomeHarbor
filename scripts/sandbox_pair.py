@@ -40,10 +40,12 @@ def pair_documents(
         or bridge_port == wireguard_port
     ):
         raise ValueError("native pair requires distinct unprivileged loopback ports")
+
     try:
         signing = base64.b64decode(root + "=", altchars=b"-_", validate=True)
     except (binascii.Error, ValueError, TypeError):
         raise ValueError("native pair requires a canonical public signing root") from None
+
     if (
         len(signing) != 32
         or not any(signing)
@@ -55,6 +57,7 @@ def pair_documents(
         client["identity_public_key"],
     ):
         raise ValueError("gateway, client and signing root require independent identities")
+
     session = (
         "sandbox-"
         + hashlib.sha256(json.dumps([gateway, client], sort_keys=True).encode()).hexdigest()[:32]
@@ -125,7 +128,8 @@ def pair_documents(
             "network_id": "sandbox-network",
         },
         "direct": {"candidates": ""},
-        "dns": {"link": "", "enable_forwarding": True},
+        # Docker configures IPv4 forwarding before the gateway starts.
+        "dns": {"link": "", "enable_forwarding": False},
         "runtime": runtime,
     }
     policy = {
@@ -142,6 +146,7 @@ def pair_documents(
         "bridge_endpoint": f"127.0.0.1:{bridge_port}",
         "wireguard_listen_port": wireguard_port,
     }
+
     return {
         sandbox / "native-client.toml": (tomlkit.dumps(native).encode(), 0o600),
         sandbox / "gateway.toml": (tomlkit.dumps(agent).encode(), 0o600),

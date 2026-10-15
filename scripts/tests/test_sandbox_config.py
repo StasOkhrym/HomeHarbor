@@ -111,6 +111,25 @@ class SandboxConfigTests(unittest.TestCase):
         self.assertEqual(relay.get("ports"), ["127.0.0.1:52000-52015:52000-52015/udp"])
         self.assertNotIn("privileged", relay)
 
+    def test_container_owns_gateway_forwarding(self):
+        import sys
+
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from sandbox_init import SANDBOX, configuration
+
+        gateway = sandbox_config()["services"]["gateway"]
+
+        self.assertIn("net.ipv4.ip_forward=1", gateway["sysctls"])
+        self.assertFalse(gateway.get("privileged"))
+
+        generated = configuration(8443)
+        settings = tomllib.loads(generated[SANDBOX / "gateway.toml"][0].decode())
+
+        self.assertFalse(
+            settings["dns"]["enable_forwarding"],
+            "gateway must not write Docker-owned read-only sysctls",
+        )
+
     def test_endpoint_audience_matches_gateway_and_host(self):
         import sys
 

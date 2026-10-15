@@ -203,10 +203,12 @@ func TestSnapshotWireGuardReconcilerMergesRelayEndpointWithoutChangingPolicy(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	client, err := tunnel.NewIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	value := snapshot.NetworkSnapshot{
 		Devices: []snapshot.Device{
 			{
@@ -225,6 +227,7 @@ func TestSnapshotWireGuardReconcilerMergesRelayEndpointWithoutChangingPolicy(t *
 		Gateways: []snapshot.Gateway{{DeviceID: "gateway"}},
 	}
 	var applied wgtypes.Config
+
 	reconciler, err := NewSnapshotWireGuardReconcilerWithApplier(
 		"wg0",
 		"gateway",
@@ -238,15 +241,19 @@ func TestSnapshotWireGuardReconcilerMergesRelayEndpointWithoutChangingPolicy(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := reconciler.Apply(context.Background(), value); err != nil {
 		t.Fatal(err)
 	}
-	if len(applied.Peers) != 1 || applied.Peers[0].Endpoint == nil ||
-		applied.Peers[0].Endpoint.Port != 0 {
+
+	if len(applied.Peers) != 1 || applied.Peers[0].Endpoint != nil {
 		t.Fatalf("initial peer config=%#v", applied.Peers)
 	}
+
 	allowedBefore := append([]string(nil), anyAllowedIPs(applied.Peers[0].AllowedIPs)...)
+
 	endpoint := netip.MustParseAddrPort("127.0.0.1:51821")
+
 	if err := reconciler.SetPeerEndpoint(
 		context.Background(),
 		client.PublicKey,
@@ -254,17 +261,24 @@ func TestSnapshotWireGuardReconcilerMergesRelayEndpointWithoutChangingPolicy(t *
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	if applied.Peers[0].Endpoint == nil || applied.Peers[0].Endpoint.Port != 51821 {
 		t.Fatalf("endpoint was not merged: %#v", applied.Peers[0].Endpoint)
 	}
+
 	if got := anyAllowedIPs(applied.Peers[0].AllowedIPs); len(got) != len(allowedBefore) {
 		t.Fatalf("allowed prefixes changed: before=%v after=%v", allowedBefore, got)
 	}
+
 	if err := reconciler.ClearPeerEndpoint(context.Background(), client.PublicKey); err != nil {
 		t.Fatal(err)
 	}
-	if applied.Peers[0].Endpoint == nil || applied.Peers[0].Endpoint.Port != 0 {
+
+	if applied.Peers[0].Endpoint != nil {
 		t.Fatalf("endpoint was not cleared: %#v", applied.Peers[0].Endpoint)
+	}
+	if !applied.ReplacePeers {
+		t.Fatal("clearing an endpoint must replace peers so the old kernel endpoint cannot survive")
 	}
 }
 

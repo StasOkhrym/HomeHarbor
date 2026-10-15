@@ -58,6 +58,16 @@ class DockerBoundary:
 
 
 class SandboxWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        # Fake Docker tests also need fake privileged-host paths. A developer's
+        # real helper installation must never affect temporary workflow state.
+        native = tempfile.TemporaryDirectory()
+        self.addCleanup(native.cleanup)
+        for name in ("SYSTEM_POLICY", "SYSTEM_JOURNAL"):
+            boundary = patch("sandbox_workflow." + name, Path(native.name) / name)
+            boundary.start()
+            self.addCleanup(boundary.stop)
+
     def workflow(self, directory, docker=None):
         try:
             module = importlib.import_module("sandbox_workflow")

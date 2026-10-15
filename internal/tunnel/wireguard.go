@@ -29,17 +29,20 @@ func BuildWireGuardConfigWithListenPort(
 	if err != nil {
 		return wgtypes.Config{}, fmt.Errorf("parse private key: %w", err)
 	}
+
 	replace := true
 	config := wgtypes.Config{PrivateKey: &private, ReplacePeers: true}
 	if listenPort != 0 {
 		port := int(listenPort)
 		config.ListenPort = &port
 	}
+
 	for _, peer := range peers {
 		public, parseErr := wgtypes.ParseKey(peer.PublicKey)
 		if parseErr != nil {
 			return wgtypes.Config{}, fmt.Errorf("parse peer public key: %w", parseErr)
 		}
+
 		allowed := make([]net.IPNet, 0, len(peer.AllowedPrefixes))
 		for _, prefix := range peer.AllowedPrefixes {
 			if !prefix.IsValid() || prefix.Bits() == 0 {
@@ -48,6 +51,7 @@ func BuildWireGuardConfigWithListenPort(
 					peer.PublicKey,
 				)
 			}
+
 			bits := prefix.Bits()
 			address := prefix.Addr()
 			allowed = append(
@@ -58,7 +62,14 @@ func BuildWireGuardConfigWithListenPort(
 				},
 			)
 		}
-		endpoint := net.UDPAddrFromAddrPort(peer.Endpoint)
+
+		// Discovery may not have supplied an endpoint yet. wgctrl uses nil
+		// to omit it; UDPAddrFromAddrPort(zero) produces a non-nil invalid IP.
+		var endpoint *net.UDPAddr
+		if peer.Endpoint.IsValid() {
+			endpoint = net.UDPAddrFromAddrPort(peer.Endpoint)
+		}
+
 		keepalive := peer.PersistentKeepalive
 		config.Peers = append(
 			config.Peers,
@@ -73,6 +84,7 @@ func BuildWireGuardConfigWithListenPort(
 			},
 		)
 	}
+
 	return config, nil
 }
 
