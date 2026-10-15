@@ -151,21 +151,29 @@ class SandboxIdentityTests(unittest.TestCase):
             for name in SECRET_BYTES:
                 size = SECRET_BYTES[name]
                 (secrets / name).write_bytes(base64.b64encode(bytes([3]) * size))
+
             for name in (
                 "relay_tls_ca",
                 "relay_tls_cert",
                 "relay_tls_key",
                 "frontend_tls_cert",
                 "frontend_tls_key",
+                "site_tls_cert",
+                "site_tls_key",
+                "site_tls_ca",
             ):
                 (secrets / name).write_bytes(b"existing-tls-material")
+
+            (secrets / "site_tls_ca").write_bytes(b"existing-separate-site-authority")
             for name, data in (
                 ("relay-ca-key.pem", b"existing-ca-key"),
+                ("site-ca-key.pem", b"existing-site-ca-key"),
                 ("root-key.age", b"existing-encrypted-root"),
                 ("root-passphrase", b"private-passphrase"),
                 ("root-public.key", b"same-public-root"),
             ):
                 (sandbox / name).write_bytes(data)
+
             (secrets / "root_public_key").write_bytes(b"same-public-root")
             public = public_gateway()
             (sandbox / "gateway-public.json").write_text(json.dumps(public))
@@ -174,6 +182,7 @@ class SandboxIdentityTests(unittest.TestCase):
                 render_manifest(PROFILES[1].environment(), public)
             )
             private = {path: path.read_bytes() for path in sandbox.rglob("*") if path.is_file()}
+
             # TLS verification is the external crypto boundary, covered by
             # existing TLS tests/live fixture checks. Exercise actual config
             # generation, metadata loading, manifest selection and file writes.
@@ -186,11 +195,29 @@ class SandboxIdentityTests(unittest.TestCase):
                 ),
                 patch.object(sandbox_init, "require_commands"),
                 patch.object(sandbox_init, "verify_pair"),
+                patch.object(sandbox_init, "same_authority", return_value=False),
             ):
                 sandbox_init.initialize()
                 sandbox_init.initialize()
+
             for path, before in private.items():
                 self.assertEqual(path.read_bytes(), before, str(path.relative_to(root)))
+
+    def test_only_exact_unsigned_http_fixture_migrates_to_https(self):
+        from sandbox_init import resolve_manifest
+
+        selected, gateway = PROFILES[1].environment(), public_gateway()
+        secure = render_manifest(selected, gateway)
+        old = secure.replace(b'url = "https://site.', b'url = "http://site.')
+
+        self.assertEqual(resolve_manifest(old, selected, gateway), secure)
+
+        for changed in (
+            old.replace(b"port_to = 8080", b"port_to = 8081"),
+            old.replace(b"site.sandbox.home.arpa", b"other.sandbox.home.arpa"),
+        ):
+            with self.assertRaises(ValueError):
+                resolve_manifest(changed, selected, gateway)
 
     def test_binding_cli_is_repeatable_and_preserves_conflicting_manifest(self):
         from sandbox_preflight import save_profile

@@ -398,10 +398,10 @@ class Workflow:
 
         stop_client(self)
 
-    def trust_ca(self, browser="safari"):
+    def trust_ca(self, browser="safari", *, target="control"):
         from sandbox_trust import trust_ca
 
-        return trust_ca(self, browser=browser)
+        return trust_ca(self, browser=browser, target=target)
 
 
 def dispatch_command():
@@ -428,20 +428,36 @@ def dispatch_command():
     parser.add_argument(
         "--browser", choices=("safari", "chrome"), help="explicit browser trust mode for trust-ca"
     )
+    parser.add_argument(
+        "--trust-target",
+        choices=("control", "site"),
+        help="explicit certificate target for trust-ca",
+    )
     args = parser.parse_args()
     if args.trust_fingerprint is not None and (args.command, args.action) != ("client", "join"):
         parser.error("--trust-fingerprint is only valid for client join")
+
     if args.browser is not None and args.command != "trust-ca":
         parser.error("--browser is only valid for trust-ca")
+
+    if args.trust_target is not None and args.command != "trust-ca":
+        parser.error("--trust-target is only valid for trust-ca")
+
     workflow = Workflow()
     if args.command in {"client", "gateway", "prepare", "check"}:
         from sandbox_runtime import dispatch
 
         return dispatch(workflow, args.command, args.action, args.trust_fingerprint)
+
     if args.action is not None:
         parser.error("this command takes no extra arguments")
+
     if args.command == "trust-ca":
-        return workflow.trust_ca(args.browser or os.environ.get("SANDBOX_TRUST_BROWSER", "safari"))
+        browser = args.browser or os.environ.get("SANDBOX_TRUST_BROWSER", "safari")
+        target = args.trust_target or os.environ.get("SANDBOX_TRUST_TARGET", "control")
+
+        return workflow.trust_ca(browser, target=target)
+
     getattr(workflow, args.command.replace("-", "_"))()
 
 

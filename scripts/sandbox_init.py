@@ -12,7 +12,7 @@ from dev_init import SECRET_BYTES, complete
 from sandbox_identity import load_public_identity, validate_public_identity
 from sandbox_pair import stored_pair_documents
 from sandbox_preflight import NETWORK_FILE, PROFILES, load_profile
-from tls_material import issue, issue_authority, verify_pair
+from tls_material import issue, issue_authority, same_authority, verify_pair
 from tooling import ROOT, atomic_write, cli, port, quiet_run, require_commands
 
 SANDBOX = ROOT / ".sandbox"
@@ -187,8 +187,19 @@ def resolve_manifest(
         legacy_manifest_without_acl(PROFILES[0].environment()),
         legacy_manifest_without_acl(selected),
     }
+    # The former unsigned fixture could never pass HTTPS-only snapshot
+    # validation. Recognize only exact generated documents, preserving any
+    # operator-edited identity, ACL, URL or profile for explicit review.
+    migratable.update(
+        candidate.replace(
+            b'url = "https://site.sandbox.home.arpa:8080"',
+            b'url = "http://site.sandbox.home.arpa:8080"',
+        )
+        for candidate in (*migratable, desired)
+    )
     if existing is None or existing == desired or existing in migratable:
         return desired
+
     raise ValueError(
         "existing sandbox manifest differs from selected profile or enrolled gateway; review it before replacing"
     )
@@ -204,6 +215,7 @@ def initialize() -> None:
     require_commands("openssl")
     if not NETWORK_FILE.is_file():
         raise ValueError("run sandbox preflight before initialization")
+
     selected = load_profile()
     https_port = port(os.environ.get("SANDBOX_HTTPS_PORT", "8443"), "SANDBOX_HTTPS_PORT")
     pending = configuration(https_port, selected)
@@ -211,10 +223,13 @@ def initialize() -> None:
     ca, ca_key = secret_dir / "relay_tls_ca", SANDBOX / "relay-ca-key.pem"
     relay_cert, relay_key = secret_dir / "relay_tls_cert", secret_dir / "relay_tls_key"
     front_cert, front_key = secret_dir / "frontend_tls_cert", secret_dir / "frontend_tls_key"
+    site_cert, site_key = secret_dir / "site_tls_cert", secret_dir / "site_tls_key"
+    site_ca, site_ca_key = secret_dir / "site_tls_ca", SANDBOX / "site-ca-key.pem"
     root_key, root_public = SANDBOX / "root-key.age", SANDBOX / "root-public.key"
     passphrase, mounted_root = SANDBOX / "root-passphrase", secret_dir / "root_public_key"
     has_relay = complete([ca, ca_key, relay_cert, relay_key], "Sandbox relay TLS")
     has_front = complete([front_cert, front_key], "Sandbox frontend TLS")
+    has_site = complete([site_ca, site_ca_key, site_cert, site_key], "Sandbox private site TLS")
     has_root = complete([root_key, root_public, passphrase, mounted_root], "Sandbox root")
     for name, size in SECRET_BYTES.items():
         path = secret_dir / name
@@ -224,7 +239,9 @@ def initialize() -> None:
                 raise ValueError(f"sandbox secret {name} has an invalid length")
         else:
             content = base64.b64encode(secrets.token_bytes(size))
+
         pending[path] = (content, 0o600)
+
     with tempfile.TemporaryDirectory(prefix="homeharbor-sandbox-init-") as scratch:
         temp = Path(scratch)
         if has_relay:
@@ -240,8 +257,10 @@ def initialize() -> None:
                 (relay_key, staged_relay_key, 0o600),
             ):
                 pending[destination] = (source.read_bytes(), mode)
+
             ca = staged_ca
             ca_key = staged_key
+
         names = [HOST_CONTROL, HOST_RELAY, GATEWAY_CONTROL, GATEWAY_RELAY]
         if has_front:
             verify_pair(front_cert, front_key, ca, names)
@@ -249,6 +268,27 @@ def initialize() -> None:
             staged_cert, staged_key = issue(temp, "frontend", ca, ca_key, names)
             pending[front_cert] = (staged_cert.read_bytes(), 0o644)
             pending[front_key] = (staged_key.read_bytes(), 0o600)
+
+        if has_site:
+            if same_authority(site_ca, ca):
+                raise ValueError("private site must use a separate authority from control")
+
+            verify_pair(site_ca, site_ca_key, site_ca, [])
+            verify_pair(site_cert, site_key, site_ca, ["site.sandbox.home.arpa"], exact_names=True)
+        else:
+            # A separate fixture authority preserves existing control trust and
+            # avoids propagating legacy control-CA strict-verifier limitations.
+            site_staging = temp / "site-authority"
+            site_staging.mkdir(mode=0o700)
+            staged_ca, staged_ca_key = issue_authority(site_staging, "HomeHarbor Private Site CA")
+            staged_cert, staged_key = issue(
+                temp, "site", staged_ca, staged_ca_key, ["site.sandbox.home.arpa"]
+            )
+            pending[site_ca] = (staged_ca.read_bytes(), 0o644)
+            pending[site_ca_key] = (staged_ca_key.read_bytes(), 0o600)
+            pending[site_cert] = (staged_cert.read_bytes(), 0o644)
+            pending[site_key] = (staged_key.read_bytes(), 0o600)
+
         if has_root:
             if mounted_root.read_bytes() != root_public.read_bytes():
                 raise ValueError("sandbox mounted public root differs from companion root")
@@ -269,6 +309,7 @@ def initialize() -> None:
             )
             if not public.strip() or not temp_key.is_file() or not temp_key.read_bytes():
                 raise ValueError("sandbox companion root generation was incomplete")
+
             for destination, content, mode in (
                 (root_key, temp_key.read_bytes(), 0o600),
                 (root_public, public, 0o644),
@@ -276,6 +317,7 @@ def initialize() -> None:
                 (passphrase, phrase, 0o600),
             ):
                 pending[destination] = (content, mode)
+
     manifest = SANDBOX / "initial-snapshot.toml"
     check_destination(manifest)
     pending[manifest] = (
@@ -288,8 +330,10 @@ def initialize() -> None:
     )
     for path in pending:
         check_destination(path)
+
     for path, (content, mode) in pending.items():
         atomic_write(path, content, mode)
+
     print(f"Sandbox trust and config ready: {endpoint_audience('host', https_port).control}")
 
 

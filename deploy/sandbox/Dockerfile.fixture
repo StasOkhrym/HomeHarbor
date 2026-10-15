@@ -6,5 +6,6 @@ RUN apk add --no-cache dnsmasq
 COPY deploy/sandbox/dns.conf /etc/dnsmasq.conf
 
 FROM base AS site
-RUN apk add --no-cache busybox-extras
+RUN apk add --no-cache python3
 COPY deploy/sandbox/site/index.html /site/index.html
+COPY scripts/sandbox_site.py /usr/local/libexec/homeharbor-site.py

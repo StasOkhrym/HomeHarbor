@@ -533,6 +533,7 @@ class ToolingTests(unittest.TestCase):
             (secret_dir / "root_public_key", public),
         ]:
             path.write_bytes(content)
+
         with (
             patch.object(sandbox_init, "ROOT", self.root),
             patch.object(sandbox_init, "SANDBOX", sandbox),
@@ -545,13 +546,67 @@ class ToolingTests(unittest.TestCase):
                 for name in ("relay_tls_ca", "frontend_tls_cert", "frontend_tls_key")
             ]
             before = [path.read_bytes() for path in files]
+
             try:
                 strict_tls_handshake(*files, "control.localhost")
                 strict_tls_handshake(*files, "control.sandbox")
             except ssl.SSLError as error:
                 self.fail(f"new sandbox authority fails strict TLS: {error}")
+
+            site_files = [
+                secret_dir / name for name in ("site_tls_ca", "site_tls_cert", "site_tls_key")
+            ]
+
+            self.assertTrue(all(path.is_file() for path in site_files), "private site lacks TLS")
+
+            strict_tls_handshake(*site_files, "site.sandbox.home.arpa")
+
+            with self.assertRaises(ssl.SSLCertVerificationError):
+                strict_tls_handshake(*site_files, "control.localhost")
+
+            site_before = [path.read_bytes() for path in site_files]
+            from tls_material import issue
+
+            staged = sandbox / "site-certificate-test"
+            staged.mkdir()
+            extra_cert, extra_key = issue(
+                staged,
+                "extra",
+                site_files[0],
+                sandbox / "site-ca-key.pem",
+                ["site.sandbox.home.arpa", "control.localhost"],
+            )
+            site_files[1].write_bytes(extra_cert.read_bytes())
+            site_files[2].write_bytes(extra_key.read_bytes())
+
+            with self.assertRaisesRegex(ValueError, "domains|SAN|leaf"):
+                sandbox_init.initialize()
+
+            for path, content in zip(site_files, site_before, strict=True):
+                path.write_bytes(content)
+
+            site_ca_key = sandbox / "site-ca-key.pem"
+            original_site_ca_key = site_ca_key.read_bytes()
+            shared_cert, shared_key = issue(
+                staged, "shared", files[0], sandbox / "relay-ca-key.pem", ["site.sandbox.home.arpa"]
+            )
+            site_files[0].write_bytes(files[0].read_bytes() + b"\n")
+            site_ca_key.write_bytes((sandbox / "relay-ca-key.pem").read_bytes())
+            site_files[1].write_bytes(shared_cert.read_bytes())
+            site_files[2].write_bytes(shared_key.read_bytes())
+
+            with self.assertRaisesRegex(ValueError, "separate authority"):
+                sandbox_init.initialize()
+
+            site_ca_key.write_bytes(original_site_ca_key)
+            for path, content in zip(site_files, site_before, strict=True):
+                path.write_bytes(content)
+
             sandbox_init.initialize()
+
             self.assertEqual([path.read_bytes() for path in files], before)
+            self.assertEqual([path.read_bytes() for path in site_files], site_before)
+
         self.assertFalse((self.root / "secrets").exists())
         self.assertFalse((self.root / ".local").exists())
 

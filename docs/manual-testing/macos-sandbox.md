@@ -1,9 +1,9 @@
 # Manual macOS sandbox
 
 This optional flow runs control, relay, a Linux gateway, PostgreSQL, Redis, DNS
-and private HTTP fixtures in Docker Desktop. The macOS client stays on the host,
+and private HTTPS/HTTP fixtures in Docker Desktop. The macOS client stays on the host,
 outside every Docker subnet. Ordinary browser access to
-`http://site.sandbox.home.arpa:8080/` must travel through its native WireGuard
+`https://site.sandbox.home.arpa:8080/` must travel through its native WireGuard
 tunnel and the signed gateway ACL.
 
 These commands never run from `verify`, `FULL=1`, CI, integration, acceptance or
@@ -88,6 +88,25 @@ and [Apple's trust settings](https://support.apple.com/guide/keychain-access/kyc
 The CLI uses its explicit CA file; it never changes browser or system trust.
 Do not disable TLS verification, trust an arbitrary downloaded replacement root,
 or capture secret token/passkey screens.
+
+The private site has its own CA and a separate `CA:FALSE` certificate with the
+single SAN `site.sandbox.home.arpa`. Before its browser acceptance, explicitly
+trust that leaf through the same Make scenario:
+
+```sh
+make sandbox-trust-ca TRUST_BROWSER=chrome TRUST_TARGET=site
+```
+
+Confirm this site's displayed leaf fingerprint separately. This adds persistent
+SSL trust for that exact certificate in the login keychain, available to the
+user's SSL applications. It does not extend control's CA trust or trust the
+site CA. `TRUST_TARGET=control` is the default. Site trust deliberately requires
+leaf mode; it rejects a control certificate or extra SANs. This command checks
+certificate identity locally and creates no route or DNS entry. Packet probes
+use the explicit `.sandbox/secrets/site_tls_ca` instead of keychain trust.
+Existing control/relay certificates and trust remain unchanged. Reinitialization
+migrates only an exact generated unsigned HTTP manifest; edited manifests
+require review. The companion still enforces HTTPS for catalog services.
 
 Complete the actual [admin passkey flow](../admin-panel.md). On Invites, issue a
 short-lived token with the gateway role. Then run:
@@ -243,10 +262,15 @@ make sandbox-client ACTION=run
 
 Keep the native launcher foreground in its own terminal. In another terminal,
 wait for signed network apply, then run `make sandbox-check CHECK=allowed` and
-open `http://site.sandbox.home.arpa:8080/` in an ordinary browser. Port 8081 must
+open `https://site.sandbox.home.arpa:8080/` in an ordinary browser. Port 8081 must
 remain denied even though its private listener is alive. Never add a hosts entry,
 host-publish DNS/site, attach the Mac client to a Docker subnet or use a browser
 viewer/proxy to manufacture success.
+
+The check first verifies HTTPS and the HTTP listener inside the site container,
+so broken TLS cannot masquerade as denied access. Its second HTTPS probe uses
+the selected private IP directly via `curl --resolve`, while retaining hostname
+and CA verification. It therefore tests the packet route independently of DNS.
 
 Capture non-secret evidence: selected pools; signed revision; the owned utun name;
 `route -n get PRIVATE_SITE_IP`; `scutil --dns` scoped `sandbox.home.arpa` resolver;

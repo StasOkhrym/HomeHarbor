@@ -16,6 +16,9 @@ endif
 ifneq ($(strip $(TRUST_BROWSER)),)
 export SANDBOX_TRUST_BROWSER := $(TRUST_BROWSER)
 endif
+ifneq ($(strip $(TRUST_TARGET)),)
+export SANDBOX_TRUST_TARGET := $(TRUST_TARGET)
+endif
 FUZZ_TIME ?= 5s
 SECURITY ?= all
 

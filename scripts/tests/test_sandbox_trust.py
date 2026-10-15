@@ -104,6 +104,80 @@ class SecurityBoundary:
 
 
 class SandboxTrustTests(unittest.TestCase):
+    def test_site_trust_pins_single_name_leaf_and_preserves_control_trust(self):
+        from sandbox_trust import trust_ca
+        from sandbox_workflow import Workflow
+
+        with tempfile.TemporaryDirectory() as temp:
+            flow = Workflow(Path(temp), run=DockerBoundary(), uid=501)
+            flow.create_owner()
+            secrets = flow.sandbox / "secrets"
+            secrets.mkdir()
+            (secrets / "site_tls_ca").write_bytes(PEM)
+            (secrets / "site_tls_cert").write_bytes(LEAF_PEM)
+            boundary = SecurityBoundary(scoped_entry())
+            control_before = boundary.entries[CERT_ID]
+
+            def run(args, **kwargs):
+                if args[0] == "/usr/bin/openssl" and args[1] == "x509":
+                    return SimpleNamespace(
+                        returncode=0,
+                        stderr=b"",
+                        stdout=(
+                            b"CA:FALSE\nX509v3 Subject Alternative Name:\n DNS:site.sandbox.home.arpa\n"
+                        ),
+                    )
+                if args[1] == "verify-cert":
+                    boundary.calls.append(args)
+                    host = args[args.index("-n") + 1]
+
+                    return SimpleNamespace(returncode=int(host != "site.sandbox.home.arpa"))
+
+                return boundary(args, **kwargs)
+
+            with patch("sandbox_trust.sys.platform", "darwin"):
+                trust_ca(
+                    flow,
+                    run=run,
+                    target="site",
+                    browser="chrome",
+                    terminal=True,
+                    prompt=lambda _: LEAF_FINGERPRINT,
+                )
+                trust_ca(flow, run=run, target="site", browser="chrome", terminal=False)
+
+            mutations = [args for args in boundary.calls if args[1] == "add-trusted-cert"]
+
+            self.assertEqual(len(mutations), 1)
+            self.assertIn("trustAsRoot", mutations[0])
+            self.assertEqual(boundary.entries[CERT_ID], control_before)
+
+    def test_site_refuses_control_certificate_or_ca_trust_mode(self):
+        from sandbox_trust import trust_ca
+        from sandbox_workflow import Workflow
+
+        with tempfile.TemporaryDirectory() as temp:
+            flow = Workflow(Path(temp), run=DockerBoundary(), uid=501)
+            flow.create_owner()
+            secrets = flow.sandbox / "secrets"
+            secrets.mkdir()
+            (secrets / "site_tls_ca").write_bytes(PEM)
+            (secrets / "site_tls_cert").write_bytes(LEAF_PEM)
+            for browser in ("safari", "chrome"):
+                boundary = SecurityBoundary()
+
+                with patch("sandbox_trust.sys.platform", "darwin"), self.assertRaises(ValueError):
+                    trust_ca(
+                        flow,
+                        run=boundary,
+                        target="site",
+                        browser=browser,
+                        terminal=True,
+                        prompt=lambda _: LEAF_FINGERPRINT,
+                    )
+
+                self.assertFalse(any(a[1] == "add-trusted-cert" for a in boundary.calls))
+
     def invoke(self, temp, security, *, terminal=True, confirmation=FINGERPRINT, browser="safari"):
         from sandbox_workflow import Workflow
 
@@ -147,45 +221,50 @@ class SandboxTrustTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("scripts/sandbox.sh trust-ca", result.stdout)
 
-    def test_make_passes_browser_as_environment_without_shell_interpolation(self):
+    def test_make_passes_trust_options_as_environment_without_shell_interpolation(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / "scripts").mkdir()
             (root / "Makefile").write_bytes((ROOT / "Makefile").read_bytes())
             (root / "scripts/sandbox.sh").write_bytes((ROOT / "scripts/sandbox.sh").read_bytes())
-            (root / "scripts/sandbox_workflow.py").write_text(
-                "import os; print(os.environ.get('SANDBOX_TRUST_BROWSER'))\n"
-            )
             value = 'chrome";touch INJECTION_SENTINEL;#'
-            result = subprocess.run(
-                [
-                    "make",
-                    "--silent",
-                    "sandbox-trust-ca",
-                    f"TRUST_BROWSER={value}",
-                    f"PYTHON={sys.executable}",
-                ],
-                cwd=root,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), value)
-            self.assertFalse((root / "INJECTION_SENTINEL").exists())
+            for name in ("BROWSER", "TARGET"):
+                (root / "scripts/sandbox_workflow.py").write_text(
+                    f"import os; print(os.environ.get('SANDBOX_TRUST_{name}'))\n"
+                )
+                result = subprocess.run(
+                    [
+                        "make",
+                        "--silent",
+                        "sandbox-trust-ca",
+                        f"TRUST_{name}={value}",
+                        f"PYTHON={sys.executable}",
+                    ],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), value)
+                self.assertFalse((root / "INJECTION_SENTINEL").exists())
 
     def test_cli_browser_option_is_scoped_and_overrides_environment(self):
         import sandbox_workflow
 
         selected = []
-        fake = SimpleNamespace(trust_ca=lambda browser: selected.append(browser))
+        fake = SimpleNamespace(trust_ca=lambda browser, **kwargs: selected.append(browser))
+
         with (
             patch.object(sandbox_workflow, "Workflow", return_value=fake),
             patch.dict(os.environ, {"SANDBOX_TRUST_BROWSER": "safari"}),
             patch.object(sys, "argv", ["sandbox", "trust-ca", "--browser", "chrome"]),
         ):
             sandbox_workflow.dispatch_command()
+
         self.assertEqual(selected, ["chrome"])
+
         for command in ["status", "up", "client"]:
             with (
                 patch.object(sandbox_workflow, "Workflow") as constructor,
@@ -195,7 +274,39 @@ class SandboxTrustTests(unittest.TestCase):
             ):
                 with patch("sys.stderr", io.StringIO()):
                     sandbox_workflow.dispatch_command()
+
             constructor.assert_not_called()
+
+    def test_cli_trust_target_is_scoped_and_explicit_option_wins(self):
+        import sandbox_workflow
+
+        selected = []
+        fake = SimpleNamespace(
+            trust_ca=lambda browser, **kwargs: selected.append((browser, kwargs))
+        )
+
+        with (
+            patch.object(sandbox_workflow, "Workflow", return_value=fake),
+            patch.dict(os.environ, {"SANDBOX_TRUST_TARGET": "control"}),
+            patch.object(
+                sys,
+                "argv",
+                ["sandbox", "trust-ca", "--browser", "chrome", "--trust-target", "site"],
+            ),
+        ):
+            sandbox_workflow.dispatch_command()
+
+        self.assertEqual(selected, [("chrome", {"target": "site"})])
+
+        with (
+            patch.object(sandbox_workflow, "Workflow") as constructor,
+            patch.object(sys, "argv", ["sandbox", "up", "--trust-target", "site"]),
+            patch("sys.stderr", io.StringIO()),
+            self.assertRaises(SystemExit),
+        ):
+            sandbox_workflow.dispatch_command()
+
+        constructor.assert_not_called()
 
     def test_cancelled_fingerprint_confirmation_does_not_mutate_trust(self):
         from sandbox_trust import trust_ca

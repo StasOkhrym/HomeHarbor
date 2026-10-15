@@ -40,8 +40,9 @@ def issue_authority(directory, subject):
     return ca, key
 
 
-def verify_pair(cert, key, ca, names):
-    quiet_run("openssl", "verify", "-CAfile", str(ca), str(cert))
+def verify_pair(cert, key, ca, names, *, exact_names=False):
+    purpose = ["-purpose", "sslserver"] if exact_names else []
+    quiet_run("openssl", "verify", *purpose, "-CAfile", str(ca), str(cert))
     cert_public = quiet_run("openssl", "x509", "-in", str(cert), "-pubkey", "-noout")
     key_public = quiet_run("openssl", "pkey", "-in", str(key), "-pubout")
     if cert_public != key_public:
@@ -50,10 +51,25 @@ def verify_pair(cert, key, ca, names):
     # LibreSSL on macOS lacks verify_hostname. Local certificates use exact SANs.
     extension = re.search(r"X509v3 Subject Alternative Name:\s*\n\s*([^\n]+)", description)
     sans = set(re.findall(r"DNS:([^,\s]+)", extension[1])) if extension else set()
-    if not set(names).issubset(sans):
+    all_sans = [item.strip() for item in extension[1].split(",")] if extension else []
+    if not set(names).issubset(sans) or (
+        exact_names
+        and (
+            set(all_sans) != {"DNS:" + name for name in names}
+            or len(all_sans) != len(names)
+            or "CA:FALSE" not in description
+            or "CA:TRUE" in description
+        )
+    ):
         raise ValueError(
             f"TLS domains do not match {cert.name}; restore its matching configuration"
         )
+
+
+def same_authority(first, second):
+    return quiet_run("openssl", "x509", "-in", str(first), "-pubkey", "-noout") == quiet_run(
+        "openssl", "x509", "-in", str(second), "-pubkey", "-noout"
+    )
 
 
 def issue(directory, prefix, ca, ca_key, names):

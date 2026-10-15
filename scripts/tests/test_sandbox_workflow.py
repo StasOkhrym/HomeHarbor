@@ -2,6 +2,7 @@
 
 import base64
 import contextlib
+import hashlib
 import importlib
 import io
 import json
@@ -403,12 +404,19 @@ class SandboxWorkflowTests(unittest.TestCase):
                     )
                     self.assertIn("io.homeharbor.sandbox.owner", (value or {}).get("labels", {}))
 
-    def test_non_profile_probe_has_real_unpublished_listener(self):
+    def test_non_profile_listener_is_unpublished_and_outside_signed_acl(self):
         config = yaml.safe_load((ROOT / "deploy/compose.sandbox.yaml").read_text())
         site = config["services"]["site"]
-        self.assertIn("8081", " ".join(site["command"]))
+
         self.assertNotIn("ports", site)
-        self.assertNotIn("8081", (ROOT / "deploy/sandbox/initial-snapshot.toml").read_text())
+
+        import tomllib
+
+        manifest = tomllib.loads((ROOT / "deploy/sandbox/initial-snapshot.toml").read_text())
+
+        self.assertFalse(
+            any(rule["port_from"] <= 8081 <= rule["port_to"] for rule in manifest["acl"])
+        )
 
     def test_logs_project_only_public_events_without_free_text(self):
         try:
@@ -484,18 +492,65 @@ class SandboxWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             flow = self.owned(temp)
             save_profile(PROFILES[1], flow.sandbox / "network.env")
+            secrets = flow.sandbox / "secrets"
+            secrets.mkdir()
+            ca = secrets / "site_tls_ca"
+            ca.write_bytes(b"public-site-ca-fixture")
+            der = b"public-site-certificate-fixture"
+            (secrets / "site_tls_cert").write_bytes(
+                b"-----BEGIN CERTIFICATE-----\n"
+                + base64.b64encode(der)
+                + b"\n-----END CERTIFICATE-----\n"
+            )
+            docker = flow.run
+
+            def run(args, **kwargs):
+                if args[-1] == "--check" and not docker.failure:
+                    return json.dumps(
+                        {
+                            "certificate_sha256": hashlib.sha256(der).hexdigest(),
+                            "ca_sha256": hashlib.sha256(b"public-site-ca-fixture").hexdigest(),
+                        }
+                    )
+
+                return docker(args, **kwargs)
+
+            flow.run = run
+
             with patch("sandbox_diagnostics.probe", side_effect=(True, True, False)):
                 self.assertEqual(check(flow, "allowed"), 0)
+
             with patch("sandbox_diagnostics.probe", side_effect=(False, False, False)):
                 with self.assertRaisesRegex(ValueError, "differ"):
                     check(flow, "allowed")
+
             with patch("sandbox_diagnostics.probe", side_effect=(True, True, True)):
                 with self.assertRaisesRegex(ValueError, "differ"):
                     check(flow, "allowed")
-            flow.run.failure = True
+
+            ca.write_bytes(b"changed-local-ca")
+
+            with patch("sandbox_diagnostics.probe") as probe:
+                with self.assertRaisesRegex(ValueError, "identity differs"):
+                    check(flow, "denied")
+
+                probe.assert_not_called()
+
+            ca.unlink()
+
+            with patch("sandbox_diagnostics.probe") as probe:
+                with self.assertRaisesRegex(ValueError, "missing"):
+                    check(flow, "denied")
+
+                probe.assert_not_called()
+
+            ca.write_bytes(b"public-site-ca-fixture")
+            docker.failure = True
+
             with patch("sandbox_diagnostics.probe") as probe:
                 with self.assertRaises(ValueError):
                     check(flow, "denied")
+
                 probe.assert_not_called()
 
     def test_down_stops_only_registered_foreground_client_and_recovers(self):

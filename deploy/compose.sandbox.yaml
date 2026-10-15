@@ -122,12 +122,19 @@ services:
       - >-
         ip route replace ${SANDBOX_OVERLAY_SUBNET:-10.200.0.0/24}
         via ${SANDBOX_PRIVATE_GATEWAY_IP:-172.29.50.2} &&
-        httpd -p 8081 -h /site &&
-        exec httpd -f -p 8080 -h /site
+        exec python3 /usr/local/libexec/homeharbor-site.py
     networks:
       private:
         ipv4_address: ${SANDBOX_SITE_IP:-172.29.50.80}
-    cap_add: [NET_ADMIN]
+    secrets: [site_tls_cert, site_tls_key, site_tls_ca]
+    healthcheck:
+      test: ["CMD", "python3", "/usr/local/libexec/homeharbor-site.py", "--check"]
+      interval: 5s
+      timeout: 8s
+      retries: 12
+    # The root fixture must read its host-owned 0600 site key. This grants
+    # read access only inside its container; no other private key is mounted.
+    cap_add: [NET_ADMIN, DAC_READ_SEARCH]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
 
@@ -166,6 +173,9 @@ secrets:
   relay_tls_ca: { file: ../.sandbox/secrets/relay_tls_ca }
   frontend_tls_cert: { file: ../.sandbox/secrets/frontend_tls_cert }
   frontend_tls_key: { file: ../.sandbox/secrets/frontend_tls_key }
+  site_tls_cert: { file: ../.sandbox/secrets/site_tls_cert }
+  site_tls_key: { file: ../.sandbox/secrets/site_tls_key }
+  site_tls_ca: { file: ../.sandbox/secrets/site_tls_ca }
 
 volumes:
   sandbox-postgres:

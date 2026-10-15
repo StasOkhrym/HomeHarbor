@@ -72,7 +72,7 @@ def scoped_trust(entry, browser="safari"):
     )
 
 
-def validate_server_leaf(certificate, ca, run):
+def validate_server_leaf(certificate, ca, run, names=SERVER_NAMES):
     result = run(
         [
             "/usr/bin/openssl",
@@ -101,26 +101,29 @@ def validate_server_leaf(certificate, ca, run):
     try:
         properties = result.stdout.decode("ascii")
         san = re.search(r"X509v3 Subject Alternative Name:\s*\n([^\n]+)", properties)
-        names = [part.strip() for part in san[1].split(",")] if san else []
+        actual_names = [part.strip() for part in san[1].split(",")] if san else []
         if (
             "CA:FALSE" not in properties
             or "CA:TRUE" in properties
-            or len(names) != 4
-            or set(names) != {"DNS:" + name for name in SERVER_NAMES}
+            or len(actual_names) != len(names)
+            or set(actual_names) != {"DNS:" + name for name in names}
         ):
             raise ValueError
     except (UnicodeError, ValueError):
         raise ValueError(
-            "server certificate must be CA:FALSE with exactly the four sandbox SAN names"
+            "server certificate must be CA:FALSE with exactly the selected sandbox SAN names"
         ) from None
 
 
-def verify_scope(certificate, ca, run, *, relay_accepted=False):
-    for host, accepted in (
-        (HOST, True),
+def verify_scope(certificate, ca, run, *, relay_accepted=False, host=HOST):
+    checks = [
+        (host, True),
         ("relay.localhost", relay_accepted),
         ("unrelated.localhost", False),
-    ):
+    ]
+    if host != HOST:
+        checks.append((HOST, False))
+    for checked_host, accepted in checks:
         result = run(
             [
                 SECURITY,
@@ -130,7 +133,7 @@ def verify_scope(certificate, ca, run, *, relay_accepted=False):
                 "-p",
                 "ssl",
                 "-n",
-                host,
+                checked_host,
                 "-c",
                 str(certificate),
                 "-c",
@@ -141,16 +144,30 @@ def verify_scope(certificate, ca, run, *, relay_accepted=False):
             raise ValueError("macOS hostname trust verification failed; inspect saved trust state")
 
 
-def trust_ca(flow, *, run=security_command, terminal=None, prompt=input, browser="safari"):
+def trust_ca(
+    flow, *, run=security_command, terminal=None, prompt=input, browser="safari", target="control"
+):
     if browser not in {"safari", "chrome"}:
         raise ValueError("TRUST_BROWSER must be safari or chrome")
+    if target not in {"control", "site"}:
+        raise ValueError("TRUST_TARGET must be control or site")
+    if target == "site" and browser != "chrome":
+        raise ValueError(
+            "private site trust requires TRUST_BROWSER=chrome for single-leaf SSL trust"
+        )
+    host = HOST if target == "control" else "site.sandbox.home.arpa"
+    names = SERVER_NAMES if target == "control" else frozenset({host})
     flow.require_owner()
     if sys.platform != "darwin":
         raise ValueError("sandbox browser trust requires macOS")
     with flow.lock():
         flow.inventory()
-        ca = flow.sandbox / "secrets/relay_tls_ca"
-        certificate = flow.sandbox / "secrets/frontend_tls_cert"
+        ca = flow.sandbox / "secrets" / ("relay_tls_ca" if target == "control" else "site_tls_ca")
+        certificate = (
+            flow.sandbox
+            / "secrets"
+            / ("frontend_tls_cert" if target == "control" else "site_tls_cert")
+        )
         history = flow.sandbox / "browser-trust"
         for path in (ca, certificate, history):
             flow.check_path(path)
@@ -176,19 +193,25 @@ def trust_ca(flow, *, run=security_command, terminal=None, prompt=input, browser
             atomic_write(staged / "ca.pem", content)
             atomic_write(staged / "frontend.pem", leaf)
             if browser == "chrome":
-                validate_server_leaf(staged / "frontend.pem", staged / "ca.pem", run)
+                validate_server_leaf(staged / "frontend.pem", staged / "ca.pem", run, names)
                 print("Chrome mode trusts only this CA:FALSE server certificate for SSL.")
-                print("Certificate SANs: " + ", ".join(sorted(SERVER_NAMES)))
+                print("Certificate SANs: " + ", ".join(sorted(names)))
             before = export_trust(staged / "before.plist", run)
             leaf_id = (
                 hashlib.sha1(ssl.PEM_cert_to_DER_cert(leaf.decode("ascii"))).hexdigest().upper()
             )
-            relay_accepted = browser == "chrome" or scoped_trust(before.get(leaf_id), "chrome")
+            relay_accepted = target == "control" and (
+                browser == "chrome" or scoped_trust(before.get(leaf_id), "chrome")
+            )
             if cert_id in before:
                 if not scoped_trust(before[cert_id], browser):
                     raise ValueError("existing certificate trust differs; refusing to replace it")
                 verify_scope(
-                    staged / "frontend.pem", staged / "ca.pem", run, relay_accepted=relay_accepted
+                    staged / "frontend.pem",
+                    staged / "ca.pem",
+                    run,
+                    relay_accepted=relay_accepted,
+                    host=host,
                 )
                 print("Exact browser SSL trust already installed; no change.")
                 if browser == "safari":
@@ -239,7 +262,11 @@ def trust_ca(flow, *, run=security_command, terminal=None, prompt=input, browser
             ):
                 raise ValueError("user trust changed unexpectedly; inspect saved trust snapshots")
             verify_scope(
-                staged / "frontend.pem", staged / "ca.pem", run, relay_accepted=relay_accepted
+                staged / "frontend.pem",
+                staged / "ca.pem",
+                run,
+                relay_accepted=relay_accepted,
+                host=host,
             )
         print(f"Verified {browser} user SSL trust; previous trust entries preserved.")
         print("A renewed Chrome server certificate requires explicit trust of its new fingerprint.")

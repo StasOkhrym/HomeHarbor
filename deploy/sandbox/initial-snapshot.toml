@@ -25,7 +25,7 @@ domain_suffix = "sandbox.home.arpa"
 id = "sandbox-site"
 name = "Private sandbox site"
 kind = "web"
-url = "http://site.sandbox.home.arpa:8080"
+url = "https://site.sandbox.home.arpa:8080"
 description = "Manual native client packet-path fixture"
 
 [[profiles]]
