@@ -234,11 +234,14 @@ side effect of up/join/prepare. No routes or resolvers should change during it.
 Prepare a sudoers include for the **actual numeric owner UID**. For UID 501:
 
 ```sudoers
-#501 ALL=(root) NOPASSWD: NOLOG_INPUT: NOLOG_OUTPUT: /Library/PrivilegedHelperTools/homeharbor/client network-helper
+#501 ALL=(root) NOPASSWD: NOSETENV: NOLOG_INPUT: NOLOG_OUTPUT: /Library/PrivilegedHelperTools/homeharbor/client network-helper
 ```
 
 The exact argument is part of the authorization. Do not permit arbitrary client
 arguments, another executable, `ALL`, shell commands or environment preservation.
+Keep `NOSETENV` explicit so this command cannot opt into the `SETENV` bypass of
+sudo's normal environment restrictions. The application also invokes the helper
+with a minimal fixed environment; verify the installed host policy separately.
 Disable sudo I/O capture for this command so private stdin is not copied into
 sudo session recordings. Validate the candidate with `visudo -c -f CANDIDATE`,
 then use a privileged `visudo` session to install a root-owned mode-0440 include
