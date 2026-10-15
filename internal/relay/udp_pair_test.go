@@ -680,6 +680,7 @@ func TestUDPPairBridgeNeverLeaksTicketThroughTLSRedirect(t *testing.T) {
 
 func TestUDPPairBridgesRenewWithoutReplacingLocalWireGuardSocket(t *testing.T) {
 	f := newPairFixture(t, UDPPairConfig{MaxPeersPerDevice: 1})
+
 	wgA, wgB := pairUDP(t), pairUDP(t)
 	makeBridge := func(device, peer string, wg *net.UDPConn) *UDPPairBridge {
 		b, err := NewUDPPairBridge(
@@ -697,9 +698,11 @@ func TestUDPPairBridgesRenewWithoutReplacingLocalWireGuardSocket(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		t.Cleanup(func() { _ = b.Close() })
 		return b
 	}
+
 	a, b := makeBridge("a", "b", wgA), makeBridge("b", "a", wgB)
 	ctx, cancel := context.WithCancel(f.ctx)
 	done := make(chan error, 2)
@@ -714,16 +717,41 @@ func TestUDPPairBridgesRenewWithoutReplacingLocalWireGuardSocket(t *testing.T) {
 			t.Fatal("bridge bind timeout")
 		}
 	}
+
 	aa, ba := a.LocalAddr(), b.LocalAddr()
+	var egressAddresses []*net.UDPAddr
+	for _, bridge := range []*UDPPairBridge{a, b} {
+		local := bridge.LocalAddr()
+
+		observed, ok := bridge.ObservedEndpoint()
+
+		if !ok || !local.IP.IsLoopback() || observed.Port() == uint16(local.Port) {
+			t.Fatal("relay egress must be separate from the retained loopback WireGuard socket")
+		}
+
+		egressAddresses = append(egressAddresses, net.UDPAddrFromAddrPort(observed))
+	}
+
+	foreign := pairUDP(t)
+
+	sendPair(t, foreign, []byte("not-the-local-wireguard-socket"), &aa)
+	readPairRaw(t, wgA, []byte("not-the-local-wireguard-socket"), &aa)
+	noPairRaw(t, wgB)
+	sendPair(t, foreign, []byte("opaque-direct-candidate"), egressAddresses[0])
+	readPairRaw(t, wgA, []byte("opaque-direct-candidate"), &aa)
 	sendPair(t, wgA, []byte("wg-before-renewal"), &aa)
 	readPairRaw(t, wgB, []byte("wg-before-renewal"), &ba)
+
 	if err := a.Bind(f.ctx, f.ticket(t, "s", "a", "b")); err != nil {
 		t.Fatal(err)
 	}
+
 	renewedAddr := a.LocalAddr()
+
 	if renewedAddr.String() != aa.String() {
 		t.Fatal("ticket renewal replaced WireGuard endpoint")
 	}
+
 	sendPair(t, wgB, []byte("wg-after-renewal"), &ba)
 	readPairRaw(t, wgA, []byte("wg-after-renewal"), &aa)
 	cancel()
@@ -737,11 +765,13 @@ func TestUDPPairBridgesRenewWithoutReplacingLocalWireGuardSocket(t *testing.T) {
 			t.Fatal("bridge worker not awaited")
 		}
 	}
-	for _, addr := range []*net.UDPAddr{&aa, &ba} {
+
+	for _, addr := range append(egressAddresses, &aa, &ba) {
 		u, err := net.ListenUDP("udp", addr)
 		if err != nil {
 			t.Fatalf("local socket leaked: %v", err)
 		}
+
 		_ = u.Close()
 	}
 }

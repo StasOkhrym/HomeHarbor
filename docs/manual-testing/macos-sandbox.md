@@ -37,6 +37,12 @@ Pool overlap is checked before the probe image is built; its tag is scoped to
 this checkout and owner. The full check repeats after the build.
 An unsupported VM is a failed prerequisite, not permission to bypass the fence.
 
+The gateway applies sandbox-only source NAT after the product's WireGuard ACL:
+overlay traffic to the private subnet uses the gateway's private address. This
+keeps Docker's `internal` bridge isolation intact; fixtures see the gateway IP.
+The independent underlay fence still blocks direct underlay access. No Docker
+host firewall rule, private service port publication or host route bypass is used.
+
 ## Start and bootstrap the gateway
 
 ```sh

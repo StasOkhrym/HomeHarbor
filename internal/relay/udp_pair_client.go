@@ -39,12 +39,13 @@ type binding struct {
 	challenge chan string
 }
 
-// UDPPairBridge keeps one local socket across authenticated admissions and
-// rebindings. Exactly one owned reader dispatches UDP traffic, including return
-// challenges, so renewing a ticket cannot steal WireGuard packets from Run.
+// UDPPairBridge retains a local WireGuard socket and a separate routable egress
+// across admissions and rebindings. Each socket has one owned reader, so renewal
+// cannot steal packets. A loopback source cannot reach a remote relay on Linux.
 type UDPPairBridge struct {
 	cfg             UDPPairBridgeConfig
 	udp             *net.UDPConn
+	egress          *net.UDPConn
 	ctx             context.Context
 	cancel          context.CancelFunc
 	mu              sync.Mutex
@@ -65,6 +66,7 @@ func NewUDPPairBridge(cfg UDPPairBridgeConfig) (*UDPPairBridge, error) {
 	if err := protocol.ValidateRelayControlURL(cfg.ControlURL); err != nil {
 		return nil, err
 	}
+
 	if cfg.Ticket == "" || cfg.SessionID == "" || cfg.DeviceID == "" ||
 		cfg.DestinationDeviceID == "" ||
 		cfg.DeviceID == cfg.DestinationDeviceID ||
@@ -72,37 +74,46 @@ func NewUDPPairBridge(cfg UDPPairBridgeConfig) (*UDPPairBridge, error) {
 		cfg.WireGuardAddress == nil {
 		return nil, errors.New("UDP pair ticket, peer identities and UDP addresses required")
 	}
+
 	if cfg.BindTimeout == 0 {
 		cfg.BindTimeout = 10 * time.Second
 	}
+
 	if cfg.MaxDatagramBytes == 0 {
 		cfg.MaxDatagramBytes = 65507
 	}
+
 	if cfg.BindTimeout < 0 || cfg.MaxDatagramBytes < 1 || cfg.MaxDatagramBytes > 65507 {
 		return nil, errors.New("invalid UDP pair bridge limits")
 	}
+
 	client := http.Client{}
 	if cfg.HTTPClient != nil {
 		client = *cfg.HTTPClient
 	}
+
 	transport := client.Transport
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
+
 	httpTransport, ok := transport.(*http.Transport)
 	//nolint:staticcheck // Reject the deprecated TLS hook too: it can bypass certificate verification.
 	if !ok || httpTransport.DialTLS != nil || httpTransport.DialTLSContext != nil {
 		return nil, errors.New("UDP pair requires a verifying HTTP TLS transport")
 	}
+
 	ownedTransport := httpTransport.Clone()
 	if ownedTransport.TLSClientConfig == nil {
 		ownedTransport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	} else {
 		ownedTransport.TLSClientConfig = ownedTransport.TLSClientConfig.Clone()
 	}
+
 	if ownedTransport.TLSClientConfig.InsecureSkipVerify {
 		return nil, errors.New("UDP pair TLS verification cannot be disabled")
 	}
+
 	client.Transport = ownedTransport
 	// net/http otherwise forwards Authorization on a same-host downgrade.
 	// A relay control endpoint is exact and never follows redirects.
@@ -110,20 +121,30 @@ func NewUDPPairBridge(cfg UDPPairBridgeConfig) (*UDPPairBridge, error) {
 	cfg.HTTPClient = &client
 	cfg.ListenAddress = cloneUDPAddr(cfg.ListenAddress)
 	cfg.WireGuardAddress = cloneUDPAddr(cfg.WireGuardAddress)
+
 	udp, err := net.ListenUDP("udp", cfg.ListenAddress)
 	if err != nil {
 		return nil, fmt.Errorf("listen UDP pair bridge: %w", err)
 	}
+
+	egress, err := net.ListenUDP("udp", nil)
+	if err != nil {
+		_ = udp.Close()
+		return nil, fmt.Errorf("listen UDP pair egress: %w", err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &UDPPairBridge{
 		cfg:             cfg,
 		udp:             udp,
+		egress:          egress,
 		ctx:             ctx,
 		cancel:          cancel,
-		err:             make(chan error, 1),
+		err:             make(chan error, 2), // At most one terminal error per reader.
 		connected:       make(chan struct{}),
 		observedChanges: make(chan struct{}),
 	}
+
 	return b, nil
 }
 
@@ -150,10 +171,12 @@ func (b *UDPPairBridge) Close() error {
 	b.closeOnce.Do(func() {
 		b.cancel()
 		_ = b.udp.Close()
+		_ = b.egress.Close()
 		// Bind is synchronous but may be running in a renewal owner. Its
 		// context is cancelled above before awaiting it and the UDP reader.
 		b.bindMu.Lock()
 		defer b.bindMu.Unlock()
+
 		b.wg.Wait()
 		b.cfg.HTTPClient.CloseIdleConnections()
 	})
@@ -192,18 +215,24 @@ func (b *UDPPairBridge) Run(ctx context.Context) error {
 func (b *UDPPairBridge) Bind(parent context.Context, ticket string) error {
 	b.bindMu.Lock()
 	defer b.bindMu.Unlock()
+
 	if b.ctx.Err() != nil {
 		return net.ErrClosed
 	}
+
 	if !b.started {
 		b.started = true
-		b.wg.Add(1)
-		go b.readUDP()
+		b.wg.Add(2)
+		go b.readUDP(b.udp, true)
+		go b.readUDP(b.egress, false)
 	}
+
 	ctx, cancel := context.WithTimeout(parent, b.cfg.BindTimeout)
 	defer cancel()
+
 	stop := context.AfterFunc(b.ctx, cancel)
 	defer stop()
+
 	headers := http.Header{"Authorization": {"Bearer " + ticket}}
 	c, _, err := websocket.Dial(
 		ctx,
@@ -218,11 +247,14 @@ func (b *UDPPairBridge) Bind(parent context.Context, ticket string) error {
 		return fmt.Errorf("UDP pair control: %w", err)
 	}
 	defer func() { _ = c.CloseNow() }()
+
 	c.SetReadLimit(2048)
 	var offer UDPPairMessage
+
 	if err := wsjson.Read(ctx, c, &offer); err != nil {
 		return err
 	}
+
 	if offer.Protocol != UDPPairProtocol || offer.Kind != "offer" ||
 		offer.SessionID != b.cfg.SessionID ||
 		offer.DeviceID != b.cfg.DeviceID ||
@@ -230,21 +262,26 @@ func (b *UDPPairBridge) Bind(parent context.Context, ticket string) error {
 		len(offer.Nonce) != 43 {
 		return errors.New("UDP pair offer identity or version mismatch")
 	}
+
 	address, err := net.ResolveUDPAddr("udp", offer.UDPAddress)
 	if err != nil || address.Port == 0 || address.IP.IsUnspecified() {
 		return errors.New("invalid UDP pair ingress address")
 	}
+
 	binding := &binding{address: address, challenge: make(chan string, 1)}
 	b.mu.Lock()
 	b.pending = binding
 	b.mu.Unlock()
 	defer func() { b.mu.Lock(); b.pending = nil; b.mu.Unlock() }()
+
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	probe := func() error { _, err := b.udp.WriteToUDP([]byte("HHUP"+offer.Nonce), address); return err }
+
+	probe := func() error { _, err := b.egress.WriteToUDP([]byte("HHUP"+offer.Nonce), address); return err }
 	if err := probe(); err != nil {
 		return err
 	}
+
 	var challenge string
 wait:
 	for {
@@ -259,6 +296,7 @@ wait:
 			}
 		}
 	}
+
 	if err := wsjson.Write(
 		ctx,
 		c,
@@ -266,20 +304,25 @@ wait:
 	); err != nil {
 		return err
 	}
+
 	var bound UDPPairMessage
+
 	if err := wsjson.Read(ctx, c, &bound); err != nil {
 		return err
 	}
+
 	observed, err := netip.ParseAddrPort(bound.ObservedEndpoint)
 	if err != nil || bound.Protocol != UDPPairProtocol || bound.Kind != "bound" {
 		return errors.New("invalid UDP pair confirmation")
 	}
+
 	// Renewal proves reachability on the retained ingress, so the confirmed
 	// endpoint mapping is also valid for data behind endpoint-dependent NAT.
 	boundAddress, err := net.ResolveUDPAddr("udp", bound.UDPAddress)
 	if err != nil || boundAddress.Port == 0 || boundAddress.IP.IsUnspecified() {
 		return errors.New("invalid confirmed UDP pair ingress address")
 	}
+
 	b.mu.Lock()
 	b.relay = cloneUDPAddr(boundAddress)
 	if observed != b.observed {
@@ -287,19 +330,21 @@ wait:
 		close(b.observedChanges)
 		b.observedChanges = make(chan struct{})
 	}
+
 	b.mu.Unlock()
 	b.connectedOnce.Do(func() { close(b.connected) })
 	if b.cfg.OnObservedEndpoint != nil {
 		b.cfg.OnObservedEndpoint(observed)
 	}
+
 	return nil
 }
 
-func (b *UDPPairBridge) readUDP() {
+func (b *UDPPairBridge) readUDP(socket *net.UDPConn, local bool) {
 	defer b.wg.Done()
 	buffer := make([]byte, 65535)
 	for {
-		n, source, err := b.udp.ReadFromUDP(buffer)
+		n, source, err := socket.ReadFromUDP(buffer)
 		if err != nil {
 			if b.ctx.Err() == nil {
 				b.err <- err
@@ -310,7 +355,7 @@ func (b *UDPPairBridge) readUDP() {
 		relayAddress := cloneUDPAddr(b.relay)
 		pending := b.pending
 		b.mu.Unlock()
-		if pending != nil && sameUDPAddr(source, pending.address) {
+		if !local && pending != nil && sameUDPAddr(source, pending.address) {
 			if n == 47 && strings.HasPrefix(string(buffer[:n]), "HHUC") {
 				select {
 				case pending.challenge <- string(buffer[4:n]):
@@ -325,8 +370,11 @@ func (b *UDPPairBridge) readUDP() {
 			continue
 		}
 		var target *net.UDPAddr
-		if sameUDPAddr(source, b.cfg.WireGuardAddress) {
+		outbound := b.udp
+		// Only the configured local WireGuard socket may send to relay.
+		if local && sameUDPAddr(source, b.cfg.WireGuardAddress) {
 			target = relayAddress
+			outbound = b.egress
 		} else {
 			target = b.cfg.WireGuardAddress
 		}
@@ -335,7 +383,7 @@ func (b *UDPPairBridge) readUDP() {
 		if target == nil {
 			continue
 		}
-		if _, err := b.udp.WriteToUDP(buffer[:n], target); err != nil {
+		if _, err := outbound.WriteToUDP(buffer[:n], target); err != nil {
 			b.err <- err
 			return
 		}

@@ -81,6 +81,8 @@ services:
       SSL_CERT_FILE: /run/secrets/relay_tls_ca
       SANDBOX_UNDERLAY_IP: ${SANDBOX_UNDERLAY_IP:-172.28.40.2}
       SANDBOX_PRIVATE_GATEWAY_IP: ${SANDBOX_PRIVATE_GATEWAY_IP:-172.29.50.2}
+      SANDBOX_OVERLAY_SUBNET: ${SANDBOX_OVERLAY_SUBNET:-10.200.0.0/24}
+      SANDBOX_PRIVATE_SUBNET: ${SANDBOX_PRIVATE_SUBNET:-172.29.50.0/24}
     volumes: [sandbox-gateway-state:/var/lib/homeharbor]
     cap_add: [NET_ADMIN]
     cap_drop: [ALL]

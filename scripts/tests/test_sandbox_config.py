@@ -1,6 +1,7 @@
 """Static contracts for the opt-in sandbox; these never start Docker or touch macOS."""
 
 import ipaddress
+import os
 import re
 import subprocess
 import tempfile
@@ -104,6 +105,65 @@ class SandboxConfigTests(unittest.TestCase):
         self.assertTrue(fence.exists(), "gateway lacks its independent underlay/private fence")
         self.assertIn("nft", fence.read_text())
         self.assertIn("drop", fence.read_text())
+
+    def test_gateway_nat_preserves_internal_bridge_and_acl_boundary(self):
+        gateway = sandbox_config()["services"]["gateway"]
+
+        self.assertIn("SANDBOX_OVERLAY_SUBNET", gateway["environment"])
+        self.assertIn("SANDBOX_PRIVATE_SUBNET", gateway["environment"])
+        self.assertTrue(sandbox_config()["networks"]["private"]["internal"])
+
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            script = directory / "fence.sh"
+            # Replace only the final process handoff; ip/nft below are fakes.
+            source = (ROOT / "deploy/sandbox/gateway-fence.sh").read_text()
+            script.write_text(source.replace("exec /agent", "exec /usr/bin/true"))
+            ip = directory / "ip"
+            ip.write_text(
+                "#!/bin/sh\nprintf '%s\\n' '1: eth0 inet 10.240.40.2/24' '2: eth1 inet 10.241.50.2/24'\n"
+            )
+            nft = directory / "nft"
+            nft.write_text('#!/bin/sh\ncat > "$CAPTURE"\n')
+            ip.chmod(0o700)
+            nft.chmod(0o700)
+            capture = directory / "rules.nft"
+            env = {
+                **os.environ,
+                "PATH": str(directory) + os.pathsep + os.environ["PATH"],
+                "CAPTURE": str(capture),
+                "SANDBOX_UNDERLAY_IP": "10.240.40.2",
+                "SANDBOX_PRIVATE_GATEWAY_IP": "10.241.50.2",
+                "SANDBOX_OVERLAY_SUBNET": "10.243.0.0/24",
+                "SANDBOX_PRIVATE_SUBNET": "10.241.50.0/24",
+            }
+            result = subprocess.run(["sh", str(script), "enroll"], env=env, capture_output=True)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            rules = capture.read_text()
+
+            self.assertIn('iifname "eth0" oifname "eth1" drop', rules)
+            self.assertIn("type nat hook postrouting priority srcnat", rules)
+            self.assertIn(
+                'iifname "wg0" oifname "eth1" ip saddr 10.243.0.0/24 '
+                "ip daddr 10.241.50.0/24 snat to 10.241.50.2",
+                rules,
+            )
+
+            capture.unlink()
+            for invalid in (
+                "10.243.0.0/24; flush ruleset",
+                "10.243.0.0/24\nflush ruleset\n10.243.0.0/24",
+            ):
+                with self.subTest(invalid=invalid):
+                    env["SANDBOX_OVERLAY_SUBNET"] = invalid
+                    rejected = subprocess.run(
+                        ["sh", str(script), "enroll"], env=env, capture_output=True
+                    )
+
+                    self.assertNotEqual(rejected.returncode, 0)
+                    self.assertFalse(capture.exists(), "invalid scope reached nft")
 
     def test_relay_allocated_port_maps_one_to_one(self):
         relay = sandbox_config().get("services", {}).get("relay", {})
