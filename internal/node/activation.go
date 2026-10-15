@@ -25,15 +25,18 @@ import (
 // InviteEnrollment pins root and network authority supplied by the caller.
 // StatePath is mandatory: existing private keys are saved before transmission.
 type InviteEnrollment struct {
-	ControlURL    string
-	InviteLink    string
-	Code          string
-	DeviceID      string
-	StatePath     string
-	RootPublicKey ed25519.PublicKey
-	NetworkID     string
-	PollInterval  time.Duration
-	OnStage       func(InviteStage)
+	ControlURL string
+	InviteLink string
+	Code       string
+	// ResumeInviteID claims an already approved record using existing keys.
+	// It never submits a new proof or accepts an expired new invitation.
+	ResumeInviteID string
+	DeviceID       string
+	StatePath      string
+	RootPublicKey  ed25519.PublicKey
+	NetworkID      string
+	PollInterval   time.Duration
+	OnStage        func(InviteStage)
 }
 
 // InviteStage reports protocol progress without implying that network policy
@@ -51,6 +54,7 @@ var inviteCanonical = func() cbor.EncMode {
 	if err != nil {
 		panic(err)
 	}
+
 	return m
 }()
 
@@ -226,27 +230,57 @@ func enrollByInvite(
 	if state == nil || p.StatePath == "" {
 		return errors.New("state and state path are required")
 	}
+
 	base, err := activationOrigin(p.ControlURL)
 	if err != nil {
 		return err
 	}
+	if p.ResumeInviteID != "" {
+		client, err := controlclient.ForEndpoint(base, httpClient)
+		if err != nil {
+			return err
+		}
+
+		if err := verifyApprovedResume(ctx, client, p, *state); err != nil {
+			return err
+		}
+
+		return claimInvite(ctx, client, p, state, save, p.ResumeInviteID)
+	}
+
 	permit, proof, err := PrepareInviteProof(p, *state, time.Now().UTC())
 	if err != nil {
 		return err
 	}
+
 	if err := save(*state); err != nil {
 		return err
 	}
+
 	client, err := controlclient.ForEndpoint(base, httpClient)
 	if err != nil {
 		return err
 	}
+
 	if err := client.SubmitInviteProof(ctx, permit, proof); err != nil {
 		return fmt.Errorf("submit invite proof: %w", err)
 	}
+
 	if p.OnStage != nil {
 		p.OnStage(InvitePending)
 	}
+
+	return claimInvite(ctx, client, p, state, save, proof.InviteID)
+}
+
+func claimInvite(
+	ctx context.Context,
+	client *controlclient.Client,
+	p InviteEnrollment,
+	state *State,
+	save func(State) error,
+	inviteID string,
+) error {
 	interval := p.PollInterval
 	if interval <= 0 {
 		// The shared onboarding budget is also used by the companion's exact
@@ -254,29 +288,34 @@ func enrollByInvite(
 		// those operations rather than consume the entire quota themselves.
 		interval = 30 * time.Second
 	}
+
 	private, err := strictInviteBytes(state.IdentityPrivateKey, ed25519.PrivateKeySize)
 	if err != nil {
 		return err
 	}
+
 	approvedReported := false
 	for {
-		challenge, err := client.Challenge(ctx, proof.InviteID)
+		challenge, err := client.Challenge(ctx, inviteID)
 		if err == nil {
-			if challenge.InviteID != proof.InviteID || challenge.DeviceID != p.DeviceID ||
+			if challenge.InviteID != inviteID || challenge.DeviceID != p.DeviceID ||
 				challenge.NetworkID != p.NetworkID ||
 				challenge.ExpiresAt <= time.Now().Unix() ||
 				challenge.ExpiresAt > time.Now().Add(protocol.ClaimTTL).Unix() {
 				return protocol.ErrInvalidClaim
 			}
+
 			if p.OnStage != nil && !approvedReported {
 				p.OnStage(InviteApproved)
 				approvedReported = true
 			}
+
 			signed, signErr := protocol.SignClaim(challenge, ed25519.PrivateKey(private))
 			if signErr != nil {
 				return signErr
 			}
-			d, claimErr := client.Claim(ctx, proof.InviteID, signed)
+
+			d, claimErr := client.Claim(ctx, inviteID, signed)
 			if claimErr == nil {
 				if d.CredentialExpiresAt.IsZero() || d.ID != p.DeviceID || d.Status != "active" ||
 					d.Role != "client" ||
@@ -284,29 +323,37 @@ func enrollByInvite(
 					d.WireGuardPublicKey != state.WireGuard.PublicKey {
 					return errors.New("claim returned a different device identity")
 				}
+
 				if _, err := strictInviteBytes(d.Credential, 32); err != nil {
 					return errors.New("invalid device credential")
 				}
+
 				updated := *state
 				updated.DeviceID = d.ID
 				updated.DeviceCredential = d.Credential
 				updated.CredentialExpiresAt = d.CredentialExpiresAt
+
 				if err := save(updated); err != nil {
 					return err
 				}
+
 				*state = updated
 				if p.OnStage != nil {
 					p.OnStage(InviteClaimed)
 				}
+
 				return nil
 			}
+
 			err = claimErr
 		}
+
 		var status *controlclient.StatusError
 		if errors.As(err, &status) && status.StatusCode != http.StatusConflict &&
 			status.StatusCode != http.StatusServiceUnavailable && status.StatusCode != http.StatusTooManyRequests {
 			return fmt.Errorf("activate invite: %w", err)
 		}
+
 		delay := interval
 		if status != nil {
 			delay = max(delay, status.RetryAfter)
@@ -314,6 +361,7 @@ func enrollByInvite(
 				delay = max(delay, time.Minute)
 			}
 		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

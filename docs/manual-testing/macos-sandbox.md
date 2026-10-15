@@ -322,6 +322,24 @@ private request after authenticated snapshot catch-up. Repeat wrong-code,
 expired invitation and replay attempts with disposable invitations; each must
 leave the client unenrolled and unable to reach the private fixture.
 
+If join stopped after companion approval but before saving the credential, keep
+the original state file and its keys. Resume that approved invitation by its
+public ID, even after the original permit expires:
+
+```sh
+.sandbox/bin/client join --resume-invite INVITE_ID \
+  --state .sandbox/client.json --control https://control.localhost:8443 \
+  --ca-file .sandbox/secrets/relay_tls_ca \
+  --root-public-key .sandbox/root-public.key --network-id sandbox-network \
+  --trust-fingerprint TRUST_FINGERPRINT
+```
+
+Use your independently verified fingerprint. Resume requires existing state,
+checks the approved record against the same keys and pinned root/network, then
+uses a fresh one-use possession proof. It does not submit another invitation
+proof or apply networking. Pending, mismatched and expired new invitations are
+rejected; an already joined client uses the normal runtime.
+
 To remove access, publish a signed device removal from the trusted companion:
 
 ```sh

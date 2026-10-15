@@ -20,12 +20,13 @@ import (
 )
 
 type joinOptions struct {
-	controlURL  string
-	caFile      string
-	rootFile    string
-	networkID   string
-	fingerprint string
-	statePath   string
+	controlURL   string
+	caFile       string
+	rootFile     string
+	networkID    string
+	fingerprint  string
+	statePath    string
+	resumeInvite string
 }
 
 func newJoinCommand() *cobra.Command {
@@ -39,6 +40,12 @@ func newJoinCommand() *cobra.Command {
 		},
 	}
 	flags := command.Flags()
+	flags.StringVar(
+		&options.resumeInvite,
+		"resume-invite",
+		"",
+		"public ID of an already approved invitation; requires existing state",
+	)
 	flags.StringVar(&options.controlURL, "control", "", "HTTPS control origin")
 	flags.StringVar(&options.caFile, "ca-file", "", "trusted PEM CA file for control TLS")
 	flags.StringVar(
@@ -62,17 +69,20 @@ func runJoin(command *cobra.Command, options joinOptions) (result error) {
 	if err := command.Context().Err(); err != nil {
 		return err
 	}
+
 	if options.controlURL == "" || options.caFile == "" || options.rootFile == "" ||
 		options.networkID == "" || options.fingerprint == "" || options.statePath == "" {
 		return errors.New(
 			"control, CA, root public key, network ID, trust fingerprint and state are required",
 		)
 	}
+
 	origin, err := url.Parse(options.controlURL)
 	if err != nil || origin.Scheme != "https" || origin.Host == "" ||
 		origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || origin.Path != "" {
 		return errors.New("control must be an HTTPS origin without a path, query or fragment")
 	}
+
 	root, err := node.LoadPublicKeyFile(options.rootFile)
 	if err != nil {
 		return fmt.Errorf("load trusted root: %w", err)
@@ -80,54 +90,79 @@ func runJoin(command *cobra.Command, options joinOptions) (result error) {
 	if !strings.EqualFold(options.fingerprint, trustFingerprint(root, options.networkID)) {
 		return errors.New("trusted root and network fingerprint do not match")
 	}
+
 	client, err := trust.NewHTTPClientFromCAFile(options.caFile)
 	if err != nil {
 		return err
 	}
 	defer client.CloseIdleConnections()
+
 	store, err := localstate.Open(options.statePath)
 	if err != nil {
 		return fmt.Errorf("open private client state: %w", err)
 	}
 	defer func() { result = errors.Join(result, store.Close()) }()
-	state, err := node.LoadOrCreateFrom(store)
+
+	var state node.State
+	if options.resumeInvite != "" {
+		state, err = node.LoadFrom(store)
+	} else {
+		state, err = node.LoadOrCreateFrom(store)
+	}
+
 	if err != nil {
 		return fmt.Errorf("load private client state: %w", err)
 	}
 	if state.DeviceCredential != "" {
 		return errors.New("client is already joined; use the normal run command")
 	}
+
 	deviceID, err := joinDeviceID(state.IdentityPublicKey)
 	if err != nil {
 		return err
 	}
+
 	if _, err := fmt.Fprintf(command.OutOrStdout(), "Client identity: %s\n", deviceID); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(
-		command.OutOrStdout(),
-		"Trust fingerprint verified. Enter the signed invitation and separate code.",
-	); err != nil {
-		return err
+
+	var link, code string
+	if options.resumeInvite == "" {
+		if _, err := fmt.Fprintln(
+			command.OutOrStdout(),
+			"Trust fingerprint verified. Enter the signed invitation and separate code.",
+		); err != nil {
+			return err
+		}
+
+		scanner := bufio.NewScanner(command.InOrStdin())
+		scanner.Buffer(make([]byte, 4096), 16*1024)
+
+		link, err = host.ReadPrivateLine(scanner, command, "Invitation link")
+		if err != nil {
+			return err
+		}
+
+		code, err = host.ReadPrivateLine(scanner, command, "Invitation code")
+		if err != nil {
+			return err
+		}
+
+		inviteURL, err := url.Parse(link)
+		if err != nil || inviteURL.Scheme != origin.Scheme || inviteURL.Host != origin.Host {
+			return errors.New("invitation link origin does not match trusted control")
+		}
 	}
-	scanner := bufio.NewScanner(command.InOrStdin())
-	scanner.Buffer(make([]byte, 4096), 16*1024)
-	link, err := host.ReadPrivateLine(scanner, command, "Invitation link")
-	if err != nil {
-		return err
-	}
-	code, err := host.ReadPrivateLine(scanner, command, "Invitation code")
-	if err != nil {
-		return err
-	}
-	inviteURL, err := url.Parse(link)
-	if err != nil || inviteURL.Scheme != origin.Scheme || inviteURL.Host != origin.Host {
-		return errors.New("invitation link origin does not match trusted control")
-	}
+
 	return node.EnrollByInviteFrom(command.Context(), client, node.InviteEnrollment{
-		ControlURL: options.controlURL, InviteLink: link, Code: code,
-		DeviceID: deviceID, StatePath: options.statePath, RootPublicKey: root,
-		NetworkID: options.networkID,
+		ControlURL:     options.controlURL,
+		InviteLink:     link,
+		Code:           code,
+		ResumeInviteID: options.resumeInvite,
+		DeviceID:       deviceID,
+		StatePath:      options.statePath,
+		RootPublicKey:  root,
+		NetworkID:      options.networkID,
 		OnStage: func(stage node.InviteStage) {
 			// Status output is advisory; a closed output stream cannot roll
 			// back a submitted proof or a durably claimed credential.
