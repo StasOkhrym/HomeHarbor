@@ -24,6 +24,7 @@ var pageTemplate = template.Must(assets.AdminTemplate(template.FuncMap{
 // truncated success response for a browser mutation.
 func RenderPage(w http.ResponseWriter, status int, model Page, logger *slog.Logger) {
 	var output bytes.Buffer
+
 	if err := pageTemplate.ExecuteTemplate(&output, "page", model); err != nil {
 		logger.Error("render admin page", "error", err, "page", model.Page)
 		http.Error(
@@ -33,8 +34,13 @@ func RenderPage(w http.ResponseWriter, status int, model Page, logger *slog.Logg
 		)
 		return
 	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	// Native form POSTs use navigate mode: no-referrer would turn their
+	// Origin into null and fail our strict mutation authorization. Preserve
+	// same-origin forms without sending referrers to external destinations.
+	w.Header().Set("Referrer-Policy", "same-origin")
 	w.WriteHeader(status)
 	_, _ = w.Write(output.Bytes())
 }
