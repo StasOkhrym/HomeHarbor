@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,6 +22,9 @@ const MaxJSONBytes = 1 << 20
 type StatusError struct {
 	Operation  string
 	StatusCode int
+	// RetryAfter is a bounded server cooldown for 429/503 responses. The
+	// transport itself never retries a request or reflects the raw header.
+	RetryAfter time.Duration
 }
 
 func (e *StatusError) Error() string {
@@ -90,6 +94,7 @@ func (c *Client) request(
 		strings.Contains(path, "#") || strings.HasPrefix(path, "//") {
 		return errors.New("invalid control request")
 	}
+
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -99,26 +104,33 @@ func (c *Client) request(
 		if len(encoded) > MaxJSONBytes {
 			return errors.New("control request exceeds JSON limit")
 		}
+
 		reader = bytes.NewReader(encoded)
 	}
+
 	request, err := http.NewRequestWithContext(ctx, method, c.base+path, reader)
 	if err != nil {
 		return errors.New("invalid control request URL")
 	}
+
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
+
 	if credential != "" {
 		request.Header.Set("Authorization", "Bearer "+credential)
 	}
+
 	for name, values := range headers {
 		if strings.EqualFold(name, "Authorization") || strings.EqualFold(name, "Host") {
 			return errors.New("reserved control request header")
 		}
+
 		for _, value := range values {
 			request.Header.Add(name, value)
 		}
 	}
+
 	response, err := c.http.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -130,22 +142,28 @@ func (c *Client) request(
 		if errors.Is(err, context.Canceled) {
 			return context.Canceled
 		}
+
 		return errors.New("control request transport failed")
 	}
 	defer func() { _ = response.Body.Close() }()
+
 	if response.StatusCode != expected {
 		return &StatusError{
 			Operation:  method + " " + pathOperation(path),
 			StatusCode: response.StatusCode,
+			RetryAfter: responseCooldown(response),
 		}
 	}
+
 	limit := MaxJSONBytes
 	if strict {
 		limit = 64 << 10 // Preserve the activation/recovery response bound.
 	}
+
 	if strings.HasSuffix(path, "/approval") {
 		limit = 16 << 10 // Preserve the public approval response bound.
 	}
+
 	data, err := io.ReadAll(io.LimitReader(response.Body, int64(limit+1)))
 	if err != nil {
 		if ctx.Err() != nil {
@@ -157,6 +175,7 @@ func (c *Client) request(
 		if errors.Is(err, context.Canceled) {
 			return context.Canceled
 		}
+
 		return errors.New("control response read failed")
 	}
 	if len(data) > limit {
@@ -165,17 +184,45 @@ func (c *Client) request(
 	if result == nil {
 		return nil
 	}
+
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	if strict {
 		decoder.DisallowUnknownFields()
 	}
+
 	if err := decoder.Decode(result); err != nil {
 		return errors.New("invalid control JSON response")
 	}
+
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return errors.New("invalid trailing control JSON")
 	}
+
 	return nil
+}
+
+func responseCooldown(response *http.Response) time.Duration {
+	if response.StatusCode != http.StatusTooManyRequests &&
+		response.StatusCode != http.StatusServiceUnavailable {
+		return 0
+	}
+
+	value := response.Header.Get("Retry-After")
+	seconds, err := strconv.ParseInt(value, 10, 64)
+	if err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+
+		return time.Duration(min(seconds, 300)) * time.Second
+	}
+
+	deadline, err := http.ParseTime(value)
+	if err != nil {
+		return 0
+	}
+
+	return min(max(time.Until(deadline), 0), 5*time.Minute)
 }
 
 func pathOperation(path string) string {

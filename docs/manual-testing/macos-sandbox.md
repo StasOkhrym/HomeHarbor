@@ -113,15 +113,33 @@ short-lived token with the gateway role. Then run:
 
 ```sh
 make sandbox-gateway ACTION=enroll
-go run ./cmd/admin init-snapshot --config .sandbox/admin.toml
 ```
 
 Enter the gateway token at its hidden prompt. For deliberately piped input, use
 a mode-0600 file and remove it after successful enrollment; never put the token
 in argv, an environment variable or shell history. Enrollment saves independent
 gateway keys in the gateway volume, exports only its three public identity
-fields, and binds the initial manifest. The second command asks the trusted
-companion to sign/publish that real gateway and its bounded routes/DNS/ACLs.
+fields, and binds the initial manifest.
+
+Before issuing a signed client invite, create the matching catalog entries in
+the authenticated panel. In **Services**, add `Private sandbox site`, type
+`Web application`, URL `https://site.sandbox.home.arpa:8080`, and expand
+**Advanced · record ID** to set `sandbox-site`. In **Access**, create profile
+`Sandbox`, set its advanced record ID to `sandbox`, and select that site and
+the enrolled `Sandbox gateway`. Reuse matching existing records; do not create
+duplicates or change another profile. These IDs must match the generated
+manifest and companion configuration.
+
+The signed snapshot and SQL catalog are separate authorities. Publishing a
+snapshot does not create its SQL catalog/profile records. A missing SQL profile
+prevents persistence of a pending invite even when its signature is valid;
+catalog membership alone still grants no signed LAN access. Then publish the
+real gateway and its bounded routes/DNS/ACLs:
+
+```sh
+go run ./cmd/admin init-snapshot --config .sandbox/admin.toml
+```
+
 The signing private key remains on the host with the companion.
 
 Before joining, verify denial:
@@ -187,6 +205,14 @@ Approval reads the private code from hidden stdin. It does not accept a `--code`
 flag. The trusted companion signs the exact enrollment change. The waiting client
 claims and saves its credential, then exports public metadata. Distinguish
 pending, approved, claimed and applied; a saved credential is not LAN access.
+
+The client probes readiness immediately, then every 30 seconds while pending.
+A server cooldown delays retry further; a rate-limited response without a valid
+cooldown waits at least one minute. This leaves the shared onboarding budget
+available for the companion's approval/publication requests. If a companion
+command itself reports HTTP 429, wait for the rate-limit window before retrying
+that exact command; do not increase quotas or create another invitation for an
+already approved device. Cancellation of the waiting client remains immediate.
 
 ```sh
 make sandbox-prepare

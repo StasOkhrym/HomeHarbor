@@ -156,6 +156,54 @@ func TestStatusMapsToTypedError(t *testing.T) {
 	}
 }
 
+func TestStatusExposesBoundedRetryAfterWithoutReplaying(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		header string
+		want   time.Duration
+	}{
+		{"rate limit", http.StatusTooManyRequests, "2", 2 * time.Second},
+		{"unavailable", http.StatusServiceUnavailable, "3", 3 * time.Second},
+		{"bounded", http.StatusTooManyRequests, "999999", 5 * time.Minute},
+		{"future HTTP date", http.StatusTooManyRequests, time.Now().Add(time.Hour).UTC().Format(http.TimeFormat), 5 * time.Minute},
+		{"past HTTP date", http.StatusTooManyRequests, "Mon, 02 Jan 2006 15:04:05 GMT", 0},
+		{"zero", http.StatusTooManyRequests, "0", 0},
+		{"malformed", http.StatusTooManyRequests, "private-server-value", 0},
+		{"negative", http.StatusTooManyRequests, "-1", 0},
+		{"overflow", http.StatusTooManyRequests, "999999999999999999999999999", 0},
+		{"no cooldown", http.StatusTooManyRequests, "", 0},
+		{"permanent failure", http.StatusUnauthorized, "2", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var attempts atomic.Int32
+			server := httptest.NewTLSServer(
+				http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					attempts.Add(1)
+					w.Header().Set("Retry-After", tc.header)
+					w.WriteHeader(tc.status)
+				}),
+			)
+			defer server.Close()
+
+			client := newClient(t, server)
+
+			_, err := client.Challenge(context.Background(), "private-invite")
+			var status *controlclient.StatusError
+
+			if !errors.As(err, &status) || status.RetryAfter != tc.want {
+				t.Fatalf("cooldown=%v, want=%v", err, tc.want)
+			}
+			if attempts.Load() != 1 {
+				t.Fatal("transport replayed the request")
+			}
+			if strings.Contains(err.Error(), "private") {
+				t.Fatal("status reflected private header or invite")
+			}
+		})
+	}
+}
+
 func TestClaimNotAutomaticallyRetried(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

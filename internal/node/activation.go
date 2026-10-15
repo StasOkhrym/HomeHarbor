@@ -249,7 +249,10 @@ func enrollByInvite(
 	}
 	interval := p.PollInterval
 	if interval <= 0 {
-		interval = time.Second
+		// The shared onboarding budget is also used by the companion's exact
+		// approval/publication requests. Pending clients must leave room for
+		// those operations rather than consume the entire quota themselves.
+		interval = 30 * time.Second
 	}
 	private, err := strictInviteBytes(state.IdentityPrivateKey, ed25519.PrivateKeySize)
 	if err != nil {
@@ -304,10 +307,17 @@ func enrollByInvite(
 			status.StatusCode != http.StatusServiceUnavailable && status.StatusCode != http.StatusTooManyRequests {
 			return fmt.Errorf("activate invite: %w", err)
 		}
+		delay := interval
+		if status != nil {
+			delay = max(delay, status.RetryAfter)
+			if status.StatusCode == http.StatusTooManyRequests && status.RetryAfter <= 0 {
+				delay = max(delay, time.Minute)
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(interval):
+		case <-time.After(delay):
 		}
 	}
 }
