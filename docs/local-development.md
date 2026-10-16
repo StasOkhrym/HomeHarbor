@@ -29,7 +29,8 @@ namespace and real systemd-resolved tests, starting the Lima test VM on Mac when
 needed. `LIMA_INSTANCE=my-vm make acceptance` consistently selects another VM.
 Native Linux acceptance requires root plus ip/nft/WireGuard/curl/Python and an
 active systemd-resolved service in a disposable environment. These
-are component tests, not yet the full signed-invite/browser-viewer sandbox.
+are component tests; the signed-invite/native-client/browser scenario is the
+separately invoked [manual macOS sandbox](manual-testing/macos-sandbox.md).
 
 Local initialization is a Python CLI: `python3 scripts/dev_init.py`. It validates
 inputs before writing and stages generated keys/certificates privately. Existing

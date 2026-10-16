@@ -12,11 +12,14 @@ WireGuard nodes, encrypted relay and a passkey-authenticated web admin.
 
 Backend/UI and component tests work locally. Full signed onboarding → Linux client
 → UDP relay → gateway → dummy LAN, and native-phone/Mom Test, remain unverified.
+The optional one-Mac flow has been exercised through signed onboarding, native
+macOS access via the Docker relay/gateway, credential renewal, revocation and
+interrupted cleanup. It remains a separate manual scenario.
 
 ## Local backend and web UI
 
 Runtime: Python 3.11+, OpenSSL and running Docker with Compose 2.23+. Initial
-setup also needs Go 1.27.1 to create the encrypted companion signing root.
+setup also needs Go 1.27.2 to create the encrypted companion signing root.
 
 ```sh
 python3 -m venv .venv
@@ -67,7 +70,8 @@ requires stopped, owned resources. No sandbox provisioning runs in required gate
 - Vertical `internal/control/*` modules own small repository contracts and
   `storage` adapters. PostgreSQL remains the actual durable driver.
 - Redis holds ephemeral security state, never LAN authorization or private keys.
-- Chi/`net/http`, TOML and Watermill; Traefik owns HTTPS/WSS, not relay UDP.
+- Chi/`net/http`, typed TOML and a transactional SQL outbox; Traefik owns HTTPS/WSS,
+  not relay UDP. No process-local event bus or external broker is required.
 - Companion signatures authorize network state; ACL is default-deny and partial
   runtime application must remain fail-closed.
 

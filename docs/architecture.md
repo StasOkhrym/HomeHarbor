@@ -1,14 +1,17 @@
 # Architecture
 
 HomeHarbor is a modular monolith for coordination and administration, with a
-separate encrypted relay and Linux nodes. It is still under development: the
-full signed-onboarding-to-LAN sandbox is not yet verified end to end.
+separate encrypted relay, Linux gateway and native clients. The optional one-Mac
+sandbox has exercised signed onboarding, native macOS private-site access,
+credential renewal, revocation and interrupted cleanup. Windows, another physical
+host and native-phone flows remain deferred.
 
 ## Processes and ownership
 
 `control` owns HTTPS APIs, browser authentication, coordination and durable
 metadata. `relay` forwards opaque WireGuard datagrams; it does not decrypt LAN
-traffic. `agent` is the home gateway and `client` is the remote Linux endpoint.
+traffic. `agent` is the Linux home gateway and `client` is the remote endpoint,
+including the bounded native macOS adapter used by the manual sandbox.
 `admin` is the trusted companion that signs network changes locally. `migrate`
 owns schema upgrades and serializes them using a database advisory lock.
 
