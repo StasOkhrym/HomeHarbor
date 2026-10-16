@@ -114,6 +114,8 @@ services:
     security_opt: [no-new-privileges:true]
   site:
     labels: *sandbox-owner
+    # Forward termination to Python instead of relying on PID 1 defaults.
+    init: true
     build:
       context: ..
       dockerfile: deploy/sandbox/Dockerfile.fixture
