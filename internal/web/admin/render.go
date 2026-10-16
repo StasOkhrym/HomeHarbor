@@ -16,6 +16,8 @@ var pageTemplate = template.Must(assets.AdminTemplate(template.FuncMap{
 	"actionLabel":      ActionLabel,
 	"auditOutcome":     Outcome,
 	"auditActor":       Actor,
+	"auditSubject":     Subject,
+	"auditDetails":     ActivityDetails,
 	"auditCorrelation": Correlation,
 	"auditRevision":    Revision,
 }))

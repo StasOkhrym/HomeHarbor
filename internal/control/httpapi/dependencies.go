@@ -28,6 +28,7 @@ type Dependencies struct {
 // ResourceDependencies contains consumer-owned application ports, not stores.
 type ResourceDependencies struct {
 	Devices             DeviceService
+	DeviceMetadata      DeviceMetadataWriter
 	Recovery            CredentialRecovery
 	Routes              RouteService
 	Policy              PolicyService
@@ -141,6 +142,7 @@ func NewServer(deps Dependencies) (*Server, error) {
 
 	server := &Server{
 		devices:             deps.Resources.Devices,
+		deviceMetadata:      deps.Resources.DeviceMetadata,
 		recovery:            deps.Resources.Recovery,
 		routes:              deps.Resources.Routes,
 		policy:              deps.Resources.Policy,

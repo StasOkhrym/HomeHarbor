@@ -57,24 +57,6 @@ func write(ctx context.Context, exec executor, event audit.Event) error {
 	return err
 }
 
-// List returns the newest audit entries first. The limit is clamped here at
-// the persistence boundary as well as in HTTP, so a future non-HTTP consumer
-// cannot accidentally request an unbounded history from the control database.
-func (s *Repository) List(ctx context.Context, limit int) ([]audit.Event, error) {
-	if limit < 1 {
-		limit = 1
-	}
-	records, err := s.ListRecords(ctx, audit.Query{Limit: limit})
-	if err != nil {
-		return nil, err
-	}
-	entries := make([]audit.Event, 0, len(records))
-	for _, record := range records {
-		entries = append(entries, record.Event)
-	}
-	return entries, nil
-}
-
 // ListRecords returns a bounded committed window ordered by storage identity.
 // A fresh recent-window query can catch lower IDs that commit after higher IDs
 // while they remain within the bounded window. Live refresh cannot rely only

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
@@ -37,6 +36,8 @@ type Activity struct {
 	CategoryOptions []ActivityOption
 	OutcomeOptions  []ActivityOption
 	PeriodOptions   []ActivityOption
+	ActorOptions    []ActivityOption
+	DeviceOptions   []ActivityOption
 }
 
 func LoadActivity(
@@ -44,7 +45,30 @@ func LoadActivity(
 	reader ActivityReader,
 	values url.Values,
 ) (Activity, int) {
-	return loadActivity(ctx, reader, values, time.Now())
+	view, status := loadActivity(ctx, reader, values, time.Now())
+	if status != http.StatusOK {
+		return view, status
+	}
+
+	facets := audit.Facets{}
+	if source, ok := reader.(interface {
+		ListFacets(context.Context) (audit.Facets, error)
+	}); ok {
+		var err error
+
+		facets, err = source.ListFacets(ctx)
+		if err != nil {
+			view.Ready = false
+			view.Error = "Activity filters could not be loaded"
+
+			return view, http.StatusServiceUnavailable
+		}
+	}
+
+	view.ActorOptions = identityOptions(facets.Actors, view.ActorID, "All administrators")
+	view.DeviceOptions = identityOptions(facets.Devices, view.DeviceID, "All devices")
+
+	return view, status
 }
 
 func loadActivity(
@@ -53,51 +77,35 @@ func loadActivity(
 	values url.Values,
 	now time.Time,
 ) (Activity, int) {
-	view := Activity{Limit: audit.DefaultQueryLimit}
-	if raw := values.Get("limit"); raw != "" {
-		limit, err := strconv.Atoi(raw)
-		if err != nil || limit < 1 {
-			view.Error = "Choose a positive number of audit events."
-			return view, http.StatusBadRequest
-		}
-		view.Limit = min(limit, audit.MaxQueryLimit)
-	}
-	view.Action = strings.TrimSpace(values.Get("action"))
-	view.TargetID = strings.TrimSpace(values.Get("target_id"))
-	if len(view.Action) > 128 || len(view.TargetID) > 128 {
-		view.Error = "Activity filters are too long."
-		return view, http.StatusBadRequest
-	}
-	if raw := values.Get("before_id"); raw != "" {
-		beforeID, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || beforeID < 1 {
-			view.Error = "Choose a valid activity cursor."
-			return view, http.StatusBadRequest
-		}
-		view.BeforeID = beforeID
-	}
-	query, err := activityFilters(&view, values, now)
+	view := Activity{}
+
+	query, err := audit.ParseQuery(values, now, audit.DefaultQueryLimit)
 	if err != nil {
 		view.Error = err.Error()
 		return view, http.StatusBadRequest
 	}
+
+	activityFilters(&view, values, query)
 	if reader == nil {
 		view.Error = "Activity is not configured"
 		return view, http.StatusServiceUnavailable
 	}
-	query.Limit = view.Limit
-	query.BeforeID = view.BeforeID
-	query.Action = view.Action
-	query.TargetID = view.TargetID
+
 	records, err := reader.ListRecords(ctx, query)
 	if err != nil {
 		view.Error = "Activity could not be loaded"
 		return view, http.StatusServiceUnavailable
 	}
+
+	for i := range records {
+		records[i].Event = audit.PublicEvent(records[i].Event)
+	}
+
 	view.Records, view.Ready = records, true
 	if len(records) == view.Limit && len(records) > 0 {
 		view.OlderID = records[len(records)-1].RecordID
 	}
+
 	return view, http.StatusOK
 }
 
@@ -107,6 +115,11 @@ func Actor(event audit.Event) string {
 	if event.ActorType == "" || event.ActorType == "unknown" || event.ActorID == "" {
 		return "Unknown actor"
 	}
+
+	if name, ok := audit.PublicEvent(event).Metadata["actor_name"].(string); ok {
+		return name
+	}
+
 	return event.ActorType + " / " + event.ActorID
 }
 

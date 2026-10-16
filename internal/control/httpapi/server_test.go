@@ -1029,11 +1029,6 @@ type auditReaderStub struct {
 	query  audit.Query
 }
 
-func (reader *auditReaderStub) List(_ context.Context, limit int) ([]audit.Event, error) {
-	reader.limit = limit
-	return reader.events, nil
-}
-
 func (reader *auditReaderStub) ListRecords(
 	_ context.Context,
 	query audit.Query,

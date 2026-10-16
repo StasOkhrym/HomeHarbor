@@ -38,6 +38,24 @@
           {{end}}
         </select>
       </div>
+      <div class="field">
+        <label for="activity-device">Device</label>
+        <select id="activity-device" name="device_id">
+          {{range .Activity.DeviceOptions}}
+            <option value="{{.Value}}"
+                    {{if eq $.Activity.DeviceID .Value}}selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
+      </div>
+      <div class="field">
+        <label for="activity-actor">Administrator</label>
+        <select id="activity-actor" name="actor_id">
+          {{range .Activity.ActorOptions}}
+            <option value="{{.Value}}"
+                    {{if eq $.Activity.ActorID .Value}}selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
+      </div>
       <details class="advanced">
         <summary>Advanced filters</summary>
         <div class="field">
@@ -56,12 +74,6 @@
                  maxlength="128"
                  value="{{.Activity.TargetID}}">
         </div>
-        {{if .Activity.ActorID}}<input type="hidden"
-       name="actor_id"
-       value="{{.Activity.ActorID}}">{{end}}
-        {{if .Activity.DeviceID}}<input type="hidden"
-       name="device_id"
-       value="{{.Activity.DeviceID}}">{{end}}
       </details>
       <button class="secondary" type="submit">Apply filters</button>
     </form>
@@ -85,9 +97,18 @@
         {{range .Activity.Records}}
           <li data-record-id="{{.RecordID}}">
             <div class="resource-row"><strong>{{actionLabel .Event.Action}}</strong><span class="badge">{{auditOutcome .Event}}</span></div>
+            <p>{{auditActor .Event}}{{with auditSubject .Event}} · {{.}}{{end}}</p>
             <p><time datetime="{{timeISO .Event.OccurredAt}}">{{timeLabel .Event.OccurredAt}}</time></p>
             <details class="advanced">
-              <summary>Advanced · event identities</summary>
+              <summary>Event details</summary>
+              <dl class="event-metadata">
+                {{range auditDetails .Event}}
+                  <dt>{{.Label}}</dt>
+                  <dd>
+                    {{.Value}}
+                  </dd>
+                {{end}}
+              </dl>
               <p>Action: <code>{{.Event.Action}}</code></p>
               <p>{{auditActor .Event}} → {{.Event.TargetType}} / <code>{{.Event.TargetID}}</code></p>
               <p>Audit record: <code>{{.RecordID}}</code></p>

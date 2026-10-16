@@ -41,6 +41,7 @@ type Authorizer interface {
 // services remain unaware of chi and continue to satisfy narrow interfaces.
 type Server struct {
 	devices             DeviceService
+	deviceMetadata      DeviceMetadataWriter
 	recovery            CredentialRecovery
 	routes              RouteService
 	policy              PolicyService
@@ -90,7 +91,6 @@ type RouteService interface {
 // remain owned by domain event consumers and authentication code, preventing
 // an admin request from rewriting its own history.
 type AuditReader interface {
-	List(context.Context, int) ([]audit.Event, error)
 	ListRecords(context.Context, audit.Query) ([]audit.Record, error)
 }
 

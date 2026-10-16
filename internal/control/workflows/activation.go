@@ -17,6 +17,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/invites"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
@@ -145,16 +146,20 @@ func (a *Activation) ApproveSigned(
 	if a.uow == nil {
 		return invites.ApprovalResult{}, errors.New("activation unit of work is required")
 	}
+
 	var approval invite.Approval
 	if cbor.Unmarshal(signed.Payload, &approval) != nil || approval.InviteID == "" {
 		return invites.ApprovalResult{}, invite.ErrInvalidApproval
 	}
+
 	var result invites.ApprovalResult
+
 	err := a.uow.WithinActivation(ctx, func(tx ActivationTransaction) error {
 		r, err := tx.Invites.Lock(ctx, approval.InviteID)
 		if err != nil {
 			return err
 		}
+
 		expected := invite.Approval{
 			Version:            invite.Version,
 			InviteID:           r.InviteID,
@@ -167,23 +172,33 @@ func (a *Activation) ApproveSigned(
 		if err = invite.VerifyApproval(signed, a.root, expected); err != nil {
 			return err
 		}
+
+		facts := audit.FromContext(ctx)
+		facts.ActorType, facts.ActorID = "companion", base64.RawURLEncoding.EncodeToString(a.root)
+		facts.ActorName = "Network companion"
+		facts.Authentication = "companion_signature"
+		eventContext := audit.WithContext(ctx, facts)
 		if r.Status == invites.StatusBlocked {
 			return invites.ErrInviteBlocked
 		}
 		if r.Status != invites.StatusPending && r.Status != invites.StatusApproved {
 			return invites.ErrInviteConsumed
 		}
+
 		if r.Status == invites.StatusPending {
 			now := a.now().UTC()
 			if err = invite.VerifyPermit(r.Permit, a.root, a.network, now); err != nil {
 				return err
 			}
+
 			if err = invite.VerifyProof(r.Permit, r.Proof, r.ProfileID, now); err != nil {
 				return err
 			}
+
 			if len(r.WireGuardPublicKey) != 32 {
 				return invite.ErrInvalidApproval
 			}
+
 			var wg wgtypes.Key
 			copy(wg[:], r.WireGuardPublicKey)
 			d := devices.Device{
@@ -198,18 +213,22 @@ func (a *Activation) ApproveSigned(
 			if err = tx.Devices.CreateIdentity(ctx, d); err != nil {
 				return err
 			}
+
 			if err = tx.Profiles.AddDevice(ctx, r.ProfileID, r.DeviceID); err != nil {
 				return err
 			}
+
 			if r, err = tx.Invites.Approve(ctx, r.InviteID, now); err != nil {
 				return err
 			}
+
 			for _, e := range []devices.Event{{Type: "device.enrolled", AggregateID: r.DeviceID, OccurredAt: now}, {Type: "invite.approved", AggregateID: r.InviteID, OccurredAt: now}} {
-				if err = tx.Outbox.Append(ctx, e); err != nil {
+				if err = tx.Outbox.Append(eventContext, e); err != nil {
 					return err
 				}
 			}
 		}
+
 		result = invites.ApprovalResult{
 			Record:    r,
 			InviteID:  r.InviteID,
@@ -217,11 +236,13 @@ func (a *Activation) ApproveSigned(
 			ProfileID: r.ProfileID,
 			Status:    r.Status,
 		}
+
 		return nil
 	})
 	if err != nil {
 		return invites.ApprovalResult{}, err
 	}
+
 	return result, nil
 }
 

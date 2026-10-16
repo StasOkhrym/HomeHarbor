@@ -28,19 +28,17 @@ func NewIdentityAuditor(sink AuditSink, now func() time.Time) *IdentityAuditor {
 
 // RecordIdentity persists an outcome and deliberately accepts no secret-bearing input.
 func (a *IdentityAuditor) RecordIdentity(ctx context.Context, action string, success bool) error {
-	// Authentication audit metadata is intentionally limited to outcome. Raw
-	// WebAuthn responses, recovery codes, and session tokens must never reach a
-	// durable log even when authentication fails.
-	return a.sink.Write(
-		ctx,
-		audit.Event{
-			OccurredAt: a.now().UTC(),
-			ActorType:  "admin",
-			ActorID:    "admin",
-			Action:     action,
-			TargetType: "admin_session",
-			TargetID:   "admin",
-			Metadata:   map[string]any{"success": success},
-		},
-	)
+	facts := audit.FromContext(ctx).Safe()
+	// Until personal accounts migrate, successful legacy proof identifies the
+	// one legacy administrator. Anonymous failures never identify that owner.
+	if success && facts.ActorType == "unknown" {
+		facts.ActorType, facts.ActorID = "admin", "admin"
+	}
+	metadata := facts.Metadata()
+	metadata["success"] = success
+	return a.sink.Write(ctx, audit.Event{
+		OccurredAt: a.now().UTC(), ActorType: facts.ActorType, ActorID: facts.ActorID,
+		Action: action, TargetType: "admin_session", TargetID: facts.ActorID,
+		Metadata: metadata,
+	})
 }

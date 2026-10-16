@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	devicepg "github.com/StasOkhrym/homeharbor/internal/control/devices/storage"
 	"github.com/StasOkhrym/homeharbor/internal/control/events"
@@ -54,10 +55,40 @@ func (o outbox) Append(ctx context.Context, event devices.Event) error {
 // AppendEvent is also the explicit devices adapter publication port. All
 // outbox SQL belongs at the application boundary, not in module adapters.
 func AppendEvent(ctx context.Context, tx pgx.Tx, event devices.Event) error {
-	fact, err := events.FromDeviceEvent(event)
+	facts := audit.FromContext(ctx)
+	var subject audit.SubjectSnapshot
+	if event.Type != "invite.approved" {
+		value, role, err := devicepg.Bind(tx).PublicMetadata(ctx, event.AggregateID)
+		if err != nil {
+			return err
+		}
+
+		subject = audit.SubjectSnapshot{
+			Name:          value.Name,
+			Role:          string(role),
+			Platform:      value.Platform,
+			OSVersion:     value.OSVersion,
+			ClientVersion: value.ClientVersion,
+		}
+		// These facts are published only after successful possession checks in the
+		// same transaction. Aggregate IDs alone never establish any other actor.
+		switch event.Type {
+		case "device.credential_rotated",
+			"device.credential_recovered",
+			"device.credential_claimed":
+			facts.ActorType, facts.ActorID, facts.ActorName = "device", event.AggregateID, value.Name
+			facts.Authentication = "identity_proof"
+			if event.Type == "device.credential_rotated" {
+				facts.Authentication = "device_credential"
+			}
+		}
+	}
+
+	fact, err := events.FromDeviceEventWithContext(event, facts, subject)
 	if err != nil {
 		return err
 	}
+
 	return AppendFact(ctx, tx, fact)
 }
 

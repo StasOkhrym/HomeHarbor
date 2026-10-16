@@ -1,11 +1,9 @@
 package admin
 
 import (
-	"errors"
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 )
@@ -15,15 +13,14 @@ type ActivityOption struct {
 	Label string
 }
 
-func activityFilters(view *Activity, values url.Values, now time.Time) (audit.Query, error) {
-	view.Category = strings.TrimSpace(values.Get("category"))
-	view.Outcome = strings.TrimSpace(values.Get("outcome"))
-	view.ActorID = strings.TrimSpace(values.Get("actor_id"))
-	view.DeviceID = strings.TrimSpace(values.Get("device_id"))
+func activityFilters(view *Activity, values url.Values, query audit.Query) {
+	view.Limit, view.BeforeID, view.Action, view.TargetID = query.Limit, query.BeforeID, query.Action, query.TargetID
+	view.Category, view.Outcome, view.ActorID, view.DeviceID = query.Category, query.Outcome, query.ActorID, query.DeviceID
 	view.Period = values.Get("period")
 	if view.Period == "" {
 		view.Period = "all"
 	}
+
 	view.ActionOptions = audit.Actions()
 	action := strings.TrimSpace(values.Get("action"))
 	if action != "" && audit.ActionLabel(action) == "Other activity" {
@@ -32,6 +29,7 @@ func activityFilters(view *Activity, values url.Values, now time.Time) (audit.Qu
 			audit.ActionOption{Value: action, Label: "Other event · " + action},
 		)
 	}
+
 	view.CategoryOptions = []ActivityOption{
 		{"", "All categories"},
 		{"security", "Sign-in & security"},
@@ -53,31 +51,6 @@ func activityFilters(view *Activity, values url.Values, now time.Time) (audit.Qu
 		{"7d", "Last 7 days"},
 		{"30d", "Last 30 days"},
 	}
-	query := audit.Query{
-		Category: view.Category,
-		Outcome:  view.Outcome,
-		ActorID:  view.ActorID,
-		DeviceID: view.DeviceID,
-	}
-	var duration time.Duration
-	switch view.Period {
-	case "all":
-	case "1h":
-		duration = time.Hour
-	case "24h":
-		duration = 24 * time.Hour
-	case "7d":
-		duration = 7 * 24 * time.Hour
-	case "30d":
-		duration = 30 * 24 * time.Hour
-	default:
-		return audit.Query{}, errors.New("choose a valid activity period")
-	}
-	if duration > 0 {
-		query.Since = now.UTC().Add(-duration)
-		query.Until = now.UTC()
-	}
-	return query, query.Validate()
 }
 
 func (a Activity) OlderURL() string {

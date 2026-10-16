@@ -337,3 +337,27 @@ func TestPostgresAuditFacetedFilters(t *testing.T) {
 		}
 	}
 }
+
+func TestPostgresAuditFacetsRetainHistoricIdentities(t *testing.T) {
+	pool := auditQueryDB(t)
+	repository := New(pool)
+	for _, event := range []audit.Event{
+		{OccurredAt: time.Now(), ActorType: "admin", ActorID: "a-1", Action: "device.revoked", TargetType: "device", TargetID: "deleted-device", Metadata: map[string]any{"actor_name": "Olena", "target_name": "Old Mac"}},
+		{OccurredAt: time.Now(), ActorType: "admin", ActorID: "a-1", Action: "device.revoked", TargetType: "device", TargetID: "deleted-device", Metadata: map[string]any{"actor_name": "Olena", "target_name": "Kitchen Mac"}},
+	} {
+		if err := repository.Write(t.Context(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	facets, err := repository.ListFacets(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(facets.Actors) != 1 || facets.Actors[0].Name != "Olena" || len(facets.Devices) != 1 ||
+		facets.Devices[0].ID != "deleted-device" ||
+		facets.Devices[0].Name != "Kitchen Mac" {
+		t.Fatalf("lost historical identity facets: %+v", facets)
+	}
+}

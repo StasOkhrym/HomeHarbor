@@ -13,12 +13,14 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 )
 
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // Payload is an allowlist of public audit facts. Credentials, codes, tokens,
 // request bodies, and arbitrary metadata have no representation here.
 type Payload struct {
-	Outcome string `json:"outcome,omitempty"`
+	Outcome string                `json:"outcome,omitempty"`
+	Context audit.Context         `json:"context,omitzero"`
+	Subject audit.SubjectSnapshot `json:"subject,omitzero"`
 }
 
 // Envelope is the durable control-owned event fact stored in the SQL outbox.
@@ -55,6 +57,25 @@ func FromDeviceEvent(event devices.Event) (Envelope, error) {
 	return fact, fact.Validate()
 }
 
+// FromDeviceEventWithContext is used only by committed mutation producers.
+// Successful transaction completion attests outcome, not actor identity.
+func FromDeviceEventWithContext(
+	event devices.Event,
+	facts audit.Context,
+	subject audit.SubjectSnapshot,
+) (Envelope, error) {
+	fact, err := FromDeviceEvent(event)
+	if err != nil {
+		return Envelope{}, err
+	}
+
+	facts = facts.Safe()
+	fact.ActorType, fact.ActorID, fact.CorrelationID = facts.ActorType, facts.ActorID, facts.CorrelationID
+	fact.Payload = Payload{Outcome: "success", Context: facts, Subject: subject.Safe()}
+
+	return fact, fact.Validate()
+}
+
 func targetTypeFor(action string) (string, error) {
 	switch action {
 	case "device.enrolled",
@@ -71,12 +92,15 @@ func targetTypeFor(action string) (string, error) {
 }
 
 func (e Envelope) Validate() error {
-	if e.EventID == "" || e.SchemaVersion != SchemaVersion || e.Type == "" || e.AggregateID == "" ||
+	if e.EventID == "" || (e.SchemaVersion != 1 && e.SchemaVersion != SchemaVersion) ||
+		e.Type == "" ||
+		e.AggregateID == "" ||
 		e.OccurredAt.IsZero() ||
 		e.TargetType == "" ||
 		e.TargetID == "" {
 		return errors.New("invalid event envelope")
 	}
+
 	target, err := targetTypeFor(e.Type)
 	if err != nil || e.TargetType != target || e.TargetID != e.AggregateID {
 		return errors.New("invalid event envelope")
@@ -88,6 +112,22 @@ func (e Envelope) Validate() error {
 	if e.Payload.Outcome != "" && e.Payload.Outcome != "success" && e.Payload.Outcome != "failure" {
 		return errors.New("invalid event outcome")
 	}
+	if e.SchemaVersion == 1 &&
+		(e.Payload.Context != (audit.Context{}) || e.Payload.Subject != (audit.SubjectSnapshot{})) {
+		return errors.New("invalid legacy event payload")
+	}
+
+	if facts := e.Payload.Context; facts != (audit.Context{}) {
+		if facts != facts.Safe() || facts.ActorType != e.ActorType || facts.ActorID != e.ActorID ||
+			facts.CorrelationID != e.CorrelationID {
+			return errors.New("invalid public event context")
+		}
+	}
+
+	if e.Payload.Subject != e.Payload.Subject.Safe() {
+		return errors.New("invalid public event subject")
+	}
+
 	return nil
 }
 
@@ -137,16 +177,23 @@ func Decode(id int64, payload []byte) (Envelope, error) {
 }
 
 func (e Envelope) AuditEvent() audit.Event {
-	metadata := map[string]any{}
+	metadata := e.Payload.Context.Metadata()
+	for key, value := range e.Payload.Subject.Metadata() {
+		metadata[key] = value
+	}
+
 	if e.Payload.Outcome != "" {
 		metadata["outcome"] = e.Payload.Outcome
 	}
+
 	if e.AggregateRevision != 0 {
 		metadata["aggregate_revision"] = e.AggregateRevision
 	}
+
 	if e.CorrelationID != "" {
 		metadata["correlation_id"] = e.CorrelationID
 	}
+
 	return audit.Event{
 		ID:         e.EventID,
 		OccurredAt: e.OccurredAt,

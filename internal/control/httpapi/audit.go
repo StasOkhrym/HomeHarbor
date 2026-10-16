@@ -2,8 +2,7 @@ package httpapi
 
 import (
 	"net/http"
-	"strconv"
-	"strings"
+	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 )
@@ -18,27 +17,23 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "audit is unavailable")
 		return
 	}
-	limit := defaultAuditLimit
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 {
-			writeErrorCode(
-				w,
-				http.StatusBadRequest,
-				"invalid_limit",
-				"audit limit must be a positive integer",
-			)
-			return
-		}
-		limit = parsed
-		if limit > maxAuditLimit {
-			limit = maxAuditLimit
-		}
+
+	query, err := audit.ParseQuery(r.URL.Query(), time.Now(), defaultAuditLimit)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "invalid_filter", err.Error())
+		return
 	}
-	entries, err := s.audit.List(r.Context(), limit)
+
+	records, err := s.audit.ListRecords(r.Context(), query)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list audit events")
 		return
 	}
+
+	entries := make([]audit.Event, 0, len(records))
+	for _, record := range records {
+		entries = append(entries, audit.PublicEvent(record.Event))
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"events": entries})
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 )
 
@@ -41,7 +42,9 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		next.ServeHTTP(w, r)
+		facts := audit.FromContext(r.Context())
+		facts.ActorType, facts.ActorID = "admin", "admin"
+		next.ServeHTTP(w, r.WithContext(audit.WithContext(r.Context(), facts)))
 	})
 }
 
@@ -58,7 +61,11 @@ func (s *Server) requireDevice(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "device authentication required")
 			return
 		}
-		ctx := context.WithValue(r.Context(), deviceContextKey{}, device)
+
+		facts := audit.FromContext(r.Context())
+		facts.ActorType, facts.ActorID, facts.ActorName = "device", device.ID, device.Name
+		facts.Authentication = "device_credential"
+		ctx := context.WithValue(audit.WithContext(r.Context(), facts), deviceContextKey{}, device)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

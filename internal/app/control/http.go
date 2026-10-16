@@ -53,8 +53,9 @@ func buildHTTP(
 	auditSink := auditstorage.New(pool)
 	auditDispatcher := events.NewDispatcher(pool, auditSink, logger)
 
+	deviceStore := devicesstorage.New(pool, workflowstorage.AppendEvent)
 	deviceService := devices.NewService(
-		devicesstorage.New(pool, workflowstorage.AppendEvent),
+		deviceStore,
 		time.Now,
 		nil,
 		devices.WithCredentialTTL(cfg.Runtime.CredentialTTL),
@@ -118,7 +119,8 @@ func buildHTTP(
 
 	deps := httpapi.Dependencies{
 		Resources: httpapi.ResourceDependencies{
-			Devices: deviceService,
+			Devices:        deviceService,
+			DeviceMetadata: devices.NewMetadataService(deviceStore),
 			Recovery: workflows.NewCredentialRecovery(
 				deviceService,
 				sharedChallenges{store: securityState, timeout: cfg.Runtime.RedisTimeout},

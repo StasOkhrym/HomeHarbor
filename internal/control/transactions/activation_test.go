@@ -23,6 +23,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	devicepg "github.com/StasOkhrym/homeharbor/internal/control/devices/storage"
+	"github.com/StasOkhrym/homeharbor/internal/control/events"
 	"github.com/StasOkhrym/homeharbor/internal/control/httpapi"
 	"github.com/StasOkhrym/homeharbor/internal/control/invites"
 	invitepg "github.com/StasOkhrym/homeharbor/internal/control/invites/storage"
@@ -695,25 +696,32 @@ func TestPostgresHTTPResponseLossRequestsFreshChallengeAndPersistsReplacement(t 
 func TestPostgresOutboxFactsAreVersionedAndDoNotInventActors(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
+
 	if _, err := f.activation.ApproveSigned(ctx, f.approval); err != nil {
 		t.Fatal(err)
 	}
+
 	rows, err := f.pool.Query(ctx, `SELECT topic,payload FROM event_outbox ORDER BY id`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
+
 	seen := map[string]bool{}
 	for rows.Next() {
 		var topic string
 		var data []byte
+
 		if err := rows.Scan(&topic, &data); err != nil {
 			t.Fatal(err)
 		}
+
 		var fact map[string]json.RawMessage
+
 		if err := json.Unmarshal(data, &fact); err != nil {
 			t.Fatal(err)
 		}
+
 		allowed := map[string]bool{
 			"event_id":           true,
 			"type":               true,
@@ -733,17 +741,27 @@ func TestPostgresOutboxFactsAreVersionedAndDoNotInventActors(t *testing.T) {
 				t.Fatalf("unsafe outbox key %q", key)
 			}
 		}
+
 		var version int
 		var eventID, action, actorType, actorID, targetType, targetID string
+
 		_ = json.Unmarshal(fact["schema_version"], &version)
+
 		_ = json.Unmarshal(fact["event_id"], &eventID)
+
 		_ = json.Unmarshal(fact["type"], &action)
+
 		_ = json.Unmarshal(fact["actor_type"], &actorType)
+
 		_ = json.Unmarshal(fact["actor_id"], &actorID)
+
 		_ = json.Unmarshal(fact["target_type"], &targetType)
+
 		_ = json.Unmarshal(fact["target_id"], &targetID)
-		if version != 1 || eventID == "" || action != topic || actorType != "unknown" ||
-			actorID != "" ||
+
+		if version != events.SchemaVersion || eventID == "" || action != topic ||
+			actorType != "companion" ||
+			actorID != base64.RawURLEncoding.EncodeToString(f.root.Public().(ed25519.PublicKey)) ||
 			targetID == "" {
 			t.Fatalf("invalid fact: %s", data)
 		}
@@ -753,11 +771,14 @@ func TestPostgresOutboxFactsAreVersionedAndDoNotInventActors(t *testing.T) {
 		if topic == "device.enrolled" && targetType != "device" {
 			t.Fatalf("device target=%s", targetType)
 		}
+
 		seen[topic] = true
 	}
+
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
+
 	if !seen["device.enrolled"] || !seen["invite.approved"] {
 		t.Fatalf("missing facts: %v", seen)
 	}

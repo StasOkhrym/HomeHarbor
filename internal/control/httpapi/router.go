@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/StasOkhrym/homeharbor/internal/platform/httprequest"
 	"github.com/StasOkhrym/homeharbor/internal/platform/httpresponse"
 )
 
@@ -25,6 +25,7 @@ const companionSnapshotPath = "/api/v1/coordination/snapshot/companion"
 func NewRouter(server *Server) http.Handler {
 	router := chi.NewRouter()
 	router.Use(requestIDMiddleware)
+	router.Use(server.auditContextMiddleware)
 	router.Use(securityHeadersMiddleware)
 	router.Use(accessLogMiddleware(server.logger))
 	// Recovery stays inside the access-log wrapper so a recovered panic is
@@ -80,44 +81,15 @@ func (s *Server) clientKey(request *http.Request) string {
 }
 
 func clientAddress(request *http.Request, trusted []netip.Prefix) string {
-	remote := request.RemoteAddr
-	if host, _, err := net.SplitHostPort(remote); err == nil {
-		remote = host
+	if ip := httprequest.ClientIP(request, trusted); ip != "" {
+		return ip
 	}
-	remoteAddr, err := netip.ParseAddr(remote)
-	if err != nil {
-		if request.RemoteAddr != "" {
-			return request.RemoteAddr
-		}
-		return "unknown"
+
+	if request.RemoteAddr != "" {
+		return request.RemoteAddr
 	}
-	for _, prefix := range trusted {
-		if !prefix.Contains(remoteAddr) {
-			continue
-		}
-		// Walk from the nearest proxy toward the original client. Trusted
-		// entries are skipped, and the first untrusted address becomes the
-		// limiter key; prepended spoofed values cannot displace a trusted chain.
-		forwarded := strings.Split(request.Header.Get("X-Forwarded-For"), ",")
-		for index := len(forwarded) - 1; index >= 0; index-- {
-			candidate, parseErr := netip.ParseAddr(strings.TrimSpace(forwarded[index]))
-			if parseErr != nil {
-				continue
-			}
-			isTrusted := false
-			for _, trustedPrefix := range trusted {
-				if trustedPrefix.Contains(candidate) {
-					isTrusted = true
-					break
-				}
-			}
-			if !isTrusted {
-				return candidate.String()
-			}
-		}
-		return remoteAddr.String()
-	}
-	return remoteAddr.String()
+
+	return "unknown"
 }
 
 func securityHeadersMiddleware(next http.Handler) http.Handler {

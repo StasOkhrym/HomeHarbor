@@ -70,6 +70,10 @@ func (s *Server) registerDeviceAPI(api chi.Router) {
 	api.With(s.deviceLimiter.Middleware(s.clientKey)).Post("/enroll", s.enroll)
 	api.With(s.requireAdmin).Get("/devices", s.listDevices)
 	api.Route("/devices", func(device chi.Router) {
+		if s.deviceMetadata != nil {
+			device.With(s.requireDevice).Put("/self/metadata", s.reportDeviceMetadata)
+		}
+
 		device.Group(func(admin chi.Router) {
 			admin.Use(s.requireAdmin)
 			admin.Get("/", s.listDevices)
