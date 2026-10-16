@@ -68,6 +68,7 @@ func restoreSnapshotCursor(
 	if cfg.StatePath == "" {
 		return coordinationCursor{}, nil
 	}
+
 	envelope, err := loadSnapshotState(cfg.StatePath, cfg.RootPublicKey, cfg.NetworkID)
 	if errors.Is(err, os.ErrNotExist) {
 		return coordinationCursor{}, nil
@@ -78,10 +79,12 @@ func restoreSnapshotCursor(
 	if applier == nil {
 		return coordinationCursor{}, errors.New("snapshot applier is required")
 	}
+
 	value, err := snapshot.Verify(envelope, cfg.RootPublicKey, cfg.NetworkID)
 	if err != nil {
 		return coordinationCursor{}, fmt.Errorf("%w: verify: %w", ErrSnapshotState, err)
 	}
+
 	if deferred, ok := applier.(SnapshotRestoreVerifier); ok {
 		if err := deferred.VerifyRestore(ctx, envelope, value); err != nil {
 			return coordinationCursor{}, fmt.Errorf(
@@ -90,17 +93,20 @@ func restoreSnapshotCursor(
 				err,
 			)
 		}
+
 		return coordinationCursor{
 			revision:   value.Revision,
 			hash:       bytes.Clone(envelope.Hash),
 			needsApply: true,
 		}, nil
 	}
+
 	// Reconstruct local kernel/resolver state on process restart. A checkpoint
 	// proves the previously applied target; it does not prove today's kernel.
-	if err := applyVerifiedSnapshot(ctx, applier, envelope, value); err != nil {
+	if err := applyVerifiedSnapshot(ctx, applier, envelope, value, cfg.Telemetry); err != nil {
 		return coordinationCursor{}, fmt.Errorf("restore applied snapshot: %w", err)
 	}
+
 	return coordinationCursor{revision: value.Revision, hash: bytes.Clone(envelope.Hash)}, nil
 }
 

@@ -17,13 +17,16 @@ import (
 
 func TestPostgresTelemetryFencesReconnectsAcrossReplicas(t *testing.T) {
 	poolA := testutil.Postgres(t)
+
 	testutil.Device(t, poolA, "gateway-1", "gateway")
 	testutil.Device(t, poolA, "client-1", "client")
+
 	poolB, err := pgxpool.NewWithConfig(t.Context(), poolA.Config())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer poolB.Close()
+
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	allow := func(_ context.Context, reporter devices.Device, subject string) (bool, error) {
 		return reporter.ID == "gateway-1" && subject == "client-1", nil
@@ -43,10 +46,12 @@ func TestPostgresTelemetryFencesReconnectsAcrossReplicas(t *testing.T) {
 		Role:   devices.RoleGateway,
 		Status: devices.StatusActive,
 	}
+
 	first, err := a.Begin(t.Context(), device)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	report := protocol.TelemetryReport{
 		Generation:      first.Generation,
 		Sequence:        1,
@@ -58,6 +63,7 @@ func TestPostgresTelemetryFencesReconnectsAcrossReplicas(t *testing.T) {
 			{
 				DeviceID:          "client-1",
 				RXBytes:           10,
+				CountersAvailable: true,
 				TXBytes:           20,
 				LastHandshakeUnix: now.Add(-time.Second).Unix(),
 				Path:              protocol.PathRelay,
@@ -65,35 +71,46 @@ func TestPostgresTelemetryFencesReconnectsAcrossReplicas(t *testing.T) {
 			},
 		},
 	}
+
 	if err := a.Report(t.Context(), first, report); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := a.Report(t.Context(), first, report); !errors.Is(err, telemetry.ErrStaleReport) {
 		t.Fatalf("replay accepted: %v", err)
 	}
+
 	second, err := b.Begin(t.Context(), device)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if second.Generation <= first.Generation {
 		t.Fatal("generation did not advance across replicas")
 	}
+
 	report.Sequence = 100
+
 	if err := a.Report(t.Context(), first, report); !errors.Is(err, telemetry.ErrStaleReport) {
 		t.Fatalf("old replica session accepted: %v", err)
 	}
+
 	report.Generation, report.Sequence = second.Generation, 1
 	report.Observations[1].RXBytes = 30
+
 	if err := b.Report(t.Context(), second, report); err != nil {
 		t.Fatal(err)
 	}
+
 	rows, err := repoA.Latest(t.Context(), 200)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(rows) != 2 {
 		t.Fatalf("observations=%d", len(rows))
 	}
+
 	for _, row := range rows {
 		if row.Generation != second.Generation || row.RuntimeID != report.RuntimeID ||
 			!row.ObservedAt.Equal(now) {
@@ -106,16 +123,20 @@ func TestPostgresTelemetryFencesReconnectsAcrossReplicas(t *testing.T) {
 			t.Fatal("silence became a claim about current VPN state")
 		}
 	}
+
 	report.Sequence = 2
 	report.State = protocol.RuntimeStopped
 	report.Observations = report.Observations[:1]
+
 	if err := b.Report(t.Context(), second, report); err != nil {
 		t.Fatal(err)
 	}
+
 	rows, err = repoA.Latest(t.Context(), 200)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(rows) != 1 || rows[0].CurrentState(now) != "stopped" {
 		t.Fatalf("explicit stop/full replacement missing: %+v", rows)
 	}

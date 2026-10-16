@@ -36,6 +36,7 @@ type SnapshotWireGuardReconciler struct {
 	apply         wireGuardConfigApplier
 	current       *snapshot.NetworkSnapshot
 	endpoints     map[string]netip.AddrPort
+	owned         bool
 }
 
 // NewSnapshotWireGuardReconciler creates an endpoint-aware reconciler. The
@@ -84,23 +85,31 @@ func (r *SnapshotWireGuardReconciler) Apply(
 ) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	if err := r.validateDesired(value); err != nil {
 		return err
 	}
+
 	peers, err := r.desiredPeers(value)
 	if err != nil {
 		return err
 	}
+
 	config, err := r.configForPeers(peers)
 	if err != nil {
 		return err
 	}
+
+	r.owned = true // A failed kernel call may have partially installed peers.
+
 	if err := r.apply(r.interfaceName, config); err != nil {
 		return fmt.Errorf("apply WireGuard snapshot: %w", err)
 	}
+
 	copy := cloneNetworkSnapshot(value)
 	r.current = &copy
 	for publicKey := range r.endpoints {
@@ -108,6 +117,7 @@ func (r *SnapshotWireGuardReconciler) Apply(
 			delete(r.endpoints, publicKey)
 		}
 	}
+
 	return nil
 }
 

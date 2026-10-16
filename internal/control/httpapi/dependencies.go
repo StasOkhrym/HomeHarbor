@@ -35,6 +35,7 @@ type ResourceDependencies struct {
 	Profiles            ProfileService
 	Services            ServiceCatalog
 	Audit               AuditReader
+	Telemetry           TelemetryReader
 	Invites             InviteService
 	Snapshots           SnapshotService
 	SnapshotBroadcaster SnapshotBroadcaster
@@ -149,6 +150,7 @@ func NewServer(deps Dependencies) (*Server, error) {
 		profiles:            deps.Resources.Profiles,
 		services:            deps.Resources.Services,
 		audit:               deps.Resources.Audit,
+		telemetry:           deps.Resources.Telemetry,
 		invites:             deps.Resources.Invites,
 		snapshots:           deps.Resources.Snapshots,
 		snapshotBroadcaster: deps.Resources.SnapshotBroadcaster,

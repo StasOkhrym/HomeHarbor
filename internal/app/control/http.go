@@ -53,6 +53,7 @@ func buildHTTP(
 	pool, redisClient := stores.pool, stores.redis
 	securityState := redissecurity.New(redisClient, "homeharbor:"+cfg.Networking.NetworkID)
 	auditSink := auditstorage.New(pool)
+	telemetryStore := telemetrystorage.New(pool)
 	auditDispatcher := events.NewDispatcher(pool, auditSink, logger)
 
 	deviceStore := devicesstorage.New(pool, workflowstorage.AppendEvent)
@@ -123,6 +124,7 @@ func buildHTTP(
 		Resources: httpapi.ResourceDependencies{
 			Devices:        deviceService,
 			DeviceMetadata: devices.NewMetadataService(deviceStore),
+			Telemetry:      telemetryStore,
 			Recovery: workflows.NewCredentialRecovery(
 				deviceService,
 				sharedChallenges{store: securityState, timeout: cfg.Runtime.RedisTimeout},
@@ -266,13 +268,25 @@ func buildHTTP(
 	)
 	if signedSnapshots != nil {
 		coordinationHandler.Telemetry = telemetry.NewService(
-			telemetrystorage.New(pool),
+			telemetryStore,
 			func(ctx context.Context, reporter devices.Device, subject string) (bool, error) {
 				peer, err := deviceService.Device(ctx, subject)
 				if err != nil {
 					return false, err
 				}
-				return peerAuthorization(ctx, reporter, peer), nil
+
+				source, err := deviceService.Device(ctx, reporter.ID)
+				if err != nil {
+					return false, err
+				}
+				return authorizeTelemetryPeer(
+					ctx,
+					signedSnapshots,
+					deps.Security.RootPublicKey,
+					cfg.Networking.NetworkID,
+					source,
+					peer,
+				), nil
 			},
 			time.Now,
 		)
@@ -285,12 +299,19 @@ func buildHTTP(
 	deps.SnapshotHistory = http.HandlerFunc(coordinationHandler.ServeHistory)
 	deps.Relay.PeerAuthorizer = peerAuthorization
 	deps.Browser.Admin = webadmin.NewHandler(webadmin.Dependencies{
-		Devices: deps.Resources.Devices, Routes: deps.Resources.Routes,
-		Services: deps.Resources.Services, Profiles: deps.Resources.Profiles,
-		Policy: deps.Resources.Policy, Invites: deps.Resources.Invites,
-		Snapshots: deps.Resources.Snapshots, Audit: deps.Resources.Audit,
-		Ready: deps.Observability.Ready, ActionConfirmation: auth,
-		InvalidateDevice: deps.Resources.InvalidateDevice, Logger: logger,
+		Devices:            deps.Resources.Devices,
+		Routes:             deps.Resources.Routes,
+		Services:           deps.Resources.Services,
+		Profiles:           deps.Resources.Profiles,
+		Policy:             deps.Resources.Policy,
+		Invites:            deps.Resources.Invites,
+		Snapshots:          deps.Resources.Snapshots,
+		Audit:              deps.Resources.Audit,
+		Telemetry:          deps.Resources.Telemetry,
+		Ready:              deps.Observability.Ready,
+		ActionConfirmation: auth,
+		InvalidateDevice:   deps.Resources.InvalidateDevice,
+		Logger:             logger,
 	}).Routes()
 	httpServer, err := httpapi.NewServer(deps)
 	if err != nil {

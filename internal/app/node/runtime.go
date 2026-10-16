@@ -162,6 +162,7 @@ func startRuntimeWithNativeHelper(
 		}
 		workers = append(workers, lifecycle.Worker{Name: "relay", Component: relay})
 	}
+	var coordinationOwner *coordinationRuntime
 	if kernel {
 		coordination, err := prepareCoordination(
 			role,
@@ -172,11 +173,13 @@ func startRuntimeWithNativeHelper(
 			nativeOwner,
 			peers,
 			candidates,
+			paths,
 			httpClient,
 		)
 		if err != nil {
 			return nil, err
 		}
+		coordinationOwner = coordination
 		workers = append(workers, lifecycle.Worker{Name: "coordination", Component: coordination})
 	}
 	handedOff = true
@@ -195,10 +198,16 @@ func startRuntimeWithNativeHelper(
 			denyErr = guard.Guard(cleanup)
 			cancel()
 		}
+		var networkErr error
+		if coordinationOwner != nil {
+			cleanup, cancel := context.WithTimeout(context.Background(), cfg.Runtime.CleanupTimeout)
+			networkErr = coordinationOwner.Close(cleanup, errors.Join(denyErr, nativeErr))
+			cancel()
+		}
 		if httpClient != nil {
 			httpClient.CloseIdleConnections()
 		}
-		return errors.Join(denyErr, nativeErr, store.Close())
+		return errors.Join(denyErr, nativeErr, networkErr, store.Close())
 	}}, nil
 }
 
@@ -396,12 +405,18 @@ func prepareCoordination(
 	nativeOwner *macos.Controller,
 	peers *node.SnapshotWireGuardReconciler,
 	candidates candidateBindings,
+	paths *nodepath.PathSelector,
 	httpClient *http.Client,
-) (lifecycle.Component, error) {
+) (*coordinationRuntime, error) {
 	if leases == nil {
 		return nil, errors.New("coordination requires a control credential owner")
 	}
+	telemetry, err := prepareRuntimeTelemetry(role, cfg, state, paths)
+	if err != nil {
+		return nil, err
+	}
 	connection := node.CoordinationConfig{
+		Telemetry:         telemetry,
 		URL:               cfg.Coordination.URL,
 		Leases:            leases,
 		DeviceID:          state.DeviceID,
@@ -420,18 +435,22 @@ func prepareCoordination(
 			if nativeOwner == nil {
 				return nil, errors.New("native client requires its signed network owner")
 			}
-			return lifecycle.Func(func(ctx context.Context) error {
-				return node.RunCoordinationLoop(ctx, connection, nativeOwner)
-			}), nil
+			return &coordinationRuntime{
+				connection: connection,
+				worker: lifecycle.Func(func(ctx context.Context) error {
+					return node.RunCoordinationLoop(ctx, connection, nativeOwner)
+				}),
+			}, nil
 		}
-		applier := node.NewCompositeSnapshotApplier(
-			nil,
-			node.NewClientReconciler(cfg.WireGuard.InterfaceName, state.DeviceID),
-			peers,
-		)
-		return lifecycle.Func(
-			func(ctx context.Context) error { return node.RunCoordinationLoop(ctx, connection, applier) },
-		), nil
+		link := node.NewClientReconciler(cfg.WireGuard.InterfaceName, state.DeviceID)
+		applier := node.NewCompositeSnapshotApplier(nil, link, peers)
+		return &coordinationRuntime{
+			connection: connection,
+			worker: lifecycle.Func(func(ctx context.Context) error {
+				return node.RunCoordinationLoop(ctx, connection, applier)
+			}),
+			cleanup: func(ctx context.Context) error { return errors.Join(peers.Close(ctx), link.Close(ctx)) },
+		}, nil
 	}
 	var managedDNS *dns.Manager
 	var resolver *node.DNSReconciler
@@ -451,16 +470,19 @@ func prepareCoordination(
 	)
 	applier := node.NewCompositeSnapshotApplier(gateway, peers)
 	worker := lifecycle.Func(func(ctx context.Context) error {
-		err := node.RunCoordinationLoop(ctx, connection, applier)
-		if managedDNS == nil {
-			return err
-		}
-		// DNS belongs to the process lifetime, not the cancelled worker context.
-		cleanup, cancel := context.WithTimeout(context.Background(), cfg.Runtime.CleanupTimeout)
-		defer cancel()
-		return errors.Join(err, managedDNS.Close(cleanup))
+		return node.RunCoordinationLoop(ctx, connection, applier)
 	})
-	return worker, nil
+	return &coordinationRuntime{
+		connection: connection,
+		worker:     worker,
+		cleanup: func(ctx context.Context) error {
+			networkErr := errors.Join(gateway.Close(ctx), peers.Close(ctx))
+			if managedDNS != nil {
+				return errors.Join(networkErr, managedDNS.Close(ctx))
+			}
+			return networkErr
+		},
+	}, nil
 }
 
 // RunCommand is shared by the thin entrypoints; it never exits the process.

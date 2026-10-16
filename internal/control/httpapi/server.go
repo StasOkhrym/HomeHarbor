@@ -62,6 +62,7 @@ type Server struct {
 	profiles            ProfileService
 	services            ServiceCatalog
 	audit               AuditReader
+	telemetry           TelemetryReader
 	invites             InviteService
 	activationChallenge http.HandlerFunc
 	activationClaim     http.HandlerFunc

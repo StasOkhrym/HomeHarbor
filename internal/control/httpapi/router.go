@@ -38,26 +38,8 @@ func NewRouter(server *Server) http.Handler {
 	if server.loginAsset != nil {
 		router.Get("/assets/login.js", server.loginAsset.ServeHTTP)
 	}
-	router.Get("/assets/admin.css", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		w.Header().Set("Cache-Control", "public, max-age=3600, immutable")
-		_, _ = w.Write(adminCSS)
-	})
-	router.Get("/assets/admin.js", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "public, max-age=3600, immutable")
-		_, _ = w.Write(adminScript)
-	})
-	router.Get("/assets/activity.js", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "public, max-age=3600, immutable")
-		_, _ = w.Write(activityScript)
-	})
-	router.Get("/assets/htmx-2.0.11.min.js", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		_, _ = w.Write(htmxScript)
-	})
+
+	registerBrowserAssets(router)
 	router.Get("/readyz", func(w http.ResponseWriter, request *http.Request) {
 		if server.ready != nil {
 			if err := server.ready(request.Context()); err != nil {
@@ -65,6 +47,7 @@ func NewRouter(server *Server) http.Handler {
 				return
 			}
 		}
+
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
 	if server.metrics != nil {

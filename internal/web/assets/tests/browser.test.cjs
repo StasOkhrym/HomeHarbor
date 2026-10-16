@@ -105,6 +105,7 @@ test("history restoration enhances policy controls without moving focus", () => 
 });
 
 function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), options = {}) {
+  const kind = options.kind || "activity";
   const listeners = new Map();
   const timers = new Map();
   let nextTimer = 0;
@@ -113,14 +114,44 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
   let replacements = 0;
   const requests = [];
   const reused = [];
-  function makeFeed(ids) {
+  function makeFeed(ids, fields = {}) {
+    function fieldNode(key, value) {
+      return {
+        dataset: { reportField: key },
+        textContent: value,
+        get childNodes() {
+          return [
+            {
+              textContent: this.textContent,
+              cloneNode() {
+                return { textContent: this.textContent };
+              },
+            },
+          ];
+        },
+        replaceChildren(...nodes) {
+          this.textContent = nodes.map((node) => node.textContent).join("");
+        },
+      };
+    }
     const rows = ids.map((id) => ({
-      dataset: { recordId: id },
+      dataset: { recordId: id, connectionKey: id },
+      fieldNodes: Object.fromEntries(
+        Object.entries(fields[id] || {}).map(([key, value]) => [key, fieldNode(key, value)]),
+      ),
+      querySelectorAll() {
+        return Object.values(this.fieldNodes);
+      },
+      querySelector(selector) {
+        const key = /data-report-field="([^"]+)"/.exec(selector)?.[1];
+        return this.fieldNodes[key] || null;
+      },
       replaceWith(saved) {
         reused.push({ id, saved });
       },
     }));
     const list = { querySelectorAll: () => rows };
+
     return {
       rows,
       querySelectorAll: () => rows,
@@ -135,13 +166,14 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
       },
     };
   }
-  const feed = makeFeed(options.initialIds || []);
+  const feed = makeFeed(options.initialIds || [], options.initialFields || {});
   feed.contains = () => Boolean(options.focusInFeed);
   feed.querySelector = (selector) => {
     if (selector === ".resource-list") return { querySelectorAll: () => feed.rows };
     if (selector === "details[open]") return options.openDetails ? {} : null;
     return null;
   };
+
   let incomingFeed = makeFeed([]);
   const status = { textContent: "", dataset: {} };
   let applyClick;
@@ -155,9 +187,9 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
   const root = {
     dataset: { beforeId: options.beforeId || "0" },
     querySelector(selector) {
-      if (selector === "#activity-feed") return feed;
-      if (selector === "[data-activity-status]") return status;
-      if (selector === "[data-activity-apply]") return apply;
+      if (selector === `#${kind}-feed`) return feed;
+      if (selector === `[data-${kind}-status]`) return status;
+      if (selector === `[data-${kind}-apply]`) return apply;
       return null;
     },
   };
@@ -178,7 +210,7 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
       );
     },
     querySelector(selector) {
-      if (selector === "[data-activity-live]") return activityVisible ? root : null;
+      if (selector === `[data-${kind}-live]`) return activityVisible ? root : null;
       return null;
     },
     querySelectorAll() {
@@ -191,7 +223,7 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
     document,
     window: browserWindow,
     location: {
-      href: "http://homeharbor.test/admin/activity",
+      href: `http://homeharbor.test/admin/${kind}`,
       search: options.search || "",
       assign(path) {
         navigations.push(path);
@@ -219,8 +251,13 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
       timers.delete(id);
     },
   };
+
   vm.runInNewContext(
-    fs.readFileSync(path.join(__dirname, "../static/activity.js"), "utf8"),
+    fs.readFileSync(path.join(__dirname, "../static/live-poll.js"), "utf8") +
+      "\n" +
+      (kind === "connections"
+        ? fs.readFileSync(path.join(__dirname, "../static/connections.js"), "utf8")
+        : fs.readFileSync(path.join(__dirname, "../static/activity.js"), "utf8")),
     context,
   );
   return {
@@ -279,8 +316,8 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
       options.focusInFeed = focusInFeed;
       options.openDetails = openDetails;
     },
-    setIncoming(ids) {
-      incomingFeed = makeFeed(ids);
+    setIncoming(ids, fields = {}) {
+      incomingFeed = makeFeed(ids, fields);
     },
     applyPending() {
       applyClick();
@@ -655,3 +692,105 @@ for (const code of [
     assert.equal(codes.textContent, "");
   });
 }
+
+test("connections refresh pauses while hidden and expires the session once", async () => {
+  const page = activityPage(async () => ({ status: 401, ok: false }), {
+    kind: "connections",
+    search: "?device_id=phone",
+  });
+
+  assert.equal(page.timers.size, 1);
+
+  page.hide();
+
+  assert.equal(page.timers.size, 0);
+
+  page.show();
+  page.fireTimer();
+  await flush();
+
+  assert.deepEqual(page.navigations, ["/admin/login"]);
+  assert.equal(page.timers.size, 0);
+  assert.equal(page.requests[0].url, "/admin/connections/fragment?device_id=phone");
+});
+
+test("connections abort an in-flight refresh when leaving the page", async () => {
+  const page = activityPage(
+    (_url, options) =>
+      new Promise((_resolve, reject) =>
+        options.signal.addEventListener("abort", () =>
+          reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+        ),
+      ),
+    { kind: "connections" },
+  );
+
+  page.fireTimer();
+  await flush();
+
+  assert.equal(page.requests.length, 1);
+
+  page.navigateAway();
+  await flush();
+
+  assert.equal(page.requests[0].options.signal.aborted, true);
+  assert.equal(page.timers.size, 0);
+  assert.equal(page.replacements, 0);
+});
+
+test("connections update stale state without replacing a focused report", async () => {
+  const key = "phone/phone";
+  const page = activityPage(async () => ({ status: 200, ok: true, text: async () => "" }), {
+    kind: "connections",
+    focusInFeed: true,
+    initialIds: [key],
+    initialFields: { [key]: { state: "Runtime running", freshness: "Recent report" } },
+  });
+
+  page.setIncoming([key], {
+    [key]: { state: "State unknown", freshness: "Stale report · current state unknown" },
+  });
+  page.fireTimer();
+  await flush();
+
+  assert.equal(page.replacements, 0);
+  assert.equal(page.feed.rows[0].fieldNodes.state.textContent, "State unknown");
+  assert.match(page.feed.rows[0].fieldNodes.freshness.textContent, /Stale/);
+  assert.equal(page.apply.hidden, true);
+});
+
+test("connections mark withdrawn peer reports unknown while preserving open details", async () => {
+  const key = "gateway/phone";
+  const page = activityPage(async () => ({ status: 200, ok: true, text: async () => "" }), {
+    kind: "connections",
+    openDetails: true,
+    initialIds: [key],
+    initialFields: { [key]: { state: "Reporter: Runtime running", freshness: "Recent report" } },
+  });
+
+  page.setIncoming([]);
+  page.fireTimer();
+  await flush();
+
+  assert.equal(page.replacements, 0);
+  assert.equal(page.feed.rows[0].fieldNodes.state.textContent, "State unknown");
+  assert.match(page.feed.rows[0].fieldNodes.freshness.textContent, /not in latest view/);
+  assert.equal(page.apply.hidden, false);
+});
+
+test("connections stop presenting current running state when refresh fails", async () => {
+  const key = "phone/phone";
+  const page = activityPage(async () => ({ status: 503, ok: false }), {
+    kind: "connections",
+    initialIds: [key],
+    initialFields: { [key]: { state: "Runtime running", freshness: "Recent report" } },
+  });
+
+  page.fireTimer();
+  await flush();
+
+  assert.equal(page.replacements, 0);
+  assert.equal(page.feed.rows[0].fieldNodes.state.textContent, "State unknown");
+  assert.match(page.feed.rows[0].fieldNodes.freshness.textContent, /could not be refreshed/);
+  assert.equal(page.status.dataset.state, "stale");
+});

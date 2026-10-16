@@ -30,41 +30,55 @@ func mustTestServer(
 	} else {
 		deps.Security.Authorizer = denyAuthorizer{}
 	}
+
 	if deps.Security.APILimiter == nil {
 		deps.Security.APILimiter = defaults.Security.APILimiter
 	}
+
 	if deps.Security.AuthLimiter == nil {
 		deps.Security.AuthLimiter = defaults.Security.AuthLimiter
 	}
+
 	if deps.Security.DeviceLimiter == nil {
 		deps.Security.DeviceLimiter = defaults.Security.DeviceLimiter
 	}
+
 	if len(deps.Security.RootPublicKey) != 0 && deps.Security.Challenges == nil {
 		deps.Security.Challenges = &testChallengeRepository{values: make(map[string]testChallenge)}
 		deps.Security.CompanionTTL = time.Minute
 	}
+
 	if deps.Relay.Issuer != nil && deps.Relay.PeerAuthorizer == nil {
 		deps.Relay.PeerAuthorizer = func(context.Context, devices.Device, devices.Device) bool { return true }
 	}
+
 	if deps.Browser.Admin == nil {
 		var confirmation websession.ActionConfirmation
 		if len(confirmations) > 0 {
 			confirmation = confirmations[0]
 		}
+
 		deps.Browser.Admin = webadmin.NewHandler(webadmin.Dependencies{
-			Devices: deps.Resources.Devices, Routes: deps.Resources.Routes,
-			Services: deps.Resources.Services, Profiles: deps.Resources.Profiles,
-			Policy: deps.Resources.Policy, Invites: deps.Resources.Invites,
-			Snapshots: deps.Resources.Snapshots, Audit: deps.Resources.Audit,
+			Devices:            deps.Resources.Devices,
+			Routes:             deps.Resources.Routes,
+			Services:           deps.Resources.Services,
+			Profiles:           deps.Resources.Profiles,
+			Policy:             deps.Resources.Policy,
+			Invites:            deps.Resources.Invites,
+			Snapshots:          deps.Resources.Snapshots,
+			Audit:              deps.Resources.Audit,
+			Telemetry:          deps.Resources.Telemetry,
 			Ready:              deps.Observability.Ready,
 			ActionConfirmation: confirmation,
 			InvalidateDevice:   deps.Resources.InvalidateDevice,
 		}).Routes()
 	}
+
 	server, err := NewServer(deps)
 	if err != nil {
 		panic(err)
 	}
+
 	return server
 }
 

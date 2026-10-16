@@ -180,6 +180,7 @@ func TestNativeCoordinationUsesSignedControllerAndCleansAfterWorkers(t *testing.
 		owner,
 		nil,
 		candidateBindings{},
+		nil,
 		client,
 	)
 	if err != nil {

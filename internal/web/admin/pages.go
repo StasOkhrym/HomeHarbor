@@ -69,6 +69,9 @@ func (s *Handler) loadAdminPage(r *http.Request, page string) (Page, int) {
 	case "invites":
 		s.loadDevices(ctx, &model)
 		LoadInvite(ctx, r.URL.Query().Get("invite_id"), s.invites, &model)
+	case "connections":
+		status := s.loadConnections(r, &model)
+		return model, status
 	case "activity":
 		var status int
 		model.Activity, status = LoadActivity(ctx, s.audit, r.URL.Query())

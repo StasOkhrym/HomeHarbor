@@ -137,6 +137,7 @@ func reconcileSnapshotHead(
 	if err != nil {
 		return fmt.Errorf("verify snapshot head: %w", err)
 	}
+
 	// Authenticate before comparing attacker-supplied hashes for replay.
 	sameHead := target.Revision == cursor.revision && bytes.Equal(head.Hash, cursor.hash)
 	if sameHead && !cursor.needsApply {
@@ -145,6 +146,7 @@ func reconcileSnapshotHead(
 	if target.Revision <= cursor.revision && !sameHead {
 		return snapshot.ErrRevisionRollback
 	}
+
 	revision, hash := cursor.revision, bytes.Clone(cursor.hash)
 	envelope := head
 	for revision < target.Revision {
@@ -155,6 +157,7 @@ func reconcileSnapshotHead(
 		if len(page) == 0 {
 			return snapshot.ErrRevisionGap
 		}
+
 		for _, next := range page {
 			if err := snapshot.VerifyNext(
 				next,
@@ -165,6 +168,7 @@ func reconcileSnapshotHead(
 			); err != nil {
 				return fmt.Errorf("verify history after %d: %w", revision, err)
 			}
+
 			revision++
 			hash = bytes.Clone(next.Hash)
 			envelope = next
@@ -173,21 +177,27 @@ func reconcileSnapshotHead(
 			}
 		}
 	}
+
 	if !bytes.Equal(hash, head.Hash) {
 		return snapshot.ErrPreviousHash
 	}
+
 	prepared, err := prepareSnapshotState(cfg.StatePath, envelope)
 	if err != nil {
 		return fmt.Errorf("%w: prepare: %w", ErrSnapshotState, err)
 	}
 	defer prepared.abort()
-	if err := applyVerifiedSnapshot(ctx, applier, envelope, target); err != nil {
+
+	if err := applyVerifiedSnapshot(ctx, applier, envelope, target, cfg.Telemetry); err != nil {
 		return fmt.Errorf("apply snapshot revision %d: %w", target.Revision, err)
 	}
+
 	if err := prepared.commit(); err != nil {
 		return fmt.Errorf("%w: commit after apply: %w", ErrSnapshotState, err)
 	}
+
 	cursor.revision, cursor.hash = revision, hash
 	cursor.needsApply = false
+
 	return nil
 }

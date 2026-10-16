@@ -32,7 +32,7 @@ func TestTelemetryRejectsMalformedReports(t *testing.T) {
 		State:      RuntimeRunning,
 		Observations: []PeerObservation{
 			{
-				DeviceID: "client-1",
+				DeviceID: "client-1", CountersAvailable: true,
 				RXBytes:  12,
 				TXBytes:  24,
 				Endpoint: "127.0.0.1:51820",
@@ -40,9 +40,11 @@ func TestTelemetryRejectsMalformedReports(t *testing.T) {
 			},
 		},
 	}
+
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
+
 	cases := []func(*TelemetryReport){
 		func(r *TelemetryReport) { r.Sequence = 0 },
 		func(r *TelemetryReport) { r.Generation = 0 },
@@ -57,12 +59,16 @@ func TestTelemetryRejectsMalformedReports(t *testing.T) {
 	for i, change := range cases {
 		report := valid
 		report.Observations = append([]PeerObservation(nil), valid.Observations...)
+
 		change(&report)
+
 		if err := report.Validate(); err == nil {
 			t.Errorf("malformed report %d accepted", i)
 		}
 	}
+
 	var negative TelemetryReport
+
 	if err := json.Unmarshal(
 		[]byte(`{"observations":[{"device_id":"client-1","rx_bytes":-1}]}`),
 		&negative,

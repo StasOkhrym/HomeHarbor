@@ -69,6 +69,7 @@ type Page struct {
 	Profiles      Collection[profiles.AccessProfile]
 	Routes        Collection[routes.Advertisement]
 	Activity      Activity
+	Connections   Connections
 	Device        *devices.Device
 	Policy        acl.Snapshot
 	PolicyReady   bool
@@ -122,7 +123,8 @@ var titles = map[string][2]string{
 		"Invites",
 		"Signed invites use your trusted companion. Legacy tokens are a separate mechanism.",
 	},
-	"activity": {"Activity", "Recent audit events from the control plane."},
+	"connections": {"Connections", "Latest runtime and peer observations from your devices."},
+	"activity":    {"Activity", "Recent audit events from the control plane."},
 	"security": {
 		"Security",
 		"Your passkey, recovery codes and network signing key have separate roles.",

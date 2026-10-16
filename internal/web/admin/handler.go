@@ -55,6 +55,7 @@ type Dependencies struct {
 	Invites            InviteReader
 	Snapshots          SnapshotReader
 	Audit              ActivityReader
+	Telemetry          ConnectionReader
 	Ready              func(context.Context) error
 	ActionConfirmation websession.ActionConfirmation
 	InvalidateDevice   func(string)
@@ -70,6 +71,7 @@ type Handler struct {
 	invites            InviteReader
 	snapshots          SnapshotReader
 	audit              ActivityReader
+	telemetry          ConnectionReader
 	ready              func(context.Context) error
 	actionConfirmation websession.ActionConfirmation
 	invalidateDevice   func(string)
@@ -84,7 +86,7 @@ func NewHandler(deps Dependencies) *Handler {
 	return &Handler{
 		devices: deps.Devices, routes: deps.Routes, services: deps.Services,
 		profiles: deps.Profiles, policy: deps.Policy, invites: deps.Invites,
-		snapshots: deps.Snapshots, audit: deps.Audit, ready: deps.Ready,
+		snapshots: deps.Snapshots, audit: deps.Audit, telemetry: deps.Telemetry, ready: deps.Ready,
 		actionConfirmation: deps.ActionConfirmation,
 		invalidateDevice:   deps.InvalidateDevice, logger: logger,
 	}
@@ -96,11 +98,12 @@ func (h *Handler) Routes() http.Handler {
 	router := chi.NewRouter()
 	router.Get("/", h.adminDashboard)
 	for _, page := range []string{
-		"setup", "devices", "services", "access", "network", "invites", "activity", "security",
+		"setup", "devices", "services", "access", "network", "invites", "activity", "security", "connections",
 	} {
 		router.Get("/"+page, h.adminView(page))
 	}
 	router.Get("/activity/fragment", ActivityFragment(h.audit, h.logger))
+	router.Get("/connections/fragment", h.connectionsFragment)
 	router.Get("/devices/{id}", h.adminView("devices"))
 	router.Post("/enrollment-tokens", h.issueEnrollmentTokenForm)
 	router.Post("/devices/{id}/revoke", h.revokeDeviceForm)

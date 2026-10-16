@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	ReportInterval = 30 * time.Second
-	StaleAfter     = 90 * time.Second
+	ReportInterval = protocol.TelemetryReportInterval
+	StaleAfter     = protocol.TelemetryStaleAfter
 	storeTimeout   = 5 * time.Second
 )
 

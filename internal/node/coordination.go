@@ -47,11 +47,25 @@ func applyVerifiedSnapshot(
 	applier SnapshotApplier,
 	envelope snapshot.Envelope,
 	value snapshot.NetworkSnapshot,
+	telemetry *RuntimeTelemetry,
 ) error {
+	var err error
+
 	if signed, ok := applier.(SignedSnapshotApplier); ok {
-		return signed.ApplySigned(ctx, envelope, value)
+		err = signed.ApplySigned(ctx, envelope, value)
+	} else {
+		err = applier.Apply(ctx, value)
 	}
-	return applier.Apply(ctx, value)
+
+	if telemetry != nil {
+		if err != nil {
+			telemetry.Failed()
+		} else {
+			telemetry.Applied(value)
+		}
+	}
+
+	return err
 }
 
 // PreparedSnapshotApplier validates without mutating runtime state, then applies
@@ -158,6 +172,7 @@ type CoordinationConfig struct {
 	// relay-observed endpoint is available. Heartbeats remain the fallback for
 	// providers that do not have an event source.
 	CandidateChanges <-chan struct{}
+	Telemetry        *RuntimeTelemetry
 }
 
 // RunCoordinationLoop keeps the last verified gateway state active while the
@@ -249,6 +264,7 @@ func runCoordination(
 	var admitted controlprotocol.CredentialLease
 	if cfg.Leases != nil {
 		var err error
+
 		admitted, err = cfg.Leases.Current(ctx)
 		if err != nil {
 			return err
@@ -256,8 +272,10 @@ func runCoordination(
 		if admitted.DeviceID != cfg.DeviceID || !admitted.ExpiresAt.After(time.Now()) {
 			return errors.New("invalid coordination lease")
 		}
+
 		cfg.Credential = admitted.Credential
 	}
+
 	if cfg.URL == "" || cfg.Credential == "" || cfg.DeviceID == "" || cfg.NetworkID == "" ||
 		len(cfg.RootPublicKey) != ed25519.PublicKeySize ||
 		applier == nil {
@@ -265,14 +283,17 @@ func runCoordination(
 			"coordination URL, credentials, device, network, root key, and applier are required",
 		)
 	}
+
 	sessionContext, sessionCancel := context.WithCancel(ctx)
 	if cfg.Leases != nil {
 		sessionCancel()
 		sessionContext, sessionCancel = context.WithDeadline(ctx, admitted.ExpiresAt)
 	}
 	defer sessionCancel()
+
 	header := make(http.Header)
 	header.Set("Authorization", "Bearer "+cfg.Credential)
+
 	connection, _, err := websocket.Dial(
 		sessionContext,
 		cfg.URL,
@@ -285,12 +306,15 @@ func runCoordination(
 		return fmt.Errorf("dial coordination: %w", err)
 	}
 	defer func() { _ = connection.CloseNow() }()
+
 	if cfg.Leases != nil {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
+
 			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
+
 			for {
 				select {
 				case <-sessionContext.Done():
@@ -306,6 +330,7 @@ func runCoordination(
 		}()
 		defer func() { sessionCancel(); <-done }()
 	}
+
 	connection.SetReadLimit(64 << 10)
 
 	writeMu := sync.Mutex{}
@@ -320,22 +345,30 @@ func runCoordination(
 				return errors.New("coordination lease replaced")
 			}
 		}
+
 		writeMu.Lock()
 		defer writeMu.Unlock()
+
 		writeContext, cancel := context.WithTimeout(sessionContext, 10*time.Second)
 		defer cancel()
+
 		return wsjson.Write(writeContext, connection, value)
 	}
 	capabilities := []string{
 		controlprotocol.CapabilityUDPPair,
 		controlprotocol.CapabilitySplitDNS,
 	}
+	if cfg.Telemetry != nil {
+		capabilities = append(capabilities, controlprotocol.CapabilityTelemetry)
+	}
+
 	if cfg.CandidateProvider != nil || cfg.CandidateHandler != nil {
 		// Candidate exchange is opt-in. Advertising it only when both the
 		// caller and its peer understand the feature keeps older nodes on the
 		// relay path instead of silently sending them unsupported messages.
 		capabilities = append(capabilities, controlprotocol.CapabilityDirectUDP)
 	}
+
 	hello := controlprotocol.Hello{
 		Versions:     []uint16{controlprotocol.CurrentVersion},
 		Capabilities: capabilities,
@@ -344,10 +377,8 @@ func runCoordination(
 	if err := write(hello); err != nil {
 		return fmt.Errorf("send coordination hello: %w", err)
 	}
-	var welcome struct {
-		Type     string                     `json:"type"`
-		Protocol controlprotocol.Negotiated `json:"protocol"`
-	}
+
+	var welcome controlprotocol.Welcome
 	welcomeContext, cancel := context.WithTimeout(sessionContext, 10*time.Second)
 	err = wsjson.Read(welcomeContext, connection, &welcome)
 	cancel()
@@ -362,28 +393,34 @@ func runCoordination(
 		!welcome.Protocol.Has(controlprotocol.CapabilityDirectUDP) {
 		return errors.New("direct UDP capability was not negotiated")
 	}
+
 	sendCandidates := func() error {
 		if cfg.CandidateProvider == nil {
 			return nil
 		}
+
 		updates, err := cfg.CandidateProvider(sessionContext)
 		if err != nil {
 			return fmt.Errorf("build candidate updates: %w", err)
 		}
+
 		for _, update := range updates {
 			if err := update.Validate(); err != nil {
 				return fmt.Errorf("validate local candidate update: %w", err)
 			}
+
 			payload, err := json.Marshal(update)
 			if err != nil {
 				return fmt.Errorf("encode candidate update: %w", err)
 			}
+
 			if err := write(
 				controlprotocol.Message{Type: "candidate.update", Payload: payload},
 			); err != nil {
 				return fmt.Errorf("send candidate update: %w", err)
 			}
 		}
+
 		return nil
 	}
 	if err := sendCandidates(); err != nil {
@@ -394,12 +431,15 @@ func runCoordination(
 	if heartbeatEvery <= 0 {
 		heartbeatEvery = 30 * time.Second
 	}
+
 	heartbeat := time.NewTicker(heartbeatEvery)
 	defer heartbeat.Stop()
+
 	candidateChanges := cfg.CandidateChanges
 	publisherDone := make(chan struct{})
 	go func() {
 		defer close(publisherDone)
+
 		runCandidatePublisher(sessionContext, heartbeat.C, candidateChanges, write, sendCandidates)
 	}()
 	defer func() {
@@ -408,23 +448,53 @@ func runCoordination(
 		<-publisherDone
 	}()
 
+	if cfg.Telemetry != nil && welcome.Protocol.Has(controlprotocol.CapabilityTelemetry) &&
+		welcome.TelemetryGeneration > 0 {
+		telemetryTicks := time.NewTicker(controlprotocol.TelemetryReportInterval)
+		telemetryDone := make(chan struct{})
+		go func() {
+			defer close(telemetryDone)
+
+			runTelemetryPublisher(
+				sessionContext,
+				welcome.TelemetryGeneration,
+				cfg.Telemetry,
+				telemetryTicks.C,
+				func(value any) error {
+					err := write(value)
+					if err != nil {
+						sessionCancel()
+					}
+
+					return err
+				},
+			)
+		}()
+		defer func() { sessionCancel(); _ = connection.CloseNow(); <-telemetryDone; telemetryTicks.Stop() }()
+	}
+
 	for {
 		readContext, readCancel := context.WithTimeout(sessionContext, 2*time.Minute)
 		var message controlprotocol.Message
+
 		err = wsjson.Read(readContext, connection, &message)
 		readCancel()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
+
 			return fmt.Errorf("read coordination message: %w", err)
 		}
+
 		switch message.Type {
 		case "network.snapshot":
 			var envelope snapshot.Envelope
+
 			if err := json.Unmarshal(message.Payload, &envelope); err != nil {
 				return fmt.Errorf("decode network snapshot envelope: %w", err)
 			}
+
 			if err := reconcileSnapshotHead(
 				sessionContext,
 				cfg,
@@ -441,18 +511,24 @@ func runCoordination(
 				if cfg.CandidateHandler == nil {
 					return errors.New("candidate update received without a handler")
 				}
+
 				var update controlprotocol.CandidateUpdate
+
 				if err := json.Unmarshal(message.Payload, &update); err != nil {
 					return fmt.Errorf("decode candidate update: %w", err)
 				}
+
 				if err := update.Validate(); err != nil {
 					return fmt.Errorf("validate candidate update: %w", err)
 				}
+
 				if err := cfg.CandidateHandler(sessionContext, update); err != nil {
 					return fmt.Errorf("handle candidate update: %w", err)
 				}
+
 				continue
 			}
+
 			return fmt.Errorf("unsupported coordination message %q", message.Type)
 		}
 	}

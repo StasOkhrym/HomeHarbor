@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"net/netip"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -11,6 +12,8 @@ import (
 const (
 	CapabilityTelemetry      = "telemetry-v1"
 	MaxTelemetryObservations = 128
+	TelemetryReportInterval  = 30 * time.Second
+	TelemetryStaleAfter      = 90 * time.Second
 )
 
 type RuntimeState string
@@ -37,6 +40,8 @@ type TelemetryReport struct {
 // PeerObservation describes reported WireGuard facts, not proof of reachability.
 // Endpoint can be relay loopback; it is not the subject device's public IP.
 type PeerObservation struct {
+	// Missing statistics are unknown, not a measured zero-byte count.
+	CountersAvailable bool   `json:"counters_available,omitempty"`
 	DeviceID          string `json:"device_id"`
 	LastHandshakeUnix int64  `json:"last_handshake_unix,omitempty"`
 	Endpoint          string `json:"endpoint,omitempty"`
@@ -58,18 +63,22 @@ func (r TelemetryReport) Validate() error {
 		r.AppliedRevision > math.MaxInt64 {
 		return invalid
 	}
+
 	id, err := uuid.Parse(r.RuntimeID)
 	if err != nil || id.String() != r.RuntimeID || id == uuid.Nil {
 		return invalid
 	}
+
 	switch r.State {
 	case RuntimeStarting, RuntimeRunning, RuntimeStopped, RuntimeFailed:
 	default:
 		return invalid
 	}
+
 	if len(r.Observations) == 0 || len(r.Observations) > MaxTelemetryObservations {
 		return invalid
 	}
+
 	seen := map[string]bool{}
 	for _, sample := range r.Observations {
 		if !telemetryDeviceID(sample.DeviceID) || seen[sample.DeviceID] ||
@@ -78,6 +87,10 @@ func (r TelemetryReport) Validate() error {
 			sample.LastHandshakeUnix < 0 {
 			return invalid
 		}
+		if !sample.CountersAvailable && (sample.RXBytes != 0 || sample.TXBytes != 0) {
+			return invalid
+		}
+
 		seen[sample.DeviceID] = true
 		if sample.Endpoint != "" {
 			endpoint, err := netip.ParseAddrPort(sample.Endpoint)
@@ -87,12 +100,14 @@ func (r TelemetryReport) Validate() error {
 				return invalid
 			}
 		}
+
 		switch sample.Path {
 		case "", "unknown", PathDirect, PathRelay:
 		default:
 			return invalid
 		}
 	}
+
 	return nil
 }
 

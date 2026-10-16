@@ -33,6 +33,9 @@ func (s *Server) registerAdminAPI(api chi.Router) {
 		admin.Use(s.requireAdmin)
 		admin.Post("/enrollment-tokens", s.issueToken)
 		admin.Get("/devices", s.listDevices)
+		if s.telemetry != nil {
+			admin.Get("/connections", s.listConnections)
+		}
 		if s.audit != nil {
 			admin.Get("/audit", s.listAudit)
 		}

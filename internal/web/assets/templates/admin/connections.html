@@ -1,0 +1,82 @@
+{{define "connections"}}
+  <section class="panel">
+    <form class="activity-filter" method="get" action="/admin/connections">
+      <div class="field">
+        <label for="connections-device">Device</label>
+        <select id="connections-device" name="device_id">
+          {{range .Connections.DeviceOptions}}
+            <option value="{{.Value}}"
+                    {{if eq $.Connections.DeviceID .Value}}selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
+      </div>
+      <button class="secondary" type="submit">Apply filter</button>
+    </form>
+    <p class="help">Each report names its source. Runtime state and handshake observations do not confirm service reachability.</p>
+  </section>
+  <div data-connections-live class="activity-live">
+    <div class="activity-watch" role="status" aria-live="polite">
+      <span class="activity-signal" aria-hidden="true"></span>
+      <span data-connections-status>Latest runtime reports</span>
+      <button class="secondary"
+              data-connections-apply
+              type="button"
+              hidden>Show updated reports</button>
+    </div>
+    {{template "connections-feed" .}}
+  </div>
+{{end}}
+{{define "connections-feed"}}
+  <section class="panel" id="connections-feed" aria-label="Runtime reports">
+    <h2 tabindex="-1">Latest reports</h2>
+    {{if .Connections.Ready}}
+      <ul class="resource-list">
+        {{range .Connections.Rows}}
+          <li data-connection-key="{{.ReporterID}}/{{.DeviceID}}">
+            <div class="resource-row"><strong data-report-field="device-name">{{.DeviceName}}</strong><span class="badge"
+      data-report-state
+      data-report-field="state"
+      data-state="{{.State}}">{{.StateLabel}}</span></div>
+            <p data-report-field="source">{{.Source}} · {{.ReporterName}}</p>
+            <p class="muted"><span data-report-field="freshness">{{.Freshness}}</span> · <span data-report-field="observed">{{if not .ObservedAt.IsZero}}<time datetime="{{timeISO .ObservedAt}}">{{timeLabel .ObservedAt}}</time>{{else}}No report time{{end}}</span></p>
+            <p>Received <span data-report-field="received">{{.Received}}</span> · Sent <span data-report-field="sent">{{.Sent}}</span> · <span data-report-field="transport">{{.Transport}}</span></p>
+            <details class="advanced">
+              <summary data-report-field="summary">Report details · {{.DeviceName}}</summary>
+              <dl class="event-metadata">
+                <dt>Subject device ID</dt>
+                <dd>
+                  <code>{{.DeviceID}}</code>
+                </dd>
+                <dt>Reporter ID</dt>
+                <dd>
+                  <code>{{.ReporterID}}</code>
+                </dd>
+                <dt>Credential status</dt>
+                <dd data-report-field="credential">
+                  {{.CredentialStatus}}
+                </dd>
+                <dt>Reporter applied revision</dt>
+                <dd data-report-field="revision">
+                  {{if .AppliedRevision}}{{.AppliedRevision}}{{else}}Not reported{{end}}
+                </dd>
+                <dt>Reported handshake</dt>
+                <dd data-report-field="handshake">
+                  {{.Handshake}}
+                </dd>
+                <dt>Reported WireGuard endpoint</dt>
+                <dd data-report-field="endpoint">
+                  {{if .Endpoint}}{{.Endpoint}}{{else}}Not reported{{end}}
+                </dd>
+              </dl>
+              <p class="help">Traffic is measured from this reporter's perspective. A relay endpoint may be loopback.</p>
+            </details>
+          </li>
+        {{else}}
+          <li class="empty-state">No runtime reports for this selection.</li>
+        {{end}}
+      </ul>
+    {{else}}
+      <p class="alert alert-error" role="alert">{{.Connections.Error}}</p>
+    {{end}}
+  </section>
+{{end}}
