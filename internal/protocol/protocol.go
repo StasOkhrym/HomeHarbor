@@ -53,12 +53,14 @@ func Negotiate(hello Hello) (Negotiated, *ProtocolError) {
 			Message: "a supported relay capability is required",
 		}
 	}
+
 	supported := []string{}
-	for _, c := range []string{CapabilityUDPPair, CapabilityDirectUDP, CapabilitySplitDNS} {
+	for _, c := range []string{CapabilityUDPPair, CapabilityDirectUDP, CapabilitySplitDNS, CapabilityTelemetry} {
 		if slices.Contains(hello.Capabilities, c) {
 			supported = append(supported, c)
 		}
 	}
+
 	return Negotiated{Version: CurrentVersion, Capabilities: supported}, nil
 }
 

@@ -37,6 +37,7 @@ ADAPTERS = {
         "routes",
         "services",
         "snapshots",
+        "telemetry",
     )
 }
 ADAPTERS.add("control/transactions")

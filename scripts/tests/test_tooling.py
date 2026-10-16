@@ -160,6 +160,7 @@ class ToolingTests(unittest.TestCase):
             "routes",
             "services",
             "snapshots",
+            "telemetry",
         ):
             events.append(
                 {

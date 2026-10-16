@@ -34,6 +34,7 @@ type Handler struct {
 	History        SnapshotHistoryProvider
 	AllowedOrigins []string
 	AuthorizePeer  func(context.Context, devices.Device, devices.Device) bool
+	Telemetry      TelemetryCollector
 	devices        DeviceReader
 	hub            *hub
 	sessions       *sessionOwner
@@ -101,8 +102,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer finish()
+
 	done := make(chan struct{})
 	defer close(done)
+
 	r = r.WithContext(ctx)
 	credential := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	device, err := h.authenticate(r.Context(), credential)
@@ -110,8 +113,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+
 	ctx, cancelLease := context.WithDeadline(r.Context(), device.CredentialExpiresAt)
 	defer cancelLease()
+
 	r = r.WithContext(ctx)
 	options := &websocket.AcceptOptions{OriginPatterns: h.AllowedOrigins}
 	connection, err := websocket.Accept(w, r, options)
@@ -119,31 +124,40 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = connection.CloseNow() }()
+
 	if !h.sessions.track(connection) {
 		return
 	}
 	defer h.sessions.untrack(connection)
+
 	connection.SetReadLimit(64 << 10)
 	// Bound the initial read so an authenticated client cannot retain a
 	// coordination slot forever without completing protocol negotiation.
 	helloContext, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	var hello controlprotocol.Hello
+
 	if err = wsjson.Read(helloContext, connection, &hello); err != nil {
 		cancel()
 		_ = connection.Close(websocket.StatusPolicyViolation, "hello required")
+
 		return
 	}
+
 	cancel()
 	if hello.DeviceID != device.ID {
 		_ = connection.Close(websocket.StatusPolicyViolation, "device mismatch")
 		return
 	}
+
 	negotiated, protocolErr := controlprotocol.Negotiate(hello)
 	if protocolErr != nil {
 		_ = writeJSONWithTimeout(r.Context(), connection, protocolErr)
 		_ = connection.Close(websocket.StatusPolicyViolation, protocolErr.Code)
+
 		return
 	}
+
+	telemetrySession := h.admitTelemetry(r.Context(), device, &negotiated)
 	peer := &peer{
 		id:         device.ID,
 		connection: connection,
@@ -155,8 +169,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	monitorDone := make(chan struct{})
 	go func() {
 		defer close(monitorDone)
+
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -166,12 +182,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if peer.validate(ctx) != nil {
 					cancelLease()
 					_ = connection.CloseNow()
+
 					return
 				}
 			}
 		}
 	}()
 	defer func() { cancelLease(); <-monitorDone }()
+
 	// One live connection per device makes candidate ownership unambiguous and
 	// prevents an old connection from continuing to publish endpoint changes.
 	if err = h.hub.replace(r.Context(), peer); err != nil {
@@ -179,33 +197,44 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.hub.remove(peer.id)
+
 	if err := peer.validate(r.Context()); err != nil {
 		return
 	}
+
 	if err = writeJSONWithTimeout(
 		r.Context(),
 		connection,
-		map[string]any{"type": "welcome", "protocol": negotiated},
+		controlprotocol.Welcome{
+			Type:                "welcome",
+			Protocol:            negotiated,
+			TelemetryGeneration: telemetrySession.Generation,
+		},
 	); err != nil {
 		return
 	}
+
 	if h.Snapshots == nil {
 		_ = connection.Close(websocket.StatusTryAgainLater, "signed snapshot unavailable")
 		return
 	}
+
 	signedSnapshot, err := h.Snapshots.Latest(r.Context())
 	if err != nil {
 		_ = connection.Close(websocket.StatusTryAgainLater, "signed snapshot unavailable")
 		return
 	}
+
 	message, err := snapshotMessage(signedSnapshot)
 	if err != nil {
 		_ = connection.Close(websocket.StatusMessageTooBig, "snapshot exceeds envelope limit")
 		return
 	}
+
 	if err = peer.write(r.Context(), message); err != nil {
 		return
 	}
+
 	for {
 		var message controlprotocol.Message
 		readContext, readCancel := context.WithTimeout(r.Context(), 2*time.Minute)
@@ -214,11 +243,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
+
 		device, err = h.authenticate(r.Context(), credential)
 		if err != nil {
 			return
 		}
+
 		switch message.Type {
+		case "telemetry.report":
+			if !negotiated.Has(controlprotocol.CapabilityTelemetry) ||
+				telemetryPolicyViolation(
+					h.receiveTelemetry(r.Context(), telemetrySession, message.Payload),
+				) {
+				_ = connection.Close(websocket.StatusPolicyViolation, "invalid telemetry report")
+				return
+			}
 		case "candidate.update":
 			if !negotiated.Has(controlprotocol.CapabilityDirectUDP) {
 				// A relay-only peer must not publish endpoint candidates. Keeping
@@ -231,7 +270,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				)
 				return
 			}
+
 			var update controlprotocol.CandidateUpdate
+
 			if err := json.Unmarshal(
 				message.Payload,
 				&update,
@@ -243,22 +284,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				)
 				return
 			}
+
 			if h.devices == nil {
 				continue
 			}
+
 			destination, destinationErr := h.devices.Device(r.Context(), update.DestinationDeviceID)
 			if destinationErr != nil || h.AuthorizePeer == nil ||
 				!h.AuthorizePeer(r.Context(), device, destination) {
 				continue
 			}
+
 			// The sender identity comes from the authenticated WebSocket, never
 			// from the candidate payload. The receiver uses it to bind the
 			// endpoint update to the peer whose key it is reconciling.
 			update.SourceDeviceID = device.ID
+
 			payload, marshalErr := json.Marshal(update)
 			if marshalErr != nil {
 				continue
 			}
+
 			h.hub.sendCandidate(
 				r.Context(),
 				destination.ID,

@@ -33,6 +33,8 @@ import (
 	servicesstorage "github.com/StasOkhrym/homeharbor/internal/control/services/storage"
 	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
 	snapshotsstorage "github.com/StasOkhrym/homeharbor/internal/control/snapshots/storage"
+	"github.com/StasOkhrym/homeharbor/internal/control/telemetry"
+	telemetrystorage "github.com/StasOkhrym/homeharbor/internal/control/telemetry/storage"
 	workflowstorage "github.com/StasOkhrym/homeharbor/internal/control/transactions"
 	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
@@ -262,6 +264,19 @@ func buildHTTP(
 		[]string{cfg.Auth.RPOrigin},
 		peerAuthorization,
 	)
+	if signedSnapshots != nil {
+		coordinationHandler.Telemetry = telemetry.NewService(
+			telemetrystorage.New(pool),
+			func(ctx context.Context, reporter devices.Device, subject string) (bool, error) {
+				peer, err := deviceService.Device(ctx, subject)
+				if err != nil {
+					return false, err
+				}
+				return peerAuthorization(ctx, reporter, peer), nil
+			},
+			time.Now,
+		)
+	}
 	if signedSnapshots != nil {
 		deps.Resources.SnapshotBroadcaster = coordinationHandler
 	}
