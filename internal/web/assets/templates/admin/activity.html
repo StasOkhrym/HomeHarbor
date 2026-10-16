@@ -2,30 +2,67 @@
   <section class="panel">
     <form class="activity-filter" method="get" action="/admin/activity">
       <div class="field">
-        <label for="activity-limit">Number of recent events</label>
-        <input id="activity-limit"
-               type="number"
-               name="limit"
-               min="1"
-               max="200"
-               value="{{.Activity.Limit}}">
+        <label for="activity-category">Category</label>
+        <select id="activity-category" name="category">
+          {{range .Activity.CategoryOptions}}
+            <option value="{{.Value}}"
+                    {{if eq $.Activity.Category .Value}}selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
       </div>
       <div class="field">
         <label for="activity-action">Action</label>
-        <input id="activity-action"
-               name="action"
-               maxlength="128"
-               value="{{.Activity.Action}}"
-               placeholder="All actions">
+        <select id="activity-action" name="action">
+          <option value="">All actions</option>
+          {{range .Activity.ActionOptions}}
+            <option value="{{.Value}}"
+                    {{if eq $.Activity.Action .Value}}selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
       </div>
       <div class="field">
-        <label for="activity-target">Target ID</label>
-        <input id="activity-target"
-               name="target_id"
-               maxlength="128"
-               value="{{.Activity.TargetID}}"
-               placeholder="All targets">
+        <label for="activity-outcome">Result</label>
+        <select id="activity-outcome" name="outcome">
+          {{range .Activity.OutcomeOptions}}
+            <option value="{{.Value}}"
+                    {{if eq $.Activity.Outcome .Value}}selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
       </div>
+      <div class="field">
+        <label for="activity-period">Period</label>
+        <select id="activity-period" name="period">
+          {{range .Activity.PeriodOptions}}
+            <option value="{{.Value}}"
+                    {{if eq $.Activity.Period .Value}}selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
+      </div>
+      <details class="advanced">
+        <summary>Advanced filters</summary>
+        <div class="field">
+          <label for="activity-limit">Number of recent events</label>
+          <input id="activity-limit"
+                 type="number"
+                 name="limit"
+                 min="1"
+                 max="200"
+                 value="{{.Activity.Limit}}">
+        </div>
+        <div class="field">
+          <label for="activity-target">Target ID</label>
+          <input id="activity-target"
+                 name="target_id"
+                 maxlength="128"
+                 value="{{.Activity.TargetID}}">
+        </div>
+        {{if .Activity.ActorID}}<input type="hidden"
+       name="actor_id"
+       value="{{.Activity.ActorID}}">{{end}}
+        {{if .Activity.DeviceID}}<input type="hidden"
+       name="device_id"
+       value="{{.Activity.DeviceID}}">{{end}}
+      </details>
       <button class="secondary" type="submit">Apply filters</button>
     </form>
   </section>
@@ -67,7 +104,7 @@
         {{end}}
       </ul>
       {{if .Activity.OlderID}}
-        <a href="/admin/activity?limit={{.Activity.Limit}}&amp;action={{.Activity.Action | urlquery}}&amp;target_id={{.Activity.TargetID | urlquery}}&amp;before_id={{.Activity.OlderID}}">Older events</a>
+        <a href="{{.Activity.OlderURL}}">Older events</a>
       {{end}}
     {{else}}
       <p class="alert alert-error" role="alert">{{.Activity.Error}}</p>

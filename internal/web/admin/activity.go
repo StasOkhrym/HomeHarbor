@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 )
@@ -19,20 +20,38 @@ type ActivityReader interface {
 // Activity is one bounded, newest-first browser view. OlderID is an exclusive
 // history cursor; live refresh always re-queries the recent committed window.
 type Activity struct {
-	Records  []audit.Record
-	Ready    bool
-	Error    string
-	Limit    int
-	Action   string
-	TargetID string
-	BeforeID int64
-	OlderID  int64
+	Records         []audit.Record
+	Ready           bool
+	Error           string
+	Limit           int
+	Action          string
+	TargetID        string
+	BeforeID        int64
+	OlderID         int64
+	Category        string
+	Outcome         string
+	Period          string
+	ActorID         string
+	DeviceID        string
+	ActionOptions   []audit.ActionOption
+	CategoryOptions []ActivityOption
+	OutcomeOptions  []ActivityOption
+	PeriodOptions   []ActivityOption
 }
 
 func LoadActivity(
 	ctx context.Context,
 	reader ActivityReader,
 	values url.Values,
+) (Activity, int) {
+	return loadActivity(ctx, reader, values, time.Now())
+}
+
+func loadActivity(
+	ctx context.Context,
+	reader ActivityReader,
+	values url.Values,
+	now time.Time,
 ) (Activity, int) {
 	view := Activity{Limit: audit.DefaultQueryLimit}
 	if raw := values.Get("limit"); raw != "" {
@@ -57,14 +76,20 @@ func LoadActivity(
 		}
 		view.BeforeID = beforeID
 	}
+	query, err := activityFilters(&view, values, now)
+	if err != nil {
+		view.Error = err.Error()
+		return view, http.StatusBadRequest
+	}
 	if reader == nil {
 		view.Error = "Activity is not configured"
 		return view, http.StatusServiceUnavailable
 	}
-	records, err := reader.ListRecords(ctx, audit.Query{
-		Limit: view.Limit, BeforeID: view.BeforeID,
-		Action: view.Action, TargetID: view.TargetID,
-	})
+	query.Limit = view.Limit
+	query.BeforeID = view.BeforeID
+	query.Action = view.Action
+	query.TargetID = view.TargetID
+	records, err := reader.ListRecords(ctx, query)
 	if err != nil {
 		view.Error = "Activity could not be loaded"
 		return view, http.StatusServiceUnavailable
@@ -76,26 +101,7 @@ func LoadActivity(
 	return view, http.StatusOK
 }
 
-var actionLabels = map[string]string{
-	"device.enrolled":             "Device registered",
-	"device.revoked":              "Device credentials revoked",
-	"device.credential_rotated":   "Device credential rotated",
-	"device.credential_recovered": "Device credential recovered",
-	"device.credential_claimed":   "Device credential claimed",
-	"invite.approved":             "Invite approved",
-	"admin.bootstrap":             "First administrator passkey setup",
-	"admin.login":                 "Passkey sign-in",
-	"admin.recovery":              "Recovery sign-in",
-	"admin.logout":                "Administrator sign-out",
-	"admin.auth":                  "Administrator authentication check",
-}
-
-func ActionLabel(action string) string {
-	if label, ok := actionLabels[action]; ok {
-		return label
-	}
-	return "Other activity"
-}
+func ActionLabel(action string) string { return audit.ActionLabel(action) }
 
 func Actor(event audit.Event) string {
 	if event.ActorType == "" || event.ActorType == "unknown" || event.ActorID == "" {

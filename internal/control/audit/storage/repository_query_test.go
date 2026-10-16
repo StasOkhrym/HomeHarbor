@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -170,5 +171,169 @@ func TestPostgresRecentWindowFindsLowerIDCommittedLater(t *testing.T) {
 	if err != nil || len(second) != 2 || second[0].RecordID != highID ||
 		second[1].RecordID != lowID {
 		t.Fatalf("late lower-ID commit missing from recent window=%+v err=%v", second, err)
+	}
+}
+
+func TestPostgresAuditFacetedFilters(t *testing.T) {
+	pool := auditQueryDB(t)
+	repo := New(pool)
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	events := []audit.Event{
+		{
+			OccurredAt: now.Add(-time.Hour),
+			ActorType:  "admin",
+			ActorID:    "owner",
+			Action:     "admin.login",
+			TargetType: "session",
+			TargetID:   "session-a",
+			Metadata:   map[string]any{"success": true, "outcome": "failure"},
+		},
+		{
+			OccurredAt: now.Add(-30 * time.Minute),
+			ActorType:  "admin",
+			ActorID:    "other",
+			Action:     "admin.login",
+			TargetType: "session",
+			TargetID:   "session-b",
+			Metadata:   map[string]any{"success": false, "outcome": "success"},
+		},
+		{
+			OccurredAt: now.Add(-23 * time.Hour),
+			ActorType:  "admin",
+			ActorID:    "owner",
+			Action:     "device.enrolled",
+			TargetType: "device",
+			TargetID:   "phone",
+			Metadata:   map[string]any{"outcome": "success"},
+		},
+		{
+			OccurredAt: now.Add(-2 * time.Hour),
+			ActorType:  "admin",
+			ActorID:    "owner",
+			Action:     "device.revoked",
+			TargetType: "device",
+			TargetID:   "laptop",
+			Metadata:   map[string]any{"success": false},
+		},
+		{
+			OccurredAt: now.Add(-48 * time.Hour),
+			ActorType:  "device",
+			ActorID:    "phone",
+			Action:     "device.credential_rotated",
+			TargetType: "device",
+			TargetID:   "phone",
+			Metadata:   map[string]any{},
+		},
+		{
+			OccurredAt: now,
+			ActorType:  "system",
+			ActorID:    "worker",
+			Action:     "unregistered.event",
+			TargetType: "system",
+			TargetID:   "worker",
+			Metadata:   map[string]any{"success": "true"},
+		},
+	}
+	events = append(
+		events,
+		audit.Event{
+			OccurredAt: now.Add(-6 * time.Hour),
+			ActorType:  "admin",
+			ActorID:    "owner",
+			Action:     "invite.approved",
+			TargetType: "invite",
+			TargetID:   "invite-a",
+			Metadata:   map[string]any{"outcome": "success"},
+		},
+	)
+
+	for _, event := range events {
+		if err := repo.Write(t.Context(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cases := []struct {
+		name  string
+		query audit.Query
+		want  []string
+	}{
+		{
+			"intersection",
+			audit.Query{
+				Category: "devices",
+				Outcome:  "success",
+				ActorID:  "owner",
+				DeviceID: "phone",
+				Since:    now.Add(-24 * time.Hour),
+				Until:    now,
+			},
+			[]string{"device.enrolled"},
+		},
+		{
+			"boolean wins over string",
+			audit.Query{Category: "security", Outcome: "failure"},
+			[]string{"admin.login"},
+		},
+		{
+			"device as actor or target",
+			audit.Query{DeviceID: "phone"},
+			[]string{"device.credential_rotated", "device.enrolled"},
+		},
+		{
+			"unknown does not become success",
+			audit.Query{Outcome: "unknown"},
+			[]string{"unregistered.event", "device.credential_rotated"},
+		},
+		{
+			"unregistered system event",
+			audit.Query{Category: "system"},
+			[]string{"unregistered.event"},
+		},
+		{"parameterized action", audit.Query{Action: "' OR true --"}, nil},
+		{
+			"exclusive time bound",
+			audit.Query{Since: now, Until: now.Add(time.Second)},
+			[]string{"unregistered.event"},
+		},
+	}
+	cases = append(cases,
+		struct {
+			name  string
+			query audit.Query
+			want  []string
+		}{"access category", audit.Query{Category: "access"}, []string{"invite.approved"}},
+		struct {
+			name  string
+			query audit.Query
+			want  []string
+		}{"empty administrators category", audit.Query{Category: "administrators"}, nil},
+	)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := repo.ListRecords(t.Context(), tc.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got := make([]string, 0, len(rows))
+			for _, row := range rows {
+				got = append(got, row.Event.Action)
+			}
+
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("actions=%v want=%v", got, tc.want)
+			}
+			if tc.name == "boolean wins over string" && rows[0].Event.ActorID != "other" {
+				t.Fatal("false success must win over outcome success")
+			}
+		})
+	}
+
+	for _, q := range []audit.Query{{Category: "' OR true --"}, {Outcome: "maybe"}, {Since: now, Until: now.Add(-time.Hour)}} {
+		if _, err := repo.ListRecords(t.Context(), q); err == nil {
+			t.Fatal("invalid facet accepted at storage boundary")
+		}
 	}
 }
