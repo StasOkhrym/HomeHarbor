@@ -98,7 +98,7 @@ func (h *Handler) Routes() http.Handler {
 	router := chi.NewRouter()
 	router.Get("/", h.adminDashboard)
 	for _, page := range []string{
-		"setup", "devices", "services", "access", "network", "invites", "activity", "security", "connections",
+		"setup", "devices", "services", "access", "network", "invites", "activity", "security", "connections", "settings",
 	} {
 		router.Get("/"+page, h.adminView(page))
 	}

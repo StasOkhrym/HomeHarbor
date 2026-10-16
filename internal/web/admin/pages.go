@@ -30,7 +30,6 @@ func (s *Handler) loadAdminPage(r *http.Request, page string) (Page, int) {
 	case "overview":
 		s.loadDevices(ctx, &model)
 		s.loadServices(ctx, &model)
-		s.loadProfiles(ctx, &model)
 		s.loadRoutes(ctx, &model)
 		s.loadSignedReadiness(ctx, &model)
 	case "setup":

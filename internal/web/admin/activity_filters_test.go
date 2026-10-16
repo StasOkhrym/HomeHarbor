@@ -185,3 +185,27 @@ func TestActivityPeriodUsesUTCBounds(t *testing.T) {
 		t.Fatalf("period status=%d query=%+v", status, reader.query)
 	}
 }
+
+func TestActivityAdditionalFiltersOpenWhenSelected(t *testing.T) {
+	for _, selected := range []bool{false, true} {
+		model := NewPage("activity", "", "")
+		if selected {
+			model.Activity.Action = "admin.login"
+		}
+
+		response := httptest.NewRecorder()
+
+		RenderPage(response, http.StatusOK, model, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		markup := strings.Join(strings.Fields(response.Body.String()), " ")
+
+		if response.Code != http.StatusOK || !strings.Contains(markup, `class="filter-details"`) {
+			t.Fatal("missing contextual filter disclosure")
+		}
+
+		opened := strings.Contains(markup, `class="filter-details" open`)
+
+		if opened != selected {
+			t.Fatalf("selected filters hidden=%v", selected)
+		}
+	}
+}

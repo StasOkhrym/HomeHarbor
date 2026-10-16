@@ -17,7 +17,7 @@
         </dd>
         <dt>Connectivity</dt>
         <dd>
-          <span class="badge">Unknown</span>
+          <a href="/admin/connections?device_id={{.Device.ID}}">View runtime reports →</a>
         </dd>
         <dt>Registered</dt>
         <dd>
@@ -81,7 +81,8 @@
                   <a href="/admin/devices/{{.ID}}"><strong>{{.Name}}</strong></a>
                   <p class="muted">{{.Role}} · credentials {{.Status}}</p>
                 </div>
-                <span class="badge">Connection unknown</span>
+                <a href="/admin/connections?device_id={{.ID}}"
+                   aria-label="Runtime reports for {{.Name}}">Runtime reports →</a>
               </div>
             </li>
           {{else}}

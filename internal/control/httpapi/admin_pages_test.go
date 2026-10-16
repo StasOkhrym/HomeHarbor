@@ -255,7 +255,8 @@ func TestAdminPagesOnlyReadTheirOwnCollections(t *testing.T) {
 		profiles int
 		routes   int
 	}{
-		{"overview", 1, 1, 1, 1},
+		{"overview", 1, 1, 0, 1},
+		{"settings", 0, 0, 0, 0},
 		{"setup", 1, 0, 0, 1},
 		{"devices", 1, 0, 0, 0},
 		{"services", 0, 1, 0, 0},
@@ -270,6 +271,7 @@ func TestAdminPagesOnlyReadTheirOwnCollections(t *testing.T) {
 			serviceSpy := &pageServiceSpy{}
 			profileSpy := &pageProfileSpy{}
 			routeSpy := &pageRouteSpy{}
+
 			handler := newTestServer(deviceSpy, allowAuthorizer{}, Dependencies{
 				Resources: ResourceDependencies{
 					Services: serviceSpy,
@@ -282,7 +284,9 @@ func TestAdminPagesOnlyReadTheirOwnCollections(t *testing.T) {
 			if tc.page == "overview" {
 				path = "/admin/"
 			}
+
 			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+
 			if deviceSpy.listCalls != tc.devices || serviceSpy.listCalls != tc.services ||
 				profileSpy.listCalls != tc.profiles || routeSpy.listCalls != tc.routes {
 				t.Fatalf(

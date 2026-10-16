@@ -6,7 +6,7 @@
       <meta name="htmx-config"
             content='{"allowEval":false,"allowScriptTags":false,"historyCacheSize":0,"includeIndicatorStyles":false,"selfRequestsOnly":true}'>
       <title>{{.Title}} · HomeHarbor</title>
-      <link rel="stylesheet" href="/assets/admin.css?v=ui-4">
+      <link rel="stylesheet" href="/assets/admin.css?v=ui-5">
       <script src="/assets/htmx-2.0.11.min.js" defer></script>
       <script src="/assets/admin.js?v=ui-4" defer></script>
       <script src="/assets/live-poll.js?v=ui-1" defer></script>
@@ -31,7 +31,7 @@
             {{template "logout" .}}
           </div>
         </aside>
-        <main id="main-content" class="main-content">
+        <main id="main-content" class="main-content" tabindex="-1">
           <header class="page-header">
             <h1 id="page-title" tabindex="-1">{{.Title}}</h1>
             <p class="muted">{{.Description}}</p>
@@ -47,6 +47,8 @@
           {{if .Error}}
             <p class="alert alert-error" role="alert" tabindex="-1" data-form-error>{{.Error}}</p>
           {{end}}
+          {{template "section-navigation" .}}
+          {{if eq .Page "settings"}}{{template "settings" .}}{{end}}
           {{if eq .Page "overview"}}{{template "overview" .}}{{end}}
           {{if eq .Page "setup"}}{{template "setup" .}}{{end}}
           {{if eq .Page "devices"}}{{template "devices" .}}{{end}}
@@ -69,32 +71,24 @@
        hx-target="#admin-shell"
        hx-select="#admin-shell"
        hx-swap="outerHTML">
-    <a href="/admin/" {{if eq .Page "overview"}}aria-current="page"{{end}}>Overview</a>
+    <a href="/admin/"
+       {{if eq .Section "overview"}}aria-current="page"
+       {{end}}>Overview</a>
     <a href="/admin/devices"
-       {{if eq .Page "devices"}}aria-current="page"
+       {{if eq .Section "devices"}}aria-current="page"
        {{end}}>Devices</a>
     <a href="/admin/services"
-       {{if eq .Page "services"}}aria-current="page"
+       {{if eq .Section "services"}}aria-current="page"
        {{end}}>Services</a>
-    <a href="/admin/access"
-       {{if eq .Page "access"}}aria-current="page"
-       {{end}}>Access</a>
-    <a href="/admin/network"
-       {{if eq .Page "network"}}aria-current="page"
-       {{end}}>Network</a>
-    <a href="/admin/invites"
-       {{if eq .Page "invites"}}aria-current="page"
-       {{end}}>Invites</a>
     <a href="/admin/connections"
-       {{if eq .Page "connections"}}aria-current="page"
+       {{if eq .Section "connections"}}aria-current="page"
        {{end}}>Connections</a>
     <a href="/admin/activity"
-       {{if eq .Page "activity"}}aria-current="page"
+       {{if eq .Section "activity"}}aria-current="page"
        {{end}}>Activity</a>
-    <a href="/admin/setup" {{if eq .Page "setup"}}aria-current="page"{{end}}>Setup guide</a>
-    <a href="/admin/security"
-       {{if eq .Page "security"}}aria-current="page"
-       {{end}}>Security</a>
+    <a href="/admin/settings"
+       {{if eq .Section "settings"}}aria-current="page"
+       {{end}}>Settings</a>
   </nav>
 {{end}}
 {{define "logout"}}

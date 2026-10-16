@@ -11,25 +11,6 @@
         </select>
       </div>
       <div class="field">
-        <label for="activity-action">Action</label>
-        <select id="activity-action" name="action">
-          <option value="">All actions</option>
-          {{range .Activity.ActionOptions}}
-            <option value="{{.Value}}"
-                    {{if eq $.Activity.Action .Value}}selected{{end}}>{{.Label}}</option>
-          {{end}}
-        </select>
-      </div>
-      <div class="field">
-        <label for="activity-outcome">Result</label>
-        <select id="activity-outcome" name="outcome">
-          {{range .Activity.OutcomeOptions}}
-            <option value="{{.Value}}"
-                    {{if eq $.Activity.Outcome .Value}}selected{{end}}>{{.Label}}</option>
-          {{end}}
-        </select>
-      </div>
-      <div class="field">
         <label for="activity-period">Period</label>
         <select id="activity-period" name="period">
           {{range .Activity.PeriodOptions}}
@@ -47,35 +28,57 @@
           {{end}}
         </select>
       </div>
-      <div class="field">
-        <label for="activity-actor">Administrator</label>
-        <select id="activity-actor" name="actor_id">
-          {{range .Activity.ActorOptions}}
-            <option value="{{.Value}}"
-                    {{if eq $.Activity.ActorID .Value}}selected{{end}}>{{.Label}}</option>
-          {{end}}
-        </select>
-      </div>
-      <details class="advanced">
-        <summary>Advanced filters</summary>
-        <div class="field">
-          <label for="activity-limit">Number of recent events</label>
-          <input id="activity-limit"
-                 type="number"
-                 name="limit"
-                 min="1"
-                 max="200"
-                 value="{{.Activity.Limit}}">
-        </div>
-        <div class="field">
-          <label for="activity-target">Target ID</label>
-          <input id="activity-target"
-                 name="target_id"
-                 maxlength="128"
-                 value="{{.Activity.TargetID}}">
+      <button class="secondary" type="submit">Apply filters</button>
+      <details class="filter-details"
+               {{if or .Activity.Action .Activity.Outcome .Activity.ActorID .Activity.TargetID}}open{{end}}>
+        <summary>More filters</summary>
+        <div class="filter-fields">
+          <div class="field">
+            <label for="activity-action">Action</label>
+            <select id="activity-action" name="action">
+              <option value="">All actions</option>
+              {{range .Activity.ActionOptions}}
+                <option value="{{.Value}}"
+                        {{if eq $.Activity.Action .Value}}selected{{end}}>{{.Label}}</option>
+              {{end}}
+            </select>
+          </div>
+          <div class="field">
+            <label for="activity-outcome">Result</label>
+            <select id="activity-outcome" name="outcome">
+              {{range .Activity.OutcomeOptions}}
+                <option value="{{.Value}}"
+                        {{if eq $.Activity.Outcome .Value}}selected{{end}}>{{.Label}}</option>
+              {{end}}
+            </select>
+          </div>
+          <div class="field">
+            <label for="activity-actor">Administrator</label>
+            <select id="activity-actor" name="actor_id">
+              {{range .Activity.ActorOptions}}
+                <option value="{{.Value}}"
+                        {{if eq $.Activity.ActorID .Value}}selected{{end}}>{{.Label}}</option>
+              {{end}}
+            </select>
+          </div>
+          <div class="field">
+            <label for="activity-limit">Number of recent events</label>
+            <input id="activity-limit"
+                   type="number"
+                   name="limit"
+                   min="1"
+                   max="200"
+                   value="{{.Activity.Limit}}">
+          </div>
+          <div class="field">
+            <label for="activity-target">Target ID</label>
+            <input id="activity-target"
+                   name="target_id"
+                   maxlength="128"
+                   value="{{.Activity.TargetID}}">
+          </div>
         </div>
       </details>
-      <button class="secondary" type="submit">Apply filters</button>
     </form>
   </section>
   <div data-activity-live

@@ -1,0 +1,41 @@
+{{define "section-navigation"}}
+  {{if eq .Section "settings"}}
+    <nav class="section-nav" aria-label="Settings sections">
+      <a href="/admin/settings"
+         {{if eq .Page "settings"}}aria-current="page"
+         {{end}}>General</a>
+      <a href="/admin/access"
+         {{if eq .Page "access"}}aria-current="page"
+         {{end}}>Access</a>
+      <a href="/admin/network"
+         {{if eq .Page "network"}}aria-current="page"
+         {{end}}>Network</a>
+      <a href="/admin/security"
+         {{if eq .Page "security"}}aria-current="page"
+         {{end}}>Security</a>
+      <a href="/admin/setup" {{if eq .Page "setup"}}aria-current="page"{{end}}>Setup guide</a>
+    </nav>
+  {{end}}
+  {{if eq .Section "devices"}}
+    <nav class="section-nav" aria-label="Device sections">
+      <a href="/admin/devices"
+         {{if eq .Page "devices"}}aria-current="page"
+         {{end}}>Your devices</a>
+      <a href="/admin/invites"
+         {{if eq .Page "invites"}}aria-current="page"
+         {{end}}>Invitations</a>
+    </nav>
+  {{end}}
+{{end}}
+{{define "settings"}}
+  <section class="panel">
+    <h2>Your network, your rules</h2>
+    <ul class="resource-list settings-list">
+      <li><a href="/admin/access"><strong>Access</strong><span>Choose which devices can use each service.</span></a></li>
+      <li><a href="/admin/network"><strong>Network</strong><span>Review local routes and private DNS.</span></a></li>
+      <li><a href="/admin/security"><strong>Security</strong><span>Manage administrator access and network trust.</span></a></li>
+      <li><a href="/admin/setup"><strong>Setup guide</strong><span>Connect your first device or review the setup steps.</span></a></li>
+    </ul>
+  </section>
+  <p class="help">Appearance follows your device's light or dark setting.</p>
+{{end}}

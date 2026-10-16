@@ -1,7 +1,6 @@
 # Admin panel
 
-The English admin panel starts at `/admin/`. It is an operator interface, not
-an end-user VPN client. It calls application services directly through Chi
+The English admin panel starts at `/admin/`. It manages your home network; the VPN client is a separate application. It calls application services directly through Chi
 handlers; Go templates render typed view models. Self-hosted HTMX enhances
 navigation, while mutations remain ordinary HTML forms.
 
@@ -11,33 +10,49 @@ navigation, while mutations remain ordinary HTML forms.
   database. This does not authorize LAN traffic.
 - **Signed / Published:** the trusted companion signed a network snapshot and
   control accepted it. The private signing key never enters the panel.
-- **Gateway application unknown:** there is no application acknowledgement or
-  live direct/relay telemetry available to this UI. Registration is not online
-  status, and control readiness is not a working-tunnel test.
+- **Reported runtime:** Connections shows the reporting device, its applied
+  revision, available WireGuard counters, handshake observations and direct/relay
+  path. These are reported facts, not service reachability checks. Missing reports
+  and reports older than 90 seconds are unknown. A control outage does not mean
+  the VPN stopped; a graceful stop is reported after owned cleanup.
 
 Unavailable reads have an explicit error state, not an empty list or zero count.
 Control failures can therefore be distinguished from an unconfigured network.
 
 ## Navigation and supported actions
 
-| Screen      | Supported actions                                                               |
-| ----------- | ------------------------------------------------------------------------------- |
-| Overview    | Counts, pending routes, dependency readiness, published signed revision         |
-| Setup guide | Companion, gateway enrollment, route/DNS, catalog and verification instructions |
-| Devices     | Registration details, public identities, confirmed credential revoke            |
-| Services    | List and create web/native services, optional app and HTTPS health URLs         |
-| Access      | Create profiles by names; structured or JSON ACL preview and replacement        |
-| Network     | Create LAN route/DNS settings; approve or reject saved advertisements           |
-| Invites     | Companion instructions, status by invite ID, separate legacy token issuance     |
-| Activity    | Filter recent audit events, inspect older history and follow live updates       |
-| Security    | Account/recovery guidance, signing trust and sign-out                           |
+The primary navigation has six destinations: Overview, Devices, Services,
+Connections, Activity and Settings. Invitations are under Devices. Access,
+Network, Security and the setup guide are under Settings; their existing URLs
+continue to work. Appearance follows the device's light/dark preference.
+
+| Screen      | Supported actions                                                                                                                 |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Overview    | Device/service counts, pending routes, service catalog; configuration details expand on demand                                    |
+| Devices     | Registration details, public identities, confirmed credential revoke; Invitations contains signed invite status and legacy tokens |
+| Services    | List and create web/native services, optional app and HTTPS health URLs                                                           |
+| Connections | Latest per-device/runtime reports, source and freshness; optional device filter                                                   |
+| Activity    | Historical audit events, dropdown filters, older history and live updates                                                         |
+| Settings    | Access profiles/ACL preview, network routes/DNS, security and setup instructions                                                  |
 
 Activity reads at most 200 committed audit rows at a time (100 by default).
-Action and target ID filters use exact matches. A protected fragment refreshes
+Category, period and device dropdowns are always visible. More filters contains
+specific action, result, administrator, target ID and row limit; active additional
+filters keep that section open. Action and target ID filters use exact matches. A protected fragment refreshes
 the recent window every four seconds while the tab is visible; failed reads
 leave the last rows visible and mark the view stale. Reading older history or
 opening an event holds the visible list in place and announces newly discovered
-records. Event details show only selected non-secret audit metadata.
+records. Event details show selected non-secret metadata, including the actor,
+HTTP source IP, device/platform versions and subject names when available. Old
+rows remain unknown where the original producer did not capture a fact.
+
+Connections also refreshes every four seconds. Open details/focus stay in place
+while current values update; additions wait for an explicit apply. A failed
+refresh retains the rows but marks their current runtime state unknown. Each
+reporter retains its own counters; gateway/client observations are not summed.
+Older clients without telemetry keep working and show no self report. macOS
+runtime reports currently omit privileged WireGuard statistics; the installed
+helper is not silently replaced or granted broader access.
 
 There is no edit/delete UI, global invite list, service health probe, passkey
 management or recovery-code regeneration: those application operations are not

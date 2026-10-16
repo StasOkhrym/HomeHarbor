@@ -57,6 +57,7 @@ func LoadCollection[T any](
 // The admin handler loads it; this package owns template-facing state.
 type Page struct {
 	Page          string
+	Section       string
 	Title         string
 	Description   string
 	CSRF          string
@@ -89,7 +90,15 @@ type Page struct {
 
 func NewPage(page, csrf, noticeCode string) Page {
 	metadata := titles[page]
+	section := page
+	switch page {
+	case "invites":
+		section = "devices"
+	case "access", "network", "security", "setup":
+		section = "settings"
+	}
 	return Page{
+		Section:       section,
 		Page:          page,
 		Title:         metadata[0],
 		Description:   metadata[1],
@@ -104,6 +113,7 @@ func NewPage(page, csrf, noticeCode string) Page {
 }
 
 var titles = map[string][2]string{
+	"settings": {"Settings", "Manage who has access and how your network is configured."},
 	"overview": {"Overview", "Your network, without the guesswork."},
 	"setup": {
 		"Set up your network",
