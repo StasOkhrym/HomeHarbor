@@ -32,3 +32,10 @@ func CanonicalAddress(input string) (string, error) {
 
 	return value, nil
 }
+
+// Delivery errors deliberately carry no server reply, address or message body.
+var (
+	ErrInvalidMessage = errors.New("invalid mail message")
+	ErrTemporary      = errors.New("mail delivery temporarily unavailable")
+	ErrPermanent      = errors.New("mail delivery rejected")
+)
