@@ -29,11 +29,6 @@ func NewIdentityAuditor(sink AuditSink, now func() time.Time) *IdentityAuditor {
 // RecordIdentity persists an outcome and deliberately accepts no secret-bearing input.
 func (a *IdentityAuditor) RecordIdentity(ctx context.Context, action string, success bool) error {
 	facts := audit.FromContext(ctx).Safe()
-	// Until personal accounts migrate, successful legacy proof identifies the
-	// one legacy administrator. Anonymous failures never identify that owner.
-	if success && facts.ActorType == "unknown" {
-		facts.ActorType, facts.ActorID = "admin", "admin"
-	}
 	metadata := facts.Metadata()
 	metadata["success"] = success
 	return a.sink.Write(ctx, audit.Event{

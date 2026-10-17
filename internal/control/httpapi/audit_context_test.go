@@ -1,12 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"testing"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 )
 
 func TestRequestAuditFactsUseTrustedIPAndCoarseClient(t *testing.T) {
@@ -45,16 +47,48 @@ func TestRequestAuditFactsUseTrustedIPAndCoarseClient(t *testing.T) {
 	}
 }
 
-func TestAdminBoundaryAddsVerifiedLegacyActor(t *testing.T) {
+func TestAdminBoundaryAddsVerifiedPrincipalActor(t *testing.T) {
 	s := &Server{authorizer: allowAuthorizer{}}
 	var got audit.Context
+
 	h := s.requireAdmin(
 		http.HandlerFunc(
 			func(_ http.ResponseWriter, r *http.Request) { got = audit.FromContext(r.Context()) },
 		),
 	)
+
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/admin/activity", nil))
+
 	if got.ActorType != "admin" || got.ActorID != "admin" {
 		t.Fatalf("authenticated actor missing: %+v", got)
+	}
+}
+
+type personalAuthorizer struct{}
+
+func (personalAuthorizer) AdminPrincipal(
+	context.Context,
+	*http.Request,
+) (identity.Principal, error) {
+	return identity.Principal{
+		AccountID:   "account-a",
+		Email:       "a@example.test",
+		Role:        identity.RoleAdmin,
+		Purpose:     identity.SessionAdmin,
+		Method:      "totp",
+		AuthVersion: 3,
+	}, nil
+}
+
+func TestAdminBoundaryUsesVerifiedPersonalAuditIdentity(t *testing.T) {
+	server := &Server{authorizer: personalAuthorizer{}}
+	var facts audit.Context
+
+	server.requireAdmin(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { facts = audit.FromContext(r.Context()) })).
+		ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/admin/activity", nil))
+
+	if facts.ActorID != "account-a" || facts.ActorName != "a@example.test" ||
+		facts.Authentication != "password_totp" {
+		t.Fatalf("personal authority collapsed into global administrator: %+v", facts)
 	}
 }

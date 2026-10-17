@@ -14,6 +14,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/httpapi"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
@@ -22,11 +23,11 @@ import (
 
 type bootstrapAuthorizer struct{}
 
-func (bootstrapAuthorizer) IsAdmin(
+func (bootstrapAuthorizer) AdminPrincipal(
 	context.Context,
 	*http.Request,
-) (bool, error) {
-	return false, nil
+) (identity.Principal, error) {
+	return identity.Principal{}, identity.ErrInvalidCredential
 }
 
 func TestLoadAndSignInitialSnapshotManifest(t *testing.T) {

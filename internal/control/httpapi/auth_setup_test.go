@@ -34,19 +34,22 @@ func TestLoginPageSelectsSetupState(t *testing.T) {
 			func(t *testing.T) {
 				store := memoryidentity.NewRepository()
 				if registered {
-					if err := store.SaveCredential(
+					if err := store.SaveBootstrapCredential(
 						context.Background(),
-						[]byte("admin"),
+						[]byte("homeharbor-admin-v1"),
 						webauthn.Credential{ID: []byte("key")},
 					); err != nil {
 						t.Fatal(err)
 					}
 				}
+
 				auth := newSetupAuth(t, store)
 				response := httptest.NewRecorder()
+
 				auth.LoginHandler().
 					ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/admin/login", nil))
 				body := response.Body.String()
+
 				if response.Code != http.StatusOK {
 					t.Fatalf("status=%d body=%s", response.Code, body)
 				}

@@ -13,18 +13,25 @@ import (
 )
 
 type entropySessions struct {
-	revoked string
+	revoked   string
+	principal identity.Principal
 }
 
-func (*entropySessions) GenerateRecoveryCodes(context.Context, int) ([]string, error) {
+func (*entropySessions) GenerateRecoveryCodes(
+	context.Context,
+	identity.AccountScope,
+	int,
+) ([]string, error) {
 	return nil, nil
 }
 
-func (*entropySessions) ConsumeRecoveryCode(context.Context, string) error { return nil }
+func (*entropySessions) ConsumeRecoveryCode(context.Context, identity.AccountScope, string) error {
+	return nil
+}
 
 func (*entropySessions) CreateSession(
 	context.Context,
-	time.Duration,
+	identity.SessionRequest,
 ) (identity.IssuedSession, error) {
 	return identity.IssuedSession{
 		Token:     "issued-session",
@@ -32,8 +39,8 @@ func (*entropySessions) CreateSession(
 	}, nil
 }
 
-func (*entropySessions) ValidateSession(context.Context, string) (identity.Session, error) {
-	return identity.Session{}, nil
+func (s *entropySessions) ValidateSession(context.Context, string) (identity.Principal, error) {
+	return s.principal, nil
 }
 
 func (s *entropySessions) RevokeSession(_ context.Context, token string) error {
@@ -50,16 +57,21 @@ func TestCSRFEntropyFailureRevokesUnusableSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	previous := readRandom
 	readRandom = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
 	t.Cleanup(func() { readRandom = previous })
+
 	if _, err := auth.csrfCookie("issued-session", time.Now().Add(time.Hour)); err == nil {
 		t.Fatal("csrfCookie() error = nil")
 	}
+
 	response := httptest.NewRecorder()
-	if err := auth.establishSession(response, context.Background()); err == nil {
+
+	if err := auth.establishSession(response, context.Background(), "passkey"); err == nil {
 		t.Fatal("establishSession() error = nil")
 	}
+
 	if sessions.revoked != "issued-session" || len(response.Result().Cookies()) != 0 {
 		t.Fatalf(
 			"orphan session or cookies: revoked=%q cookies=%v",
@@ -67,6 +79,7 @@ func TestCSRFEntropyFailureRevokesUnusableSession(t *testing.T) {
 			response.Result().Cookies(),
 		)
 	}
+
 	if got := response.Code; got != http.StatusOK {
 		t.Fatalf("establishSession unexpectedly wrote a response: %d", got)
 	}

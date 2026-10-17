@@ -13,6 +13,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/httpapi"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
 	controlsnapshots "github.com/StasOkhrym/homeharbor/internal/control/snapshots"
 	"github.com/StasOkhrym/homeharbor/internal/invite"
@@ -307,4 +308,15 @@ func TestValidateControlEndpointRejectsUnsafeDestinations(t *testing.T) {
 
 type allowAllAuthorizer struct{}
 
-func (allowAllAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) { return true, nil }
+func (allowAllAuthorizer) AdminPrincipal(
+	context.Context,
+	*http.Request,
+) (identity.Principal, error) {
+	return identity.Principal{
+		AccountID:   "admin",
+		Role:        identity.RoleAdmin,
+		Purpose:     identity.SessionAdmin,
+		Method:      "passkey",
+		AuthVersion: 1,
+	}, nil
+}

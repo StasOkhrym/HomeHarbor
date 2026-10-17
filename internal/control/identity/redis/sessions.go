@@ -12,7 +12,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 )
 
-// Sessions stores only hashed browser identifiers and timestamps. Its versioned
+// Sessions stores only hashed browser identifiers and scoped authority references. Its versioned
 // namespace is the sole session authority after upgrade: old SQL sessions are
 // deliberately not imported, so existing browsers must authenticate again.
 type Sessions struct {
@@ -32,12 +32,14 @@ func NewSessions(
 	if client == nil || timeout <= 0 {
 		return nil, errors.New("session client and positive operation timeout are required")
 	}
+
 	if now == nil {
 		now = time.Now
 	}
+
 	return &Sessions{
 		client:  client,
-		prefix:  prefix + ":browser-session:v1:",
+		prefix:  prefix + ":browser-session:principal:",
 		now:     now,
 		timeout: timeout,
 	}, nil

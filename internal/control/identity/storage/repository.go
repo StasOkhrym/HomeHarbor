@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jackc/pgx/v5"
@@ -17,21 +16,31 @@ type Repository struct{ pool *pgxpool.Pool }
 
 func New(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
 
-func (s *Repository) SaveRecoveryCodes(ctx context.Context, codes []identity.RecoveryCode) error {
+func (s *Repository) SaveRecoveryCodes(
+	ctx context.Context,
+	scope identity.AccountScope,
+	codes []identity.RecoveryCode,
+) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	// Rotation is a set replacement, not an append. Deleting and inserting in
-	// one transaction prevents old and new emergency credentials overlapping.
-	if _, err = tx.Exec(ctx, `DELETE FROM recovery_codes`); err != nil {
+	if err := lockAccountScope(ctx, tx, scope); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(
+		ctx,
+		`DELETE FROM recovery_codes WHERE account_id=$1`,
+		scope.AccountID,
+	); err != nil {
 		return err
 	}
 	for _, code := range codes {
 		if _, err = tx.Exec(
 			ctx,
-			`INSERT INTO recovery_codes(code_hash,created_at) VALUES($1,$2)`,
+			`INSERT INTO recovery_codes(account_id,code_hash,created_at) VALUES($1,$2,$3)`,
+			scope.AccountID,
 			code.Hash[:],
 			code.CreatedAt,
 		); err != nil {
@@ -107,7 +116,7 @@ func (s *Repository) Credential(
 	return credential, nil
 }
 
-func (s *Repository) SaveCredential(
+func (s *Repository) SaveBootstrapCredential(
 	ctx context.Context,
 	userHandle []byte,
 	credential webauthn.Credential,
@@ -116,28 +125,54 @@ func (s *Repository) SaveCredential(
 	if err != nil {
 		return err
 	}
+
 	transports := make([]string, len(credential.Transport))
 	for index, transport := range credential.Transport {
 		transports[index] = string(transport)
 	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Bootstrap admission is checked under the same account-row lock used by
+	// activation. A configured TOTP-only owner may have no passkey rows; that
+	// absence must never authorize a new unauthenticated bootstrap key.
+	var ownerID, status string
+
+	if err = tx.QueryRow(ctx, `SELECT account_id,status FROM admin_accounts WHERE user_handle=$1 FOR UPDATE`, userHandle).
+		Scan(&ownerID, &status); errors.Is(
+		err,
+		pgx.ErrNoRows,
+	) {
+		return identity.ErrBootstrapClosed
+	} else if err != nil {
+		return err
+	}
+
+	if ownerID != identity.OwnerAccountID || status != string(identity.AccountSetup) {
+		return identity.ErrBootstrapClosed
+	}
+
 	// A table lock serializes the empty-set check with the first insert. Row
 	// locks cannot protect an absence, which is the state bootstrap relies on.
 	if _, err = tx.Exec(ctx, `LOCK TABLE webauthn_credentials IN EXCLUSIVE MODE`); err != nil {
 		return err
 	}
+
 	var exists bool
+
 	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM webauthn_credentials WHERE user_handle=$1)`, userHandle).
 		Scan(&exists); err != nil {
 		return err
 	}
+
 	if exists {
 		return identity.ErrBootstrapClosed
 	}
+
 	if _, err = tx.Exec(
 		ctx,
 		`INSERT INTO webauthn_credentials(credential_id,public_key,attestation_type,transport,sign_count,user_handle,credential_data) VALUES($1,$2,$3,$4,$5,$6,$7)`,
@@ -151,6 +186,7 @@ func (s *Repository) SaveCredential(
 	); err != nil {
 		return err
 	}
+
 	return tx.Commit(ctx)
 }
 
@@ -201,14 +237,21 @@ func (s *Repository) UpdateCredential(
 	return tx.Commit(ctx)
 }
 
-func (s *Repository) ConsumeRecoveryCode(ctx context.Context, hash [32]byte, now time.Time) error {
-	// The predicate and update execute as one statement, so concurrent replicas
-	// cannot both observe an unused code before either marks it consumed.
-	tag, err := s.pool.Exec(
+func (s *Repository) ConsumeRecoveryCode(ctx context.Context, use identity.RecoveryUse) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockAccountScope(ctx, tx, use.Scope); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(
 		ctx,
-		`UPDATE recovery_codes SET used_at=$2 WHERE code_hash=$1 AND used_at IS NULL`,
-		hash[:],
-		now,
+		`UPDATE recovery_codes SET used_at=$3 WHERE account_id=$1 AND code_hash=$2 AND used_at IS NULL`,
+		use.Scope.AccountID,
+		use.Hash[:],
+		use.UsedAt,
 	)
 	if err != nil {
 		return err
@@ -216,7 +259,7 @@ func (s *Repository) ConsumeRecoveryCode(ctx context.Context, hash [32]byte, now
 	if tag.RowsAffected() != 1 {
 		return identity.ErrInvalidCredential
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 var (

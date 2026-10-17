@@ -39,8 +39,12 @@ func TestBrowserAuthUsesInjectedLoggerForFailedAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	if authorized, err := auth.IsAdmin(request.Context(), request); authorized || err != nil {
-		t.Fatalf("missing session authorized=%v err=%v", authorized, err)
+	if principal, err := auth.AdminPrincipal(
+		request.Context(),
+		request,
+	); principal.CanManageNetwork() ||
+		!errors.Is(err, identity.ErrInvalidCredential) {
+		t.Fatalf("missing session principal=%v err=%v", principal, err)
 	}
 	if output := logs.String(); !strings.Contains(output, `"msg":"persist identity audit event"`) ||
 		!strings.Contains(output, `"action":"admin.auth"`) ||
@@ -50,28 +54,33 @@ func TestBrowserAuthUsesInjectedLoggerForFailedAudit(t *testing.T) {
 }
 
 type fakeSessions struct {
-	session  identity.IssuedSession
-	valid    string
-	recovery string
-	revoked  string
-	failure  error
+	session   identity.IssuedSession
+	valid     string
+	recovery  string
+	revoked   string
+	failure   error
+	principal identity.Principal
 }
 
 func (f *fakeSessions) CreateSession(
 	context.Context,
-	time.Duration,
+	identity.SessionRequest,
 ) (identity.IssuedSession, error) {
 	return f.session, f.failure
 }
 
-func (f *fakeSessions) ValidateSession(_ context.Context, token string) (identity.Session, error) {
+func (f *fakeSessions) ValidateSession(
+	_ context.Context,
+	token string,
+) (identity.Principal, error) {
 	if f.failure != nil {
-		return identity.Session{}, f.failure
+		return identity.Principal{}, f.failure
 	}
 	if token != f.valid || !time.Now().Before(f.session.ExpiresAt) {
-		return identity.Session{}, identity.ErrInvalidCredential
+		return identity.Principal{}, identity.ErrInvalidCredential
 	}
-	return identity.Session{ExpiresAt: f.session.ExpiresAt}, nil
+
+	return f.principal, nil
 }
 
 func (f *fakeSessions) RevokeSession(_ context.Context, token string) error {
@@ -79,14 +88,23 @@ func (f *fakeSessions) RevokeSession(_ context.Context, token string) error {
 	return f.failure
 }
 
-func (f *fakeSessions) ConsumeRecoveryCode(_ context.Context, code string) error {
+func (f *fakeSessions) ConsumeRecoveryCode(
+	_ context.Context,
+	_ identity.AccountScope,
+	code string,
+) error {
 	if code != f.recovery {
 		return identity.ErrInvalidCredential
 	}
+
 	return nil
 }
 
-func (f *fakeSessions) GenerateRecoveryCodes(context.Context, int) ([]string, error) {
+func (f *fakeSessions) GenerateRecoveryCodes(
+	context.Context,
+	identity.AccountScope,
+	int,
+) ([]string, error) {
 	return []string{"save-once"}, nil
 }
 
@@ -112,6 +130,13 @@ func newBrowserAuthTest(t *testing.T) (*webauth.BrowserAuth, *fakeSessions) {
 	t.Helper()
 	expires := time.Now().Add(time.Hour).UTC()
 	sessions := &fakeSessions{
+		principal: identity.Principal{
+			AccountID:   "account-a",
+			Role:        identity.RoleAdmin,
+			Purpose:     identity.SessionAdmin,
+			Method:      "passkey",
+			AuthVersion: 1,
+		},
 		session:  identity.IssuedSession{Token: "opaque-session", ExpiresAt: expires},
 		valid:    "opaque-session",
 		recovery: "recover-me",
@@ -231,23 +256,45 @@ func TestBrowserSessionOutageReturns503WithoutIssuingCookies(t *testing.T) {
 
 func TestSignedSessionRejectsTamperingAndExpiry(t *testing.T) {
 	auth, sessions := newBrowserAuthTest(t)
+
 	cookie := browserSessionCookie(t, sessions.session)
 	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+
 	req.AddCookie(cookie)
-	if authorized, err := auth.IsAdmin(req.Context(), req); !authorized || err != nil {
+
+	if principal, err := auth.AdminPrincipal(
+		req.Context(),
+		req,
+	); !principal.CanManageNetwork() ||
+		err != nil {
 		t.Fatal("valid session rejected")
 	}
+
 	cookie.Value += "x"
 	req = httptest.NewRequest(http.MethodGet, "/admin", nil)
+
 	req.AddCookie(cookie)
-	if authorized, err := auth.IsAdmin(req.Context(), req); authorized || err != nil {
+
+	if principal, err := auth.AdminPrincipal(
+		req.Context(),
+		req,
+	); principal.CanManageNetwork() ||
+		!errors.Is(err, identity.ErrInvalidCredential) {
 		t.Fatal("tampered cookie accepted")
 	}
+
 	sessions.session.ExpiresAt = time.Now().Add(-time.Second)
+
 	cookie = browserSessionCookie(t, sessions.session)
 	req = httptest.NewRequest(http.MethodGet, "/", nil)
+
 	req.AddCookie(cookie)
-	if authorized, err := auth.IsAdmin(req.Context(), req); authorized || err != nil {
+
+	if principal, err := auth.AdminPrincipal(
+		req.Context(),
+		req,
+	); principal.CanManageNetwork() ||
+		!errors.Is(err, identity.ErrInvalidCredential) {
 		t.Fatal("expired session accepted")
 	}
 }
@@ -372,5 +419,49 @@ func TestLoginPageUsesLocalScriptAsset(t *testing.T) {
 	if asset.Code != http.StatusOK ||
 		!strings.Contains(asset.Body.String(), "navigator.credentials") {
 		t.Fatalf("login asset status=%d body=%s", asset.Code, asset.Body.String())
+	}
+}
+
+func TestMigrationPrincipalCannotAuthorizeAdminReadOrMutation(t *testing.T) {
+	for _, kind := range []string{"read", "mutation"} {
+		t.Run(kind, func(t *testing.T) {
+			auth, sessions := newBrowserAuthTest(t)
+			sessions.principal = identity.Principal{
+				AccountID:   identity.OwnerAccountID,
+				Role:        identity.RoleOwner,
+				Purpose:     identity.SessionMigration,
+				Method:      "passkey",
+				AuthVersion: 1,
+			}
+			request := httptest.NewRequest(http.MethodPost, "/admin/services", nil)
+			request.Header.Set("Origin", "https://tunnel.example.com")
+			request.AddCookie(browserSessionCookie(t, sessions.session))
+
+			csrf, err := browserCSRFCookie(t, sessions.session)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			request.AddCookie(csrf)
+			request.Header.Set(websession.CSRFHeaderName, csrf.Value)
+			var allowed bool
+			if kind == "read" {
+				principal, authErr := auth.AdminPrincipal(request.Context(), request)
+				allowed = authErr == nil && principal.CanManageNetwork()
+
+				err = authErr
+			} else {
+				allowed, err = auth.AuthorizeMutation(request.Context(), request)
+			}
+
+			if allowed || (err != nil && !errors.Is(err, identity.ErrInvalidCredential)) {
+				t.Fatalf(
+					"migration principal acquired %s authority: allowed=%v err=%v",
+					kind,
+					allowed,
+					err,
+				)
+			}
+		})
 	}
 }

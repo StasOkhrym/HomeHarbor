@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
 )
 
@@ -102,7 +103,18 @@ func TestRecoverMiddlewareReturnsStableInternalError(t *testing.T) {
 
 type readOnlyAuthorizer struct{}
 
-func (readOnlyAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) { return true, nil }
+func (readOnlyAuthorizer) AdminPrincipal(
+	context.Context,
+	*http.Request,
+) (identity.Principal, error) {
+	return identity.Principal{
+		AccountID:   "admin",
+		Role:        identity.RoleAdmin,
+		Purpose:     identity.SessionAdmin,
+		Method:      "passkey",
+		AuthVersion: 1,
+	}, nil
+}
 
 func TestAdminMutationRequiresExplicitMutationAuthorization(t *testing.T) {
 	server := mustTestServer(

@@ -96,6 +96,7 @@ func buildHTTP(
 	identityService := identity.NewService(
 		identityStore,
 		sessionStore,
+		identityStore,
 		time.Now,
 		nil,
 	)

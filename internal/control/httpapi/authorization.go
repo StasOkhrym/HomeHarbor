@@ -2,20 +2,25 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 )
 
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var authorized bool
+		var principal identity.Principal
 		var err error
 		if s.authorizer != nil {
-			authorized, err = s.authorizer.IsAdmin(r.Context(), r)
+			principal, err = s.authorizer.AdminPrincipal(r.Context(), r)
+			authorized = err == nil && principal.CanManageNetwork()
 		}
+
 		if authorized && r.Method != http.MethodGet && r.Method != http.MethodHead &&
 			r.Method != http.MethodOptions {
 			authorized = false
@@ -23,6 +28,12 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 				authorized, err = s.mutationAuthorizer(r.Context(), r)
 			}
 		}
+
+		if errors.Is(err, identity.ErrInvalidCredential) {
+			err = nil
+			authorized = false
+		}
+
 		if err != nil {
 			writeError(w, http.StatusServiceUnavailable, "authentication state unavailable")
 			return
@@ -39,12 +50,18 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 					return
 				}
 			}
+
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+
 		facts := audit.FromContext(r.Context())
-		facts.ActorType, facts.ActorID = "admin", "admin"
-		next.ServeHTTP(w, r.WithContext(audit.WithContext(r.Context(), facts)))
+		facts.ActorType, facts.ActorID, facts.ActorName = "admin", principal.AccountID, principal.Email
+		facts.Authentication = "password_" + principal.Method
+		next.ServeHTTP(
+			w,
+			r.WithContext(identity.WithPrincipal(audit.WithContext(r.Context(), facts), principal)),
+		)
 	})
 }
 

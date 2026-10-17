@@ -17,17 +17,27 @@ func TestGenerateRecoveryCodesStoresOnlyHashes(t *testing.T) {
 	service := domainpkg.NewService(
 		store,
 		store,
+		store,
 		func() time.Time { return time.Unix(100, 0) },
 		&sequenceReader{next: 'r'},
 	)
 
-	codes, err := service.GenerateRecoveryCodes(context.Background(), 3)
+	codes, err := service.GenerateRecoveryCodes(
+		context.Background(),
+		domainpkg.AccountScope{
+			AccountID: domainpkg.OwnerAccountID,
+			Purpose:   domainpkg.SessionMigration,
+		},
+		3,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(codes) != 3 {
 		t.Fatalf("codes = %d", len(codes))
 	}
+
 	for _, code := range codes {
 		if code == "" {
 			t.Fatal("empty recovery code")
@@ -43,10 +53,19 @@ func TestRecoveryCodeCanBeConsumedOnlyOnceConcurrently(t *testing.T) {
 	service := domainpkg.NewService(
 		store,
 		store,
+		store,
 		func() time.Time { return time.Unix(100, 0) },
 		&sequenceReader{next: 'c'},
 	)
-	codes, err := service.GenerateRecoveryCodes(context.Background(), 1)
+
+	codes, err := service.GenerateRecoveryCodes(
+		context.Background(),
+		domainpkg.AccountScope{
+			AccountID: domainpkg.OwnerAccountID,
+			Purpose:   domainpkg.SessionMigration,
+		},
+		1,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,12 +76,22 @@ func TestRecoveryCodeCanBeConsumedOnlyOnceConcurrently(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			if service.ConsumeRecoveryCode(context.Background(), codes[0]) == nil {
+
+			if service.ConsumeRecoveryCode(
+				context.Background(),
+				domainpkg.AccountScope{
+					AccountID: domainpkg.OwnerAccountID,
+					Purpose:   domainpkg.SessionMigration,
+				},
+				codes[0],
+			) == nil {
 				successes.Add(1)
 			}
 		}()
 	}
+
 	group.Wait()
+
 	if successes.Load() != 1 {
 		t.Fatalf("successful consumes = %d", successes.Load())
 	}
@@ -70,22 +99,35 @@ func TestRecoveryCodeCanBeConsumedOnlyOnceConcurrently(t *testing.T) {
 
 func TestSessionExpiresAndCanBeRevoked(t *testing.T) {
 	store := memorystore.NewRepository()
+
 	now := time.Unix(100, 0)
 	service := domainpkg.NewService(
+		store,
 		store,
 		store,
 		func() time.Time { return now },
 		&sequenceReader{next: 's'},
 	)
 
-	issued, err := service.CreateSession(context.Background(), time.Hour)
+	issued, err := service.CreateSession(
+		context.Background(),
+		domainpkg.SessionRequest{
+			AccountID: domainpkg.OwnerAccountID,
+			Purpose:   domainpkg.SessionMigration,
+			Method:    "passkey",
+			TTL:       time.Hour,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err = service.ValidateSession(context.Background(), issued.Token); err != nil {
 		t.Fatal(err)
 	}
+
 	now = now.Add(time.Hour)
+
 	if _, err = service.ValidateSession(
 		context.Background(),
 		issued.Token,
@@ -97,13 +139,24 @@ func TestSessionExpiresAndCanBeRevoked(t *testing.T) {
 	}
 
 	now = time.Unix(100, 0)
-	issued, err = service.CreateSession(context.Background(), time.Hour)
+
+	issued, err = service.CreateSession(
+		context.Background(),
+		domainpkg.SessionRequest{
+			AccountID: domainpkg.OwnerAccountID,
+			Purpose:   domainpkg.SessionMigration,
+			Method:    "passkey",
+			TTL:       time.Hour,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err = service.RevokeSession(context.Background(), issued.Token); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err = service.ValidateSession(
 		context.Background(),
 		issued.Token,
@@ -119,9 +172,11 @@ func TestInvalidSessionTokenUsesGenericError(t *testing.T) {
 	service := domainpkg.NewService(
 		memorystore.NewRepository(),
 		memorystore.NewRepository(),
+		memorystore.NewRepository(),
 		time.Now,
 		&sequenceReader{next: 'x'},
 	)
+
 	if _, err := service.ValidateSession(
 		context.Background(),
 		"unknown",
@@ -145,7 +200,8 @@ func (unavailableSessions) RevokeSession(context.Context, [32]byte, time.Time) e
 
 func TestSessionStoreOutageIsNotAnInvalidCredential(t *testing.T) {
 	store := unavailableSessions{memorystore.NewRepository()}
-	service := domainpkg.NewService(store, store, time.Now, nil)
+	service := domainpkg.NewService(store, store, store, time.Now, nil)
+
 	if _, err := service.ValidateSession(
 		context.Background(),
 		"opaque",
@@ -155,6 +211,7 @@ func TestSessionStoreOutageIsNotAnInvalidCredential(t *testing.T) {
 	) {
 		t.Fatalf("lookup outage was hidden: %v", err)
 	}
+
 	if err := service.RevokeSession(
 		context.Background(),
 		"opaque",

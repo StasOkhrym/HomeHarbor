@@ -36,10 +36,10 @@ type PasskeyCeremonies interface {
 
 // AdminSessions keeps opaque session and recovery credentials out of handlers.
 type AdminSessions interface {
-	GenerateRecoveryCodes(context.Context, int) ([]string, error)
-	ConsumeRecoveryCode(context.Context, string) error
-	CreateSession(context.Context, time.Duration) (identity.IssuedSession, error)
-	ValidateSession(context.Context, string) (identity.Session, error)
+	GenerateRecoveryCodes(context.Context, identity.AccountScope, int) ([]string, error)
+	ConsumeRecoveryCode(context.Context, identity.AccountScope, string) error
+	CreateSession(context.Context, identity.SessionRequest) (identity.IssuedSession, error)
+	ValidateSession(context.Context, string) (identity.Principal, error)
 	RevokeSession(context.Context, string) error
 }
 
@@ -134,21 +134,41 @@ func (a *BrowserAuth) LoginHandler() http.Handler { return http.HandlerFunc(a.lo
 // not need an inline-script exception or a third-party CDN dependency.
 func (a *BrowserAuth) LoginAssetHandler() http.Handler { return http.HandlerFunc(a.loginAsset) }
 
-// IsAdmin requires both a valid cookie signature and a live server-side session.
-func (a *BrowserAuth) IsAdmin(ctx context.Context, request *http.Request) (bool, error) {
+// AdminPrincipal requires both a signed cookie and current personal account
+// authority. Restricted migration proofs can never enter protected admin routes.
+func (a *BrowserAuth) AdminPrincipal(
+	ctx context.Context,
+	request *http.Request,
+) (identity.Principal, error) {
+	principal, err := a.sessionPrincipal(ctx, request)
+	if err != nil {
+		return identity.Principal{}, err
+	}
+	if !principal.CanManageNetwork() {
+		a.audit(ctx, "admin.auth", false)
+		return identity.Principal{}, identity.ErrInvalidCredential
+	}
+
+	return principal, nil
+}
+
+func (a *BrowserAuth) sessionPrincipal(
+	ctx context.Context,
+	request *http.Request,
+) (identity.Principal, error) {
 	token, ok := a.sessionToken(request)
 	if !ok {
 		a.audit(ctx, "admin.auth", false)
-		return false, nil
+		return identity.Principal{}, identity.ErrInvalidCredential
 	}
-	_, err := a.sessions.ValidateSession(ctx, token)
+
+	principal, err := a.sessions.ValidateSession(ctx, token)
 	if err != nil {
 		a.audit(ctx, "admin.auth", false)
+		return identity.Principal{}, err
 	}
-	if errors.Is(err, identity.ErrInvalidCredential) {
-		return false, nil
-	}
-	return err == nil, err
+
+	return principal, nil
 }
 
 // AuthorizeMutation additionally binds state-changing requests to their CSRF cookie.
@@ -158,15 +178,18 @@ func (a *BrowserAuth) AuthorizeMutation(ctx context.Context, request *http.Reque
 	if strings.TrimSuffix(request.Header.Get("Origin"), "/") != a.origin {
 		return false, nil
 	}
+
 	token, ok := a.sessionToken(request)
 	if !ok || !a.validCSRF(request, token) {
 		return false, nil
 	}
-	_, err := a.sessions.ValidateSession(ctx, token)
+
+	principal, err := a.sessions.ValidateSession(ctx, token)
 	if errors.Is(err, identity.ErrInvalidCredential) {
 		return false, nil
 	}
-	return err == nil, err
+
+	return err == nil && principal.CanManageNetwork(), err
 }
 
 func (a *BrowserAuth) sessionToken(request *http.Request) (string, bool) {
@@ -177,8 +200,20 @@ func (a *BrowserAuth) sessionCookie(session identity.IssuedSession) *http.Cookie
 	return a.codec.SessionCookie(session.Token, session.ExpiresAt)
 }
 
-func (a *BrowserAuth) establishSession(w http.ResponseWriter, ctx context.Context) error {
-	session, err := a.sessions.CreateSession(ctx, a.sessionTTL)
+func (a *BrowserAuth) establishSession(
+	w http.ResponseWriter,
+	ctx context.Context,
+	method string,
+) error {
+	session, err := a.sessions.CreateSession(
+		ctx,
+		identity.SessionRequest{
+			AccountID: identity.OwnerAccountID,
+			Purpose:   identity.SessionMigration,
+			Method:    method,
+			TTL:       a.sessionTTL,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -292,12 +327,20 @@ func (a *BrowserAuth) finishBootstrap(w http.ResponseWriter, r *http.Request) {
 		httpresponse.WriteError(w, http.StatusUnauthorized, "invalid ceremony")
 		return
 	}
-	codes, err := a.sessions.GenerateRecoveryCodes(r.Context(), 10)
+	r = r.WithContext(legacyProofAuditContext(r.Context(), "passkey"))
+	codes, err := a.sessions.GenerateRecoveryCodes(
+		r.Context(),
+		identity.AccountScope{
+			AccountID: identity.OwnerAccountID,
+			Purpose:   identity.SessionMigration,
+		},
+		10,
+	)
 	if err != nil {
 		a.writeBootstrapFailure(w, r, err, "bootstrap_recovery_unavailable")
 		return
 	}
-	if err = a.establishSession(w, r.Context()); err != nil {
+	if err = a.establishSession(w, r.Context(), "passkey"); err != nil {
 		a.writeBootstrapFailure(w, r, err, "bootstrap_session_unavailable")
 		return
 	}
@@ -334,19 +377,24 @@ func (a *BrowserAuth) finishLogin(w http.ResponseWriter, r *http.Request) {
 	if !httpresponse.DecodeJSON(w, r, &input) {
 		return
 	}
+
 	if _, err := a.passkeys.FinishLogin(r.Context(), input.CeremonyID, input.Response); err != nil {
 		if errors.Is(err, identity.ErrSecurityStateUnavailable) {
 			httpresponse.WriteError(w, http.StatusServiceUnavailable, "security state unavailable")
 			return
 		}
+
 		a.audit(r.Context(), "admin.login", false)
 		httpresponse.WriteError(w, http.StatusUnauthorized, "invalid credential")
 		return
 	}
-	if err := a.establishSession(w, r.Context()); err != nil {
+
+	r = r.WithContext(legacyProofAuditContext(r.Context(), "passkey"))
+	if err := a.establishSession(w, r.Context(), "passkey"); err != nil {
 		a.writeSessionError(w, err)
 		return
 	}
+
 	a.audit(r.Context(), "admin.login", true)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -358,15 +406,26 @@ func (a *BrowserAuth) recoveryLogin(w http.ResponseWriter, r *http.Request) {
 	if !httpresponse.DecodeJSON(w, r, &input) {
 		return
 	}
-	if err := a.sessions.ConsumeRecoveryCode(r.Context(), input.Code); err != nil {
+
+	if err := a.sessions.ConsumeRecoveryCode(
+		r.Context(),
+		identity.AccountScope{
+			AccountID: identity.OwnerAccountID,
+			Purpose:   identity.SessionMigration,
+		},
+		input.Code,
+	); err != nil {
 		a.audit(r.Context(), "admin.recovery", false)
 		httpresponse.WriteError(w, http.StatusUnauthorized, "invalid credential")
 		return
 	}
-	if err := a.establishSession(w, r.Context()); err != nil {
+
+	r = r.WithContext(legacyProofAuditContext(r.Context(), "identity_proof"))
+	if err := a.establishSession(w, r.Context(), "recovery"); err != nil {
 		a.writeSessionError(w, err)
 		return
 	}
+
 	a.audit(r.Context(), "admin.recovery", true)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -376,6 +435,15 @@ func (a *BrowserAuth) logout(w http.ResponseWriter, r *http.Request) {
 	if !ok || !a.validCSRF(r, token) {
 		httpresponse.WriteError(w, http.StatusForbidden, "invalid CSRF token")
 		return
+	}
+	// Audit only the account established by live session authority. Lookup failure
+	// must not prevent an otherwise valid CSRF-protected revocation request.
+	if principal, err := a.sessions.ValidateSession(
+		r.Context(),
+		token,
+	); err == nil &&
+		principal.AccountID != "" {
+		r = r.WithContext(principalAuditContext(r.Context(), principal))
 	}
 	if err := a.sessions.RevokeSession(r.Context(), token); err != nil {
 		if errors.Is(err, identity.ErrSecurityStateUnavailable) {
@@ -393,10 +461,15 @@ func (a *BrowserAuth) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *BrowserAuth) writeSessionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, identity.ErrInvalidCredential) {
+		httpresponse.WriteError(w, http.StatusUnauthorized, "invalid credential")
+		return
+	}
 	if errors.Is(err, identity.ErrSecurityStateUnavailable) {
 		httpresponse.WriteError(w, http.StatusServiceUnavailable, "security state unavailable")
 		return
 	}
+
 	httpresponse.WriteError(w, http.StatusInternalServerError, "create session")
 }
 

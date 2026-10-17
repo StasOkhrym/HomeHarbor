@@ -11,6 +11,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
 	"github.com/StasOkhrym/homeharbor/internal/control/profiles"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
@@ -34,7 +35,7 @@ type DeviceService interface {
 }
 
 type Authorizer interface {
-	IsAdmin(context.Context, *http.Request) (bool, error)
+	AdminPrincipal(context.Context, *http.Request) (identity.Principal, error)
 }
 
 // Server composes optional module capabilities at the HTTP boundary. Domain

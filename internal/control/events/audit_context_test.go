@@ -72,3 +72,18 @@ func TestIdentityAuditDropsUnsafeOptionalRequestFacts(t *testing.T) {
 		t.Fatalf("unsafe fact reached audit: %s", data)
 	}
 }
+
+func TestIdentityAuditDoesNotInventOwnerForUnattributedSuccess(t *testing.T) {
+	sink := &recordingAuditSink{}
+
+	if err := NewIdentityAuditor(
+		sink,
+		nil,
+	).RecordIdentity(t.Context(), "admin.login", true); err != nil {
+		t.Fatal(err)
+	}
+
+	if sink.event.ActorType != "unknown" || sink.event.ActorID != "" {
+		t.Fatalf("unattributed success became global owner: %+v", sink.event)
+	}
+}

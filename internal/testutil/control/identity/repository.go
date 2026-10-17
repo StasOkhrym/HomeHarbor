@@ -14,7 +14,8 @@ import (
 
 type Repository struct {
 	mu            sync.Mutex
-	recoveryCodes map[[32]byte]domainpkg.RecoveryCode
+	recoveryCodes map[string]map[[32]byte]domainpkg.RecoveryCode
+	accounts      map[string]domainpkg.Account
 	sessions      map[[32]byte]domainpkg.Session
 	ceremonies    map[[32]byte]domainpkg.Ceremony
 	credentials   map[string][]webauthn.Credential
@@ -22,10 +23,19 @@ type Repository struct {
 
 func NewRepository() *Repository {
 	return &Repository{
-		recoveryCodes: make(map[[32]byte]domainpkg.RecoveryCode),
-		sessions:      make(map[[32]byte]domainpkg.Session),
-		ceremonies:    make(map[[32]byte]domainpkg.Ceremony),
-		credentials:   make(map[string][]webauthn.Credential),
+		recoveryCodes: make(map[string]map[[32]byte]domainpkg.RecoveryCode),
+		accounts: map[string]domainpkg.Account{
+			domainpkg.OwnerAccountID: {
+				ID:          domainpkg.OwnerAccountID,
+				Role:        domainpkg.RoleOwner,
+				Status:      domainpkg.AccountSetup,
+				AuthVersion: 1,
+				UserHandle:  []byte("homeharbor-admin-v1"),
+			},
+		},
+		sessions:    make(map[[32]byte]domainpkg.Session),
+		ceremonies:  make(map[[32]byte]domainpkg.Ceremony),
+		credentials: make(map[string][]webauthn.Credential),
 	}
 }
 
@@ -46,33 +56,46 @@ func (s *Repository) CeremonyCount() int {
 	return len(s.ceremonies)
 }
 
-func (s *Repository) SaveRecoveryCodes(ctx context.Context, codes []domainpkg.RecoveryCode) error {
+func (s *Repository) SaveRecoveryCodes(
+	ctx context.Context,
+	scope domainpkg.AccountScope,
+	codes []domainpkg.RecoveryCode,
+) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !scope.Allows(s.accounts[scope.AccountID]) {
+		return domainpkg.ErrInvalidCredential
+	}
 	// Generating a replacement set invalidates every older unused code. Keeping
 	// both sets would make a supposedly rotated emergency credential valid.
-	s.recoveryCodes = make(map[[32]byte]domainpkg.RecoveryCode, len(codes))
+	s.recoveryCodes[scope.AccountID] = make(map[[32]byte]domainpkg.RecoveryCode, len(codes))
 	for _, code := range codes {
-		s.recoveryCodes[code.Hash] = cloneRecoveryCode(code)
+		s.recoveryCodes[scope.AccountID][code.Hash] = cloneRecoveryCode(code)
 	}
 	return nil
 }
 
-func (s *Repository) ConsumeRecoveryCode(ctx context.Context, hash [32]byte, now time.Time) error {
+func (s *Repository) ConsumeRecoveryCode(ctx context.Context, use domainpkg.RecoveryUse) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	scope := use.Scope
+	hash := use.Hash
+	now := use.UsedAt
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	code, ok := s.recoveryCodes[hash]
+	if !scope.Allows(s.accounts[scope.AccountID]) {
+		return domainpkg.ErrInvalidCredential
+	}
+	code, ok := s.recoveryCodes[scope.AccountID][hash]
 	if !ok || code.UsedAt != nil {
 		return domainpkg.ErrInvalidCredential
 	}
 	code.UsedAt = &now
-	s.recoveryCodes[hash] = code
+	s.recoveryCodes[scope.AccountID][hash] = code
 	return nil
 }
 
@@ -130,11 +153,15 @@ func (s *Repository) RevokeSession(ctx context.Context, hash [32]byte, now time.
 func (s *Repository) ContainsPlaintext(value string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for hash := range s.recoveryCodes {
-		if bytes.Contains(hash[:], []byte(value)) {
-			return true
+
+	for _, codes := range s.recoveryCodes {
+		for hash := range codes {
+			if bytes.Contains(hash[:], []byte(value)) {
+				return true
+			}
 		}
 	}
+
 	return false
 }
 
@@ -198,7 +225,7 @@ func (s *Repository) Credential(
 	return webauthn.Credential{}, domainpkg.ErrInvalidCredential
 }
 
-func (s *Repository) SaveCredential(
+func (s *Repository) SaveBootstrapCredential(
 	ctx context.Context,
 	userHandle []byte,
 	credential webauthn.Credential,
@@ -206,17 +233,25 @@ func (s *Repository) SaveCredential(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	owner, ok := s.accounts[domainpkg.OwnerAccountID]
+	if !ok || owner.Status != domainpkg.AccountSetup || !bytes.Equal(owner.UserHandle, userHandle) {
+		return domainpkg.ErrBootstrapClosed
+	}
 	// The first credential closes bootstrap under the same lock that performs
 	// the insert; two valid, concurrently finished ceremonies cannot both win.
 	if len(s.credentials[string(userHandle)]) != 0 {
 		return domainpkg.ErrBootstrapClosed
 	}
+
 	s.credentials[string(userHandle)] = append(
 		s.credentials[string(userHandle)],
 		cloneCredential(credential),
 	)
+
 	return nil
 }
 
@@ -332,3 +367,33 @@ var (
 	_ domainpkg.PasskeyRepository  = (*Repository)(nil)
 	_ domainpkg.CeremonyRepository = (*Repository)(nil)
 )
+
+// SetAccountForTest represents a committed SQL account change for domain tests.
+func (s *Repository) SetAccountForTest(account domainpkg.Account) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	account.UserHandle = bytes.Clone(account.UserHandle)
+	if account.EmailVerifiedAt != nil {
+		value := *account.EmailVerifiedAt
+		account.EmailVerifiedAt = &value
+	}
+	s.accounts[account.ID] = account
+}
+
+func (s *Repository) Account(ctx context.Context, id string) (domainpkg.Account, error) {
+	if err := ctx.Err(); err != nil {
+		return domainpkg.Account{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	account, ok := s.accounts[id]
+	if !ok {
+		return domainpkg.Account{}, domainpkg.ErrInvalidCredential
+	}
+	account.UserHandle = bytes.Clone(account.UserHandle)
+	if account.EmailVerifiedAt != nil {
+		value := *account.EmailVerifiedAt
+		account.EmailVerifiedAt = &value
+	}
+	return account, nil
+}

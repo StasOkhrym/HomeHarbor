@@ -3,6 +3,8 @@ package redis
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -217,4 +219,87 @@ func mustSessions(t *testing.T, client redisclient.UniversalClient, prefix strin
 	}
 
 	return store
+}
+
+func TestRedisPersonalSessionsDoNotShareLegacyNamespace(t *testing.T) {
+	endpoint := os.Getenv("TEST_REDIS_URL")
+	if endpoint == "" {
+		t.Skip("TEST_REDIS_URL is required for session namespace integration")
+	}
+
+	options, err := redisclient.ParseURL(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := redisclient.NewClient(options)
+	t.Cleanup(func() { _ = client.Close() })
+	prefix := fmt.Sprintf("test:principal:%d", time.Now().UnixNano())
+
+	store := mustSessions(t, client, prefix)
+
+	now := time.Now().UTC()
+
+	oldHash := sha256.Sum256([]byte("old-global-token"))
+	oldKey := prefix + ":browser-session:v1:" + hex.EncodeToString(oldHash[:])
+
+	oldPayload, err := json.Marshal(struct {
+		Hash                 [32]byte
+		CreatedAt, ExpiresAt time.Time
+		RevokedAt            *time.Time
+	}{Hash: oldHash, CreatedAt: now, ExpiresAt: now.Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.Set(t.Context(), oldKey, oldPayload, time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.Session(
+		t.Context(),
+		oldHash,
+	); !errors.Is(
+		err,
+		identity.ErrInvalidCredential,
+	) {
+		t.Fatalf("new authority imported a global session: %v", err)
+	}
+
+	hash := sha256.Sum256([]byte("new-restricted-migration-token"))
+	personal := identity.Session{
+		Hash:        hash,
+		AccountID:   identity.OwnerAccountID,
+		AuthVersion: 1,
+		Purpose:     identity.SessionMigration,
+		Method:      "passkey",
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(time.Minute),
+	}
+
+	if err := store.SaveSession(t.Context(), personal); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := client.Get(t.Context(), prefix+":browser-session:v1:"+hex.EncodeToString(hash[:])).
+		Result(); !errors.Is(
+		err,
+		redisclient.Nil,
+	) {
+		t.Fatal("old binary can read a new restricted session")
+	}
+
+	got, err := store.Session(t.Context(), hash)
+
+	if err != nil || got.Purpose != identity.SessionMigration ||
+		got.AccountID != identity.OwnerAccountID {
+		t.Fatalf("personal scope lost: %+v %v", got, err)
+	}
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		_ = client.Del(ctx, oldKey, store.key(hash)).Err()
+	})
 }

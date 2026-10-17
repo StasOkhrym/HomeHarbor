@@ -33,7 +33,7 @@ func (p *persistedPasskeys) FinishBootstrap(
 	_ []byte,
 ) (webauthn.Credential, error) {
 	credential := webauthn.Credential{ID: []byte("test-passkey")}
-	return credential, p.store.SaveCredential(ctx, bootstrapTestHandle, credential)
+	return credential, p.store.SaveBootstrapCredential(ctx, bootstrapTestHandle, credential)
 }
 
 func (p *persistedPasskeys) FinishLogin(
@@ -53,23 +53,26 @@ type bootstrapSessions struct {
 
 func (s *bootstrapSessions) GenerateRecoveryCodes(
 	ctx context.Context,
+	scope identity.AccountScope,
 	count int,
 ) ([]string, error) {
 	s.recoveryCalls++
 	if s.recoveryFailure != nil {
 		return nil, s.recoveryFailure
 	}
-	return s.AdminSessions.GenerateRecoveryCodes(ctx, count)
+
+	return s.AdminSessions.GenerateRecoveryCodes(ctx, scope, count)
 }
 
 func (s *bootstrapSessions) CreateSession(
 	ctx context.Context,
-	ttl time.Duration,
+	request identity.SessionRequest,
 ) (identity.IssuedSession, error) {
 	if s.sessionFailure != nil {
 		return identity.IssuedSession{}, s.sessionFailure
 	}
-	return s.AdminSessions.CreateSession(ctx, ttl)
+
+	return s.AdminSessions.CreateSession(ctx, request)
 }
 
 func bootstrapFixture(t *testing.T) (*webauth.BrowserAuth, *persistedPasskeys, *bootstrapSessions) {
@@ -85,7 +88,9 @@ func bootstrapFixture(t *testing.T) (*webauth.BrowserAuth, *persistedPasskeys, *
 		t.Fatal(err)
 	}
 	passkeys := &persistedPasskeys{PasskeyService: service, store: store}
-	sessions := &bootstrapSessions{AdminSessions: identity.NewService(store, store, nil, nil)}
+	sessions := &bootstrapSessions{
+		AdminSessions: identity.NewService(store, store, store, nil, nil),
+	}
 	auth, err := webauth.NewBrowserAuth(webauth.BrowserAuthConfig{
 		Origin:     "https://tunnel.example.com",
 		SigningKey: bytes.Repeat([]byte{8}, 32),
@@ -204,5 +209,58 @@ func TestBootstrapResponseLossDoesNotRepeatRecoveryCodes(t *testing.T) {
 			"recovery_codes",
 		) || len(response.Result().Cookies()) != 0 {
 		t.Fatalf("replayed bootstrap delivered secrets: %d %s", response.Code, response.Body)
+	}
+}
+
+func TestConfiguredOwnerLegacyRecoveryCannotConsumeCodeWithoutPassword(t *testing.T) {
+	auth, passkeys, sessions := bootstrapFixture(t)
+
+	codes, err := sessions.GenerateRecoveryCodes(
+		t.Context(),
+		identity.AccountScope{
+			AccountID: identity.OwnerAccountID,
+			Purpose:   identity.SessionMigration,
+		},
+		1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	passkeys.store.SetAccountForTest(
+		identity.Account{
+			ID:           identity.OwnerAccountID,
+			Role:         identity.RoleOwner,
+			Status:       identity.AccountActive,
+			AuthVersion:  2,
+			Email:        "owner@example.test",
+			PasswordHash: "hash",
+			UserHandle:   bootstrapTestHandle,
+		},
+	)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/recovery",
+		strings.NewReader(`{"code":"`+codes[0]+`"}`),
+	)
+	request.Header.Set("Origin", "https://tunnel.example.com")
+	response := httptest.NewRecorder()
+
+	auth.Handler().ServeHTTP(response, request)
+
+	if response.Code < 400 || len(response.Result().Cookies()) != 0 {
+		t.Fatal("legacy recovery granted configured-account access")
+	}
+
+	if err := sessions.ConsumeRecoveryCode(
+		t.Context(),
+		identity.AccountScope{
+			AccountID:   identity.OwnerAccountID,
+			AuthVersion: 2,
+			Purpose:     identity.SessionAdmin,
+		},
+		codes[0],
+	); err != nil {
+		t.Fatalf("legacy endpoint consumed recovery before password: %v", err)
 	}
 }

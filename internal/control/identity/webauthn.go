@@ -33,10 +33,11 @@ type Ceremony struct {
 }
 
 type PasskeyRepository interface {
+	AccountReader
 	HasCredentials(context.Context) (bool, error)
 	Credentials(context.Context, []byte) ([]webauthn.Credential, error)
 	Credential(context.Context, []byte, []byte) (webauthn.Credential, error)
-	SaveCredential(context.Context, []byte, webauthn.Credential) error
+	SaveBootstrapCredential(context.Context, []byte, webauthn.Credential) error
 	UpdateCredential(context.Context, []byte, webauthn.Credential) error
 }
 
@@ -146,14 +147,25 @@ func (s *PasskeyService) BeginBootstrap(ctx context.Context) (BeginCeremony, err
 	if hasCredentials {
 		return BeginCeremony{}, ErrBootstrapClosed
 	}
+
+	setup, err := s.ownerNeedsSetup(ctx)
+	if err != nil {
+		return BeginCeremony{}, err
+	}
+	if !setup {
+		return BeginCeremony{}, ErrBootstrapClosed
+	}
+
 	user, err := s.user(ctx)
 	if err != nil {
 		return BeginCeremony{}, err
 	}
+
 	creation, session, err := s.webAuthn.BeginRegistration(user)
 	if err != nil {
 		return BeginCeremony{}, err
 	}
+
 	return s.saveCeremony(ctx, "bootstrap", creation, session)
 }
 
@@ -167,29 +179,51 @@ func (s *PasskeyService) FinishBootstrap(
 	if err != nil {
 		return webauthn.Credential{}, err
 	}
+
+	setup, err := s.ownerNeedsSetup(ctx)
+	if err != nil {
+		return webauthn.Credential{}, err
+	}
+	if !setup {
+		return webauthn.Credential{}, ErrBootstrapClosed
+	}
+
 	parsed, err := protocol.ParseCredentialCreationResponseBytes(response)
 	if err != nil {
 		return webauthn.Credential{}, fmt.Errorf("parse registration response: %w", err)
 	}
+
 	user, err := s.user(ctx)
 	if err != nil {
 		return webauthn.Credential{}, err
 	}
+
 	credential, err := s.webAuthn.CreateCredential(user, session, parsed)
 	if err != nil {
 		return webauthn.Credential{}, err
 	}
-	if err = s.store.SaveCredential(ctx, adminUserHandle, *credential); err != nil {
+
+	if err = s.store.SaveBootstrapCredential(ctx, adminUserHandle, *credential); err != nil {
 		return webauthn.Credential{}, err
 	}
+
 	return *credential, nil
 }
 
 func (s *PasskeyService) BeginLogin(ctx context.Context) (BeginCeremony, error) {
+	setup, err := s.ownerNeedsSetup(ctx)
+	if err != nil {
+		return BeginCeremony{}, err
+	}
+	if !setup {
+		return BeginCeremony{}, ErrInvalidCredential
+	}
+
 	assertion, session, err := s.webAuthn.BeginDiscoverableLogin()
 	if err != nil {
 		return BeginCeremony{}, err
 	}
+
 	return s.saveCeremony(ctx, "login", assertion, session)
 }
 
@@ -201,6 +235,13 @@ func (s *PasskeyService) FinishLogin(
 	_, session, err := s.consumeCeremony(ctx, ceremonyID, "login")
 	if err != nil {
 		return webauthn.Credential{}, err
+	}
+	setup, err := s.ownerNeedsSetup(ctx)
+	if err != nil {
+		return webauthn.Credential{}, err
+	}
+	if !setup {
+		return webauthn.Credential{}, ErrInvalidCredential
 	}
 	parsed, err := protocol.ParseCredentialRequestResponseBytes(response)
 	if err != nil {
@@ -317,4 +358,14 @@ func randomTokenFrom(reader io.Reader, size int) (string, error) {
 	}
 
 	return base64.RawURLEncoding.EncodeToString(buffer), nil
+}
+
+func (s *PasskeyService) ownerNeedsSetup(ctx context.Context) (bool, error) {
+	account, err := readAccount(ctx, s.store, OwnerAccountID)
+	if err != nil {
+		return false, err
+	}
+
+	return account.Role == RoleOwner && account.Status == AccountSetup &&
+		account.AuthVersion > 0, nil
 }

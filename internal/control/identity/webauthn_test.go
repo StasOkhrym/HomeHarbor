@@ -26,7 +26,8 @@ func TestMemoryStoreAllowsOnlyOneBootstrapCredential(t *testing.T) {
 		group.Add(1)
 		go func(id byte) {
 			defer group.Done()
-			if store.SaveCredential(
+
+			if store.SaveBootstrapCredential(
 				context.Background(),
 				adminUserHandle,
 				webauthn.Credential{ID: []byte{id}},
@@ -35,7 +36,9 @@ func TestMemoryStoreAllowsOnlyOneBootstrapCredential(t *testing.T) {
 			}
 		}(byte(index))
 	}
+
 	group.Wait()
+
 	if successes.Load() != 1 {
 		t.Fatalf("successful credential inserts = %d", successes.Load())
 	}
@@ -167,14 +170,17 @@ func TestPasskeyEntropyFailureDoesNotPersistCeremony(t *testing.T) {
 
 func TestBootstrapClosesAfterCredentialExists(t *testing.T) {
 	store := memorystore.NewRepository()
-	if err := store.SaveCredential(
+
+	if err := store.SaveBootstrapCredential(
 		context.Background(),
 		adminUserHandle,
 		webauthn.Credential{ID: []byte("credential")},
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	service := newPasskeyTestService(t, store, time.Now)
+
 	if _, err := service.BeginBootstrap(
 		context.Background(),
 	); !errors.Is(
@@ -215,11 +221,18 @@ func TestCredentialCounterCannotRegress(t *testing.T) {
 	store := memorystore.NewRepository()
 	stored := webauthn.Credential{ID: []byte("credential")}
 	stored.Authenticator.SignCount = 8
-	if err := store.SaveCredential(context.Background(), adminUserHandle, stored); err != nil {
+
+	if err := store.SaveBootstrapCredential(
+		context.Background(),
+		adminUserHandle,
+		stored,
+	); err != nil {
 		t.Fatal(err)
 	}
+
 	regressed := stored
 	regressed.Authenticator.SignCount = 7
+
 	if err := store.UpdateCredential(
 		context.Background(),
 		adminUserHandle,
@@ -230,10 +243,12 @@ func TestCredentialCounterCannotRegress(t *testing.T) {
 	) {
 		t.Fatalf("error = %v", err)
 	}
+
 	unchanged, err := store.Credential(context.Background(), adminUserHandle, stored.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if got := unchanged.Authenticator.SignCount; got != 8 {
 		t.Fatalf("stored counter = %d", got)
 	}
@@ -263,4 +278,36 @@ func newPasskeyTestService(
 	}
 
 	return service
+}
+
+func TestPasswordAccountCannotReopenLegacyBootstrapOrLogin(t *testing.T) {
+	store := memorystore.NewRepository()
+
+	store.SetAccountForTest(
+		domainpkg.Account{
+			ID:           domainpkg.OwnerAccountID,
+			Role:         domainpkg.RoleOwner,
+			Status:       domainpkg.AccountActive,
+			AuthVersion:  2,
+			Email:        "owner@example.test",
+			PasswordHash: "hash",
+			UserHandle:   adminUserHandle,
+		},
+	)
+	service := newPasskeyTestService(t, store, time.Now)
+
+	// A configured owner can use TOTP without keeping a passkey. An empty global
+	// credential table must never reopen first-owner registration in that case.
+	if _, err := service.BeginBootstrap(
+		t.Context(),
+	); !errors.Is(
+		err,
+		domainpkg.ErrBootstrapClosed,
+	) {
+		t.Fatalf("active password account reopened bootstrap: %v", err)
+	}
+
+	if _, err := service.BeginLogin(t.Context()); !errors.Is(err, domainpkg.ErrInvalidCredential) {
+		t.Fatalf("active password account accepted standalone passkey login: %v", err)
+	}
 }

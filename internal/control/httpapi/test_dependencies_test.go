@@ -7,13 +7,16 @@ import (
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	webadmin "github.com/StasOkhrym/homeharbor/internal/web/admin"
 	websession "github.com/StasOkhrym/homeharbor/internal/web/session"
 )
 
 type denyAuthorizer struct{}
 
-func (denyAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) { return false, nil }
+func (denyAuthorizer) AdminPrincipal(context.Context, *http.Request) (identity.Principal, error) {
+	return identity.Principal{}, identity.ErrInvalidCredential
+}
 
 // Test fixtures choose their memory authority explicitly; production NewServer
 // has no knowledge of these defaults or permissive peer predicates.

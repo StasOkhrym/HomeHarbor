@@ -20,6 +20,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/cli/host"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
 	"github.com/StasOkhrym/homeharbor/internal/control/httpapi"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	"github.com/StasOkhrym/homeharbor/internal/node"
 	"github.com/StasOkhrym/homeharbor/internal/node/localstate"
 	"github.com/StasOkhrym/homeharbor/internal/protocol"
@@ -117,7 +118,9 @@ func (f *enrollFixture) run(ctx context.Context, extra ...string) (int, string, 
 
 type denyAdmin struct{}
 
-func (denyAdmin) IsAdmin(context.Context, *http.Request) (bool, error) { return false, nil }
+func (denyAdmin) AdminPrincipal(context.Context, *http.Request) (identity.Principal, error) {
+	return identity.Principal{}, identity.ErrInvalidCredential
+}
 
 func TestGatewayEnrollUsesRealControlEnrollmentAndGatewayToken(t *testing.T) {
 	for _, role := range []devices.Role{devices.RoleGateway, devices.RoleClient} {

@@ -20,6 +20,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
 	controlprofiles "github.com/StasOkhrym/homeharbor/internal/control/profiles"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
@@ -1010,17 +1011,46 @@ func newTestServer(
 	confirmations ...websession.ActionConfirmation,
 ) *Server {
 	if deps.Browser.MutationAuthorizer == nil {
-		deps.Browser.MutationAuthorizer = auth.IsAdmin
+		deps.Browser.MutationAuthorizer = func(ctx context.Context, r *http.Request) (bool, error) {
+			principal, err := auth.AdminPrincipal(ctx, r)
+			if errors.Is(err, identity.ErrInvalidCredential) {
+				return false, nil
+			}
+
+			return err == nil && principal.CanManageNetwork(), err
+		}
 	}
+
 	return mustTestServer(service, auth, deps, confirmations...)
 }
 
-func (allowAuthorizer) IsAdmin(context.Context, *http.Request) (bool, error) { return true, nil }
+func (allowAuthorizer) AdminPrincipal(context.Context, *http.Request) (identity.Principal, error) {
+	return identity.Principal{
+		AccountID:   "admin",
+		Role:        identity.RoleAdmin,
+		Purpose:     identity.SessionAdmin,
+		Method:      "passkey",
+		AuthVersion: 1,
+	}, nil
+}
 
 type headerAuthorizer struct{}
 
-func (headerAuthorizer) IsAdmin(_ context.Context, request *http.Request) (bool, error) {
-	return request.Header.Get("X-Test-Admin") == "true", nil
+func (headerAuthorizer) AdminPrincipal(
+	_ context.Context,
+	request *http.Request,
+) (identity.Principal, error) {
+	if request.Header.Get("X-Test-Admin") != "true" {
+		return identity.Principal{}, identity.ErrInvalidCredential
+	}
+
+	return identity.Principal{
+		AccountID:   "admin",
+		Role:        identity.RoleAdmin,
+		Purpose:     identity.SessionAdmin,
+		Method:      "passkey",
+		AuthVersion: 1,
+	}, nil
 }
 
 type auditReaderStub struct {
