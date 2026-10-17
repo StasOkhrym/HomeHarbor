@@ -17,7 +17,7 @@ type factorProof struct{}
 
 func (factorProof) VerifySecondFactor(
 	_ context.Context,
-	scope identity.AccountScope,
+	scope identity.FactorContext,
 	proof identity.SecondFactorProof,
 ) (string, error) {
 	if scope.AccountID != "a" || scope.AuthVersion != 3 || scope.Purpose != identity.SessionAdmin ||
@@ -25,6 +25,7 @@ func (factorProof) VerifySecondFactor(
 		proof.Code != "123456" {
 		return "", identity.ErrInvalidCredential
 	}
+
 	return "totp", nil
 }
 
@@ -365,5 +366,67 @@ func TestPreauthStorageFailureCannotIssueSession(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPreauthInspectionDoesNotSpendAttemptsAndBindsExactToken(t *testing.T) {
+	login, store, _, now := preauthFixture(t)
+
+	seedPreauth(t, store, *now, "first-proof")
+	seedPreauth(t, store, *now, "second-proof")
+	for range 20 {
+		proof, err := login.SecondFactorContext(t.Context(), "first-proof")
+
+		if err != nil || proof.AccountID != "a" || proof.AuthVersion != 3 ||
+			proof.Purpose != identity.SessionAdmin ||
+			proof.Binding != sha256.Sum256([]byte("first-proof")) {
+			t.Fatalf("wrong password-proof context: %+v %v", proof, err)
+		}
+	}
+
+	other, err := login.SecondFactorContext(t.Context(), "second-proof")
+
+	if err != nil || other.Binding == sha256.Sum256([]byte("first-proof")) {
+		t.Fatal("two password proofs shared one factor binding", err)
+	}
+
+	for range 4 {
+		_, _ = login.Complete(
+			t.Context(),
+			"first-proof",
+			identity.SecondFactorProof{Method: "totp", Code: "wrong"},
+			factorProof{},
+		)
+	}
+
+	if _, err := login.Complete(
+		t.Context(),
+		"first-proof",
+		identity.SecondFactorProof{Method: "totp", Code: "123456"},
+		factorProof{},
+	); err != nil {
+		t.Fatal("read-only inspection spent authentication attempts", err)
+	}
+
+	if _, err := login.SecondFactorContext(
+		t.Context(),
+		"first-proof",
+	); !errors.Is(
+		err,
+		identity.ErrInvalidCredential,
+	) {
+		t.Fatal("consumed password proof remained inspectable", err)
+	}
+
+	*now = now.Add(5 * time.Minute)
+
+	if _, err := login.SecondFactorContext(
+		t.Context(),
+		"second-proof",
+	); !errors.Is(
+		err,
+		identity.ErrInvalidCredential,
+	) {
+		t.Fatal("expired password proof remained inspectable", err)
 	}
 }

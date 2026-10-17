@@ -13,6 +13,8 @@ import (
 )
 
 type Repository struct {
+	passkeyInfo   map[string]domainpkg.PasskeyInfo
+	totp          map[string]domainpkg.TOTPRecord
 	preauth       map[[32]byte]domainpkg.Preauth
 	mu            sync.Mutex
 	recoveryCodes map[string]map[[32]byte]domainpkg.RecoveryCode

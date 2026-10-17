@@ -120,3 +120,23 @@ func (s *Repository) ConfigureOwner(
 
 	return nil
 }
+
+func (s *Repository) ReadPreauth(
+	ctx context.Context,
+	hash [32]byte,
+	now time.Time,
+) (domain.Preauth, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.Preauth{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record, ok := s.preauth[hash]
+	if !ok || !now.Before(record.ExpiresAt) || record.Attempts >= 5 {
+		return domain.Preauth{}, domain.ErrInvalidCredential
+	}
+
+	return record, nil
+}

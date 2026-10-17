@@ -27,6 +27,10 @@ type (
 		Token     string
 		ExpiresAt time.Time
 	}
+	FactorContext struct {
+		AccountScope
+		Binding [32]byte `json:"-"`
+	}
 	SecondFactorProof struct {
 		Method     string          `json:"method"`
 		Code       string          `json:"code,omitempty"`
@@ -37,10 +41,11 @@ type (
 
 type (
 	SecondFactorVerifier interface {
-		VerifySecondFactor(context.Context, AccountScope, SecondFactorProof) (string, error)
+		VerifySecondFactor(context.Context, FactorContext, SecondFactorProof) (string, error)
 	}
 	PreauthRepository interface {
 		SavePreauth(context.Context, Preauth) error
+		ReadPreauth(context.Context, [32]byte, time.Time) (Preauth, error)
 		AttemptPreauth(context.Context, [32]byte, time.Time) (Preauth, error)
 		ConsumePreauth(context.Context, [32]byte, time.Time) (Preauth, error)
 	}
@@ -189,6 +194,7 @@ func (s *LoginService) Complete(
 	if len(token) < 1 || len(token) > 128 || verifier == nil {
 		return IssuedSession{}, ErrInvalidCredential
 	}
+
 	hash := hashToken(token)
 	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
 	record, err := s.preauth.AttemptPreauth(operation, hash, s.now().UTC())
@@ -196,42 +202,44 @@ func (s *LoginService) Complete(
 	if err != nil {
 		return IssuedSession{}, securityStoreError(err)
 	}
-	if err := s.validPreauth(record, hash); err != nil {
-		return IssuedSession{}, err
+	if record.Attempts < 1 {
+		return IssuedSession{}, ErrInvalidCredential
 	}
-	account, err := readAccount(ctx, s.accounts, record.AccountID)
+
+	factor, err := s.factorContext(ctx, record, hash)
 	if err != nil {
 		return IssuedSession{}, err
 	}
-	scope := AccountScope{
-		AccountID:   record.AccountID,
-		AuthVersion: record.AuthVersion,
-		Purpose:     SessionAdmin,
-	}
-	if !scope.Allows(account) {
-		return IssuedSession{}, ErrInvalidCredential
-	}
-	method, err := verifier.VerifySecondFactor(ctx, scope, proof)
+
+	scope := factor.AccountScope
+
+	method, err := verifier.VerifySecondFactor(ctx, factor, proof)
 	if err != nil {
 		return IssuedSession{}, securityStoreError(err)
 	}
+
 	switch method {
 	case "totp", "passkey", "recovery":
 	default:
 		return IssuedSession{}, ErrInvalidCredential
 	}
+
 	operation, cancel = context.WithTimeout(ctx, 5*time.Second)
 	consumed, err := s.preauth.ConsumePreauth(operation, hash, s.now().UTC())
 	cancel()
 	if err != nil {
 		return IssuedSession{}, securityStoreError(err)
 	}
+
 	if err := s.validPreauth(consumed, hash); err != nil {
 		return IssuedSession{}, err
 	}
-	if consumed.AccountID != record.AccountID || consumed.AuthVersion != record.AuthVersion {
+
+	if consumed.Attempts < 1 || consumed.AccountID != record.AccountID ||
+		consumed.AuthVersion != record.AuthVersion {
 		return IssuedSession{}, ErrInvalidCredential
 	}
+
 	// A session-store outage after consumption requires a new password login;
 	// retrying the old proof can never mint a second session.
 	return s.sessions.CreateSession(
@@ -254,9 +262,62 @@ func (s *LoginService) validPreauth(record Preauth, hash [32]byte) error {
 		!now.Before(record.ExpiresAt) ||
 		!record.ExpiresAt.After(record.CreatedAt) ||
 		record.ExpiresAt.Sub(record.CreatedAt) > 5*time.Minute ||
-		record.Attempts < 1 ||
+		record.Attempts < 0 ||
 		record.Attempts > 5 {
 		return ErrInvalidCredential
 	}
+
 	return nil
+}
+
+// SecondFactorContext reads password proof without spending a verification
+// attempt. It is not an admin Principal. The binding identifies exactly which
+// one-use password proof a passkey ceremony is allowed to complete.
+func (s *LoginService) SecondFactorContext(
+	ctx context.Context,
+	token string,
+) (FactorContext, error) {
+	if len(token) < 1 || len(token) > 128 {
+		return FactorContext{}, ErrInvalidCredential
+	}
+
+	hash := hashToken(token)
+	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	record, err := s.preauth.ReadPreauth(operation, hash, s.now().UTC())
+	if err != nil {
+		return FactorContext{}, securityStoreError(err)
+	}
+	if record.Attempts >= 5 {
+		return FactorContext{}, ErrInvalidCredential
+	}
+
+	return s.factorContext(ctx, record, hash)
+}
+
+func (s *LoginService) factorContext(
+	ctx context.Context,
+	record Preauth,
+	hash [32]byte,
+) (FactorContext, error) {
+	if err := s.validPreauth(record, hash); err != nil {
+		return FactorContext{}, err
+	}
+
+	account, err := readAccount(ctx, s.accounts, record.AccountID)
+	if err != nil {
+		return FactorContext{}, err
+	}
+
+	scope := AccountScope{
+		AccountID:   record.AccountID,
+		AuthVersion: record.AuthVersion,
+		Purpose:     SessionAdmin,
+	}
+	if !scope.Allows(account) {
+		return FactorContext{}, ErrInvalidCredential
+	}
+
+	return FactorContext{AccountScope: scope, Binding: hash}, nil
 }

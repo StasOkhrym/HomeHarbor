@@ -106,7 +106,7 @@ func (s *Preauth) AttemptPreauth(
 	hash [32]byte,
 	now time.Time,
 ) (identity.Preauth, error) {
-	return s.run(ctx, preauthAttempt, hash, now)
+	return s.run(ctx, preauthAttempt, hash, now, 1, 5)
 }
 
 func (s *Preauth) ConsumePreauth(
@@ -114,7 +114,7 @@ func (s *Preauth) ConsumePreauth(
 	hash [32]byte,
 	now time.Time,
 ) (identity.Preauth, error) {
-	return s.run(ctx, preauthConsume, hash, now)
+	return s.run(ctx, preauthConsume, hash, now, 1, 5)
 }
 
 func (s *Preauth) run(
@@ -122,9 +122,11 @@ func (s *Preauth) run(
 	script *redisclient.Script,
 	hash [32]byte,
 	now time.Time,
+	minAttempts, maxAttempts int,
 ) (identity.Preauth, error) {
 	operation, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
+
 	values, err := script.Run(operation, s.client, []string{s.key(hash)}).StringSlice()
 	if err != nil {
 		return identity.Preauth{}, identity.ErrSecurityStateUnavailable
@@ -135,27 +137,23 @@ func (s *Preauth) run(
 	if len(values) != 2 {
 		return identity.Preauth{}, identity.ErrSecurityStateUnavailable
 	}
+
 	attempts, err := strconv.Atoi(values[1])
-	if err != nil || attempts < 1 || attempts > 5 {
+	if err != nil || attempts < minAttempts || attempts > maxAttempts {
 		return identity.Preauth{}, identity.ErrInvalidCredential
 	}
-	record, err := decodePreauth(values[0], nil, hash, now)
+
+	record, err := decodePreauth(values[0], hash, now)
 	record.Attempts = attempts
+
 	return record, err
 }
 
 func decodePreauth(
 	payload string,
-	err error,
 	hash [32]byte,
 	now time.Time,
 ) (identity.Preauth, error) {
-	if errors.Is(err, redisclient.Nil) {
-		return identity.Preauth{}, identity.ErrInvalidCredential
-	}
-	if err != nil {
-		return identity.Preauth{}, identity.ErrSecurityStateUnavailable
-	}
 	var record identity.Preauth
 	if len(payload) > 1024 || json.Unmarshal([]byte(payload), &record) != nil ||
 		record.Hash != hash ||
@@ -172,7 +170,22 @@ func decodePreauth(
 	if !now.Before(record.ExpiresAt) {
 		return identity.Preauth{}, identity.ErrInvalidCredential
 	}
+
 	return record, nil
 }
 
 var _ identity.PreauthRepository = (*Preauth)(nil)
+
+var preauthRead = redisclient.NewScript(`
+local payload=redis.call('HGET',KEYS[1],'proof')
+if not payload then return {} end
+return {payload,redis.call('HGET',KEYS[1],'attempts')}
+`)
+
+func (s *Preauth) ReadPreauth(
+	ctx context.Context,
+	hash [32]byte,
+	now time.Time,
+) (identity.Preauth, error) {
+	return s.run(ctx, preauthRead, hash, now, 0, 4)
+}

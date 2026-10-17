@@ -44,7 +44,7 @@ type verifiedPasswordFactor struct{}
 
 func (verifiedPasswordFactor) VerifySecondFactor(
 	_ context.Context,
-	scope identity.AccountScope,
+	scope identity.FactorContext,
 	proof identity.SecondFactorProof,
 ) (string, error) {
 	if scope.AccountID != identity.OwnerAccountID || scope.AuthVersion != 2 ||

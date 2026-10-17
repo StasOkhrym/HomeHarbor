@@ -200,7 +200,23 @@ func (s *Repository) UpdateCredential(
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := updateCredentialData(ctx, tx, userHandle, credential); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+func updateCredentialData(
+	ctx context.Context,
+	tx pgx.Tx,
+	userHandle []byte,
+	credential webauthn.Credential,
+) error {
+	var err error
 	var storedPayload []byte
+
 	if err = tx.QueryRow(ctx, `SELECT credential_data FROM webauthn_credentials WHERE user_handle=$1 AND credential_id=$2 FOR UPDATE`, userHandle, credential.ID).
 		Scan(&storedPayload); errors.Is(
 		err,
@@ -210,20 +226,25 @@ func (s *Repository) UpdateCredential(
 	} else if err != nil {
 		return err
 	}
+
 	var stored webauthn.Credential
+
 	if err = json.Unmarshal(storedPayload, &stored); err != nil {
 		return err
 	}
+
 	// A non-zero counter must move strictly forward. Holding the row lock makes
 	// this comparison valid even when two login responses arrive concurrently.
 	if stored.Authenticator.SignCount > 0 &&
 		credential.Authenticator.SignCount <= stored.Authenticator.SignCount {
 		return identity.ErrInvalidCredential
 	}
+
 	payload, err := json.Marshal(credential)
 	if err != nil {
 		return err
 	}
+
 	if _, err = tx.Exec(
 		ctx,
 		`UPDATE webauthn_credentials SET credential_data=$3,sign_count=$4,updated_at=now() WHERE user_handle=$1 AND credential_id=$2`,
@@ -234,7 +255,8 @@ func (s *Repository) UpdateCredential(
 	); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+
+	return nil
 }
 
 func (s *Repository) ConsumeRecoveryCode(ctx context.Context, use identity.RecoveryUse) error {

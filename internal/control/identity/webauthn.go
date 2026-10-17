@@ -39,6 +39,8 @@ type PasskeyRepository interface {
 	Credential(context.Context, []byte, []byte) (webauthn.Credential, error)
 	SaveBootstrapCredential(context.Context, []byte, webauthn.Credential) error
 	UpdateCredential(context.Context, []byte, webauthn.Credential) error
+	SavePersonalCredential(context.Context, AccountScope, NamedCredential) error
+	UpdatePersonalCredential(context.Context, AccountScope, webauthn.Credential, time.Time) error
 }
 
 // CeremonyRepository is ephemeral one-time proof state, independent of the
@@ -236,6 +238,7 @@ func (s *PasskeyService) FinishLogin(
 	if err != nil {
 		return webauthn.Credential{}, err
 	}
+
 	setup, err := s.ownerNeedsSetup(ctx)
 	if err != nil {
 		return webauthn.Credential{}, err
@@ -243,20 +246,24 @@ func (s *PasskeyService) FinishLogin(
 	if !setup {
 		return webauthn.Credential{}, ErrInvalidCredential
 	}
+
 	parsed, err := protocol.ParseCredentialRequestResponseBytes(response)
 	if err != nil {
 		return webauthn.Credential{}, fmt.Errorf("parse login response: %w", err)
 	}
+
 	_, credential, err := s.webAuthn.ValidatePasskeyLogin(
 		func(rawID, userHandle []byte) (webauthn.User, error) {
 			if string(userHandle) != string(adminUserHandle) {
 				return nil, ErrInvalidCredential
 			}
+
 			stored, lookupErr := s.store.Credential(ctx, userHandle, rawID)
 			if lookupErr != nil {
 				return nil, ErrInvalidCredential
 			}
-			return adminUser{handle: userHandle, credentials: []webauthn.Credential{stored}}, nil
+
+			return passkeyUser{handle: userHandle, credentials: []webauthn.Credential{stored}}, nil
 		},
 		session,
 		parsed,
@@ -264,11 +271,13 @@ func (s *PasskeyService) FinishLogin(
 	if err != nil {
 		return webauthn.Credential{}, err
 	}
+
 	// The library returns the incremented sign counter. The store performs a
 	// compare-and-update so cloned authenticators cannot race a stale counter in.
 	if err = s.store.UpdateCredential(ctx, adminUserHandle, *credential); err != nil {
 		return webauthn.Credential{}, err
 	}
+
 	return *credential, nil
 }
 
@@ -282,17 +291,30 @@ func (s *PasskeyService) saveCeremony(
 	if err != nil {
 		return BeginCeremony{}, err
 	}
+
+	return s.saveCeremonyPayload(ctx, kind, options, payload)
+}
+
+func (s *PasskeyService) saveCeremonyPayload(
+	ctx context.Context,
+	kind string,
+	options any,
+	payload []byte,
+) (BeginCeremony, error) {
 	nonce := make([]byte, s.aead.NonceSize())
-	if _, err = io.ReadFull(s.random, nonce); err != nil {
+	if _, err := io.ReadFull(s.random, nonce); err != nil {
 		return BeginCeremony{}, err
 	}
+
 	// The challenge is required to validate the finish response. AES-GCM keeps
 	// it confidential at rest and authenticates kind as associated data.
 	ciphertext := s.aead.Seal(nonce, nonce, payload, []byte(kind))
+
 	id, err := randomTokenFrom(s.random, 32)
 	if err != nil {
 		return BeginCeremony{}, err
 	}
+
 	ceremony := Ceremony{
 		IDHash:            hashToken(id),
 		Kind:              kind,
@@ -302,10 +324,12 @@ func (s *PasskeyService) saveCeremony(
 	if err = s.ceremonies.SaveCeremony(ctx, ceremony); err != nil {
 		return BeginCeremony{}, err
 	}
+
 	encodedOptions, err := json.Marshal(options)
 	if err != nil {
 		return BeginCeremony{}, err
 	}
+
 	return BeginCeremony{CeremonyID: id, Options: encodedOptions}, nil
 }
 
@@ -313,43 +337,78 @@ func (s *PasskeyService) consumeCeremony(
 	ctx context.Context,
 	id, expectedKind string,
 ) (Ceremony, webauthn.SessionData, error) {
-	ceremony, err := s.ceremonies.ConsumeCeremony(ctx, hashToken(id), s.now().UTC())
-	if errors.Is(err, ErrSecurityStateUnavailable) {
+	ceremony, payload, err := s.consumeCeremonyPayload(ctx, id, expectedKind)
+	if err != nil {
 		return Ceremony{}, webauthn.SessionData{}, err
 	}
-	if err != nil || ceremony.Kind != expectedKind {
-		return Ceremony{}, webauthn.SessionData{}, ErrInvalidCeremony
-	}
-	nonceSize := s.aead.NonceSize()
-	if len(ceremony.PayloadCiphertext) < nonceSize {
-		return Ceremony{}, webauthn.SessionData{}, ErrInvalidCeremony
-	}
-	nonce, ciphertext := ceremony.PayloadCiphertext[:nonceSize], ceremony.PayloadCiphertext[nonceSize:]
-	payload, err := s.aead.Open(nil, nonce, ciphertext, []byte(ceremony.Kind))
-	if err != nil {
-		return Ceremony{}, webauthn.SessionData{}, ErrInvalidCeremony
-	}
+
 	var session webauthn.SessionData
+
 	if err = json.Unmarshal(payload, &session); err != nil {
 		return Ceremony{}, webauthn.SessionData{}, ErrInvalidCeremony
 	}
+
 	return ceremony, session, nil
 }
 
-func (s *PasskeyService) user(ctx context.Context) (adminUser, error) {
-	credentials, err := s.store.Credentials(ctx, adminUserHandle)
-	return adminUser{handle: adminUserHandle, credentials: credentials}, err
+func (s *PasskeyService) consumeCeremonyPayload(
+	ctx context.Context,
+	id, expectedKind string,
+) (Ceremony, []byte, error) {
+	if len(id) < 1 || len(id) > 128 {
+		return Ceremony{}, nil, ErrInvalidCeremony
+	}
+
+	ceremony, err := s.ceremonies.ConsumeCeremony(ctx, hashToken(id), s.now().UTC())
+	if errors.Is(err, ErrSecurityStateUnavailable) {
+		return Ceremony{}, nil, err
+	}
+	if err != nil || ceremony.Kind != expectedKind {
+		return Ceremony{}, nil, ErrInvalidCeremony
+	}
+
+	nonceSize := s.aead.NonceSize()
+	if len(ceremony.PayloadCiphertext) < nonceSize {
+		return Ceremony{}, nil, ErrInvalidCeremony
+	}
+
+	nonce, ciphertext := ceremony.PayloadCiphertext[:nonceSize], ceremony.PayloadCiphertext[nonceSize:]
+	payload, err := s.aead.Open(nil, nonce, ciphertext, []byte(ceremony.Kind))
+	if err != nil {
+		return Ceremony{}, nil, ErrInvalidCeremony
+	}
+
+	return ceremony, payload, nil
 }
 
-type adminUser struct {
+func (s *PasskeyService) user(ctx context.Context) (passkeyUser, error) {
+	credentials, err := s.store.Credentials(ctx, adminUserHandle)
+	return passkeyUser{handle: adminUserHandle, credentials: credentials}, err
+}
+
+type passkeyUser struct {
 	handle      []byte
+	name        string
 	credentials []webauthn.Credential
 }
 
-func (u adminUser) WebAuthnID() []byte                         { return u.handle }
-func (u adminUser) WebAuthnName() string                       { return "admin" }
-func (u adminUser) WebAuthnDisplayName() string                { return "HomeHarbor Administrator" }
-func (u adminUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
+func (u passkeyUser) WebAuthnID() []byte { return u.handle }
+func (u passkeyUser) WebAuthnName() string {
+	if u.name != "" {
+		return u.name
+	}
+
+	return "admin"
+}
+
+func (u passkeyUser) WebAuthnDisplayName() string {
+	if u.name != "" {
+		return u.name
+	}
+
+	return "HomeHarbor Administrator"
+}
+func (u passkeyUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
 
 func randomTokenFrom(reader io.Reader, size int) (string, error) {
 	buffer := make([]byte, size)

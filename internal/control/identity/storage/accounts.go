@@ -84,18 +84,26 @@ func (s *Repository) ConfigureOwner(
 var _ identity.AccountReader = (*Repository)(nil)
 
 func lockAccountScope(ctx context.Context, tx pgx.Tx, scope identity.AccountScope) error {
+	_, err := lockedAccountScope(ctx, tx, scope)
+	return err
+}
+
+func lockedAccountScope(
+	ctx context.Context,
+	tx pgx.Tx,
+	scope identity.AccountScope,
+) (identity.Account, error) {
 	var account identity.Account
-	if err := tx.QueryRow(ctx, `SELECT account_id,role,status,auth_version FROM admin_accounts WHERE account_id=$1 FOR UPDATE`, scope.AccountID).
-		Scan(&account.ID, &account.Role, &account.Status, &account.AuthVersion); errors.Is(
-		err,
-		pgx.ErrNoRows,
-	) {
-		return identity.ErrInvalidCredential
-	} else if err != nil {
-		return err
+	err := tx.QueryRow(ctx, `SELECT account_id,role,status,auth_version,user_handle FROM admin_accounts WHERE account_id=$1 FOR UPDATE`, scope.AccountID).
+		Scan(&account.ID, &account.Role, &account.Status, &account.AuthVersion, &account.UserHandle)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return identity.Account{}, identity.ErrInvalidCredential
+	}
+	if err != nil {
+		return identity.Account{}, err
 	}
 	if !scope.Allows(account) {
-		return identity.ErrInvalidCredential
+		return identity.Account{}, identity.ErrInvalidCredential
 	}
-	return nil
+	return account, nil
 }
