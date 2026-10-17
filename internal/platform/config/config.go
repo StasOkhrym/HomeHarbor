@@ -58,6 +58,7 @@ func (d *Database) validateDriver() error {
 }
 
 type Auth struct {
+	AllowRemoteSetup          bool   `toml:"allow_remote_setup"`
 	RPID                      string `toml:"rp_id"`
 	RPOrigin                  string `toml:"rp_origin"`
 	SessionSigningKey         string `toml:"session_signing_key"`

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -312,5 +314,77 @@ func TestPostgresRedisPersonalSessionReadsLiveAuthorityAcrossPools(t *testing.T)
 		identity.ErrInvalidCredential,
 	) {
 		t.Fatalf("cross-pool revocation left session authorized: %v", err)
+	}
+}
+
+func TestPostgresOwnerPasswordSetupSerializesAgainstReplayAndKeepsCredential(t *testing.T) {
+	pool := testpostgres.OpenSchema(t)
+
+	if err := migrations.Up(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+
+	other, err := pgxpool.NewWithConfig(t.Context(), pool.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(other.Close)
+	store, replica := New(pool), New(other)
+	handle := []byte("homeharbor-admin-v1")
+	credential := webauthn.Credential{
+		ID:              []byte("legacy-owner"),
+		PublicKey:       []byte("public"),
+		AttestationType: "none",
+		Authenticator:   webauthn.Authenticator{SignCount: 7},
+	}
+
+	if err := store.SaveBootstrapCredential(t.Context(), handle, credential); err != nil {
+		t.Fatal(err)
+	}
+
+	scope := identity.AccountScope{
+		AccountID:   identity.OwnerAccountID,
+		AuthVersion: 1,
+		Purpose:     identity.SessionMigration,
+	}
+	var successes atomic.Int32
+	var group sync.WaitGroup
+	for range 12 {
+		group.Go(func() {
+			if err := replica.ConfigureOwner(
+				t.Context(),
+				scope,
+				"owner@example.test",
+				"hashed-password",
+			); err == nil {
+				successes.Add(1)
+			} else if !errors.Is(
+				err,
+				identity.ErrInvalidCredential,
+			) {
+				t.Error(err)
+			}
+		})
+	}
+
+	group.Wait()
+
+	if successes.Load() != 1 {
+		t.Fatalf("owner setup commits=%d", successes.Load())
+	}
+
+	owner, err := store.AccountByEmail(t.Context(), "owner@example.test")
+
+	if err != nil || owner.ID != identity.OwnerAccountID || owner.AuthVersion != 2 ||
+		owner.Status != identity.AccountActive ||
+		owner.PasswordHash != "hashed-password" {
+		t.Fatalf("wrong owner authority: %+v %v", owner, err)
+	}
+
+	key, err := replica.Credential(t.Context(), handle, credential.ID)
+
+	if err != nil || key.Authenticator.SignCount != 7 || string(key.PublicKey) != "public" {
+		t.Fatal("owner setup changed existing key", err)
 	}
 }

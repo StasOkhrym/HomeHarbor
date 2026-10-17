@@ -17,13 +17,19 @@ import (
 
 func newSetupAuth(t *testing.T, state webauth.PasskeyState) *webauth.BrowserAuth {
 	t.Helper()
+
 	auth, err := webauth.NewBrowserAuth(webauth.BrowserAuthConfig{
-		Origin: "https://tunnel.example.com", SigningKey: []byte(strings.Repeat("k", 32)),
-		SessionTTL: time.Hour, SetupState: state,
+		Origin:           "https://tunnel.example.com",
+		SigningKey:       []byte(strings.Repeat("k", 32)),
+		SessionTTL:       time.Hour,
+		SetupState:       state,
+		Accounts:         memoryidentity.NewRepository(),
+		AllowRemoteSetup: true,
 	}, fakePasskeys{}, &fakeSessions{})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return auth
 }
 

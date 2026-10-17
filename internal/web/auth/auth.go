@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -45,12 +46,17 @@ type AdminSessions interface {
 
 // BrowserAuthConfig contains runtime-only secrets after file/env resolution.
 type BrowserAuthConfig struct {
-	Origin     string
-	SigningKey []byte
-	SessionTTL time.Duration
-	Auditor    AuthAuditor
-	SetupState PasskeyState
-	Logger     *slog.Logger
+	Accounts          identity.AccountReader
+	PasswordLogin     PasswordLogin
+	Factors           identity.SecondFactorVerifier
+	AllowRemoteSetup  bool
+	TrustedProxyCIDRs []netip.Prefix
+	Origin            string
+	SigningKey        []byte
+	SessionTTL        time.Duration
+	Auditor           AuthAuditor
+	SetupState        PasskeyState
+	Logger            *slog.Logger
 }
 
 // PasskeyState reads durable setup state without starting a WebAuthn ceremony.
@@ -67,14 +73,19 @@ type AuthAuditor interface {
 // BrowserAuth coordinates passkey transport, session liveness and Origin checks.
 // Browser cookie and CSRF proof mechanics live in web/session.
 type BrowserAuth struct {
-	origin     string
-	codec      *websession.Codec
-	sessionTTL time.Duration
-	passkeys   PasskeyCeremonies
-	sessions   AdminSessions
-	auditor    AuthAuditor
-	setupState PasskeyState
-	logger     *slog.Logger
+	accounts          identity.AccountReader
+	passwordLogin     PasswordLogin
+	factors           identity.SecondFactorVerifier
+	allowRemoteSetup  bool
+	trustedProxyCIDRs []netip.Prefix
+	origin            string
+	codec             *websession.Codec
+	sessionTTL        time.Duration
+	passkeys          PasskeyCeremonies
+	sessions          AdminSessions
+	auditor           AuthAuditor
+	setupState        PasskeyState
+	logger            *slog.Logger
 }
 
 // NewBrowserAuth rejects weak signing material before serving any auth route.
@@ -100,20 +111,31 @@ func NewBrowserAuth(
 		logger = slog.Default()
 	}
 	return &BrowserAuth{
-		origin:     strings.TrimSuffix(config.Origin, "/"),
-		codec:      codec,
-		sessionTTL: config.SessionTTL,
-		passkeys:   passkeys,
-		sessions:   sessions,
-		auditor:    config.Auditor,
-		setupState: config.SetupState,
-		logger:     logger,
+		accounts:          config.Accounts,
+		passwordLogin:     config.PasswordLogin,
+		factors:           config.Factors,
+		allowRemoteSetup:  config.AllowRemoteSetup,
+		trustedProxyCIDRs: append([]netip.Prefix(nil), config.TrustedProxyCIDRs...),
+		origin:            strings.TrimSuffix(config.Origin, "/"),
+		codec:             codec,
+		sessionTTL:        config.SessionTTL,
+		passkeys:          passkeys,
+		sessions:          sessions,
+		auditor:           config.Auditor,
+		setupState:        config.SetupState,
+		logger:            logger,
 	}, nil
 }
 
 // Handler exposes only versioned JSON authentication endpoints.
 func (a *BrowserAuth) Handler() http.Handler {
 	router := chi.NewRouter()
+	router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			next.ServeHTTP(w, r)
+		})
+	})
 	router.Get("/login", a.loginPage)
 	router.Group(func(write chi.Router) {
 		write.Use(a.requireOrigin)
@@ -122,6 +144,9 @@ func (a *BrowserAuth) Handler() http.Handler {
 		write.Post("/login/begin", a.beginLogin)
 		write.Post("/login/finish", a.finishLogin)
 		write.Post("/recovery", a.recoveryLogin)
+		write.Post("/password", a.passwordProof)
+		write.Post("/factor", a.factorProof)
+		write.Post("/owner/password", a.ownerPassword)
 		write.Post("/logout", a.logout)
 	})
 	return router
@@ -217,6 +242,15 @@ func (a *BrowserAuth) establishSession(
 	if err != nil {
 		return err
 	}
+
+	return a.setSessionCookies(w, ctx, session)
+}
+
+func (a *BrowserAuth) setSessionCookies(
+	w http.ResponseWriter,
+	ctx context.Context,
+	session identity.IssuedSession,
+) error {
 	csrf, err := a.csrfCookie(session.Token, session.ExpiresAt)
 	if err != nil {
 		// A session without its CSRF companion is unusable for mutations but
@@ -225,6 +259,7 @@ func (a *BrowserAuth) establishSession(
 		_ = a.sessions.RevokeSession(ctx, session.Token)
 		return err
 	}
+
 	http.SetCookie(w, a.sessionCookie(session))
 	http.SetCookie(w, csrf)
 	return nil
@@ -244,28 +279,10 @@ func (a *BrowserAuth) requireOrigin(next http.Handler) http.Handler {
 	})
 }
 
-type loginPageModel struct {
-	FirstRun    bool
-	Unavailable bool
-}
-
 var loginTemplate = template.Must(template.New("login").Parse(string(loginPage)))
 
 func (a *BrowserAuth) loginPage(w http.ResponseWriter, r *http.Request) {
-	model := loginPageModel{}
-	status := http.StatusOK
-	// Unknown setup state must never be interpreted as an unclaimed admin
-	// account. The ceremony still performs its own atomic bootstrap check.
-	if a.setupState == nil {
-		model.Unavailable = true
-	} else if registered, err := a.setupState.HasCredentials(r.Context()); err != nil {
-		model.Unavailable = true
-	} else {
-		model.FirstRun = !registered
-	}
-	if model.Unavailable {
-		status = http.StatusServiceUnavailable
-	}
+	model, status := a.loginState(w, r)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
@@ -281,6 +298,15 @@ func (a *BrowserAuth) loginAsset(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *BrowserAuth) beginBootstrap(w http.ResponseWriter, r *http.Request) {
+	if !a.bootstrapAllowed(r) {
+		httpresponse.WriteError(
+			w,
+			http.StatusForbidden,
+			"owner setup requires loopback or explicit setup mode",
+		)
+		return
+	}
+
 	result, err := a.passkeys.BeginBootstrap(r.Context())
 	a.writeBegin(w, result, err)
 }
@@ -310,10 +336,20 @@ type finishCeremonyRequest struct {
 }
 
 func (a *BrowserAuth) finishBootstrap(w http.ResponseWriter, r *http.Request) {
+	if !a.bootstrapAllowed(r) {
+		httpresponse.WriteError(
+			w,
+			http.StatusForbidden,
+			"owner setup requires loopback or explicit setup mode",
+		)
+		return
+	}
+
 	var input finishCeremonyRequest
 	if !httpresponse.DecodeJSON(w, r, &input) {
 		return
 	}
+
 	if _, err := a.passkeys.FinishBootstrap(
 		r.Context(),
 		input.CeremonyID,
@@ -323,10 +359,12 @@ func (a *BrowserAuth) finishBootstrap(w http.ResponseWriter, r *http.Request) {
 			httpresponse.WriteError(w, http.StatusServiceUnavailable, "security state unavailable")
 			return
 		}
+
 		a.audit(r.Context(), "admin.bootstrap", false)
 		httpresponse.WriteError(w, http.StatusUnauthorized, "invalid ceremony")
 		return
 	}
+
 	r = r.WithContext(legacyProofAuditContext(r.Context(), "passkey"))
 	codes, err := a.sessions.GenerateRecoveryCodes(
 		r.Context(),
@@ -340,10 +378,12 @@ func (a *BrowserAuth) finishBootstrap(w http.ResponseWriter, r *http.Request) {
 		a.writeBootstrapFailure(w, r, err, "bootstrap_recovery_unavailable")
 		return
 	}
+
 	if err = a.establishSession(w, r.Context(), "passkey"); err != nil {
 		a.writeBootstrapFailure(w, r, err, "bootstrap_session_unavailable")
 		return
 	}
+
 	a.audit(r.Context(), "admin.bootstrap", true)
 	// Recovery plaintext is deliberately returned only by this bootstrap
 	// response; the identity store persists hashes and cannot reconstruct it.

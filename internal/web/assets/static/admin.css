@@ -418,6 +418,19 @@ select[aria-invalid="true"] {
   font-size: 1.8rem;
 }
 
+.auth-card form {
+  margin-top: 24px;
+}
+
+:where(.auth-card form) label {
+  margin-top: 16px;
+}
+
+.auth-card form .button {
+  margin-top: 16px;
+  width: 100%;
+}
+
 .auth-status {
   min-height: 24px;
   margin-top: 18px;

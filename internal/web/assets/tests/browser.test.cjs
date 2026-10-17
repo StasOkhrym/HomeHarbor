@@ -794,3 +794,105 @@ test("connections stop presenting current running state when refresh fails", asy
   assert.match(page.feed.rows[0].fieldNodes.freshness.textContent, /could not be refreshed/);
   assert.equal(page.status.dataset.state, "stale");
 });
+
+function passwordPage(pathname, response) {
+  const listeners = new Map();
+  const events = new Map();
+  const requests = [];
+  const navigations = [];
+  const fields = {
+    email: { value: "owner@example.test" },
+    password: { value: " private long password " },
+    _csrf: { value: "bound-csrf" },
+  };
+  const button = { disabled: false, setAttribute() {}, removeAttribute() {} };
+  const fieldset = { disabled: true };
+  const status = { textContent: "", classList: { toggle() {} } };
+  const form = {
+    elements: {
+      namedItem(name) {
+        return fields[name] || null;
+      },
+    },
+    addEventListener(name, callback) {
+      listeners.set(name, callback);
+    },
+    querySelector(selector) {
+      return selector === "fieldset" ? fieldset : selector.includes("button") ? button : null;
+    },
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../static/auth-ui.js"), "utf8"), {
+    document: {
+      querySelector(selector) {
+        return selector === pathname ? form : selector === "#status" ? status : null;
+      },
+    },
+    window: {
+      addEventListener(name, callback) {
+        events.set(name, callback);
+      },
+    },
+    location: {
+      replace(value) {
+        navigations.push(value);
+      },
+    },
+    fetch: async (url, options) => {
+      requests.push({ url, options });
+      return response;
+    },
+    AbortController,
+    setTimeout,
+    clearTimeout,
+  });
+  return { listeners, events, requests, navigations, fields, fieldset, status, form };
+}
+
+test("password login intercepts secret entry, preserves password bytes and advances only to MFA", async () => {
+  const page = passwordPage("#password-login", {
+    ok: true,
+    status: 200,
+    json: async () => ({ next: "second_factor" }),
+  });
+
+  assert.equal(typeof page.listeners.get("submit"), "function");
+  assert.equal(page.fieldset.disabled, false);
+
+  await page.listeners.get("submit")({ preventDefault() {}, currentTarget: page.form });
+
+  assert.equal(page.requests.length, 1);
+  assert.equal(page.requests[0].url, "/api/v1/auth/password");
+  assert.equal(JSON.parse(page.requests[0].options.body).password, " private long password ");
+  assert.equal(page.fields.password.value, "");
+  assert.deepEqual(page.navigations, ["/admin/login"]);
+});
+
+test("failed password stays on the current step and clears private fields", async () => {
+  const page = passwordPage("#password-login", {
+    ok: false,
+    status: 401,
+    json: async () => ({ error: "PRIVATE_SERVER_DIAGNOSTIC" }),
+  });
+
+  await page.listeners.get("submit")({ preventDefault() {}, currentTarget: page.form });
+
+  assert.deepEqual(page.navigations, []);
+  assert.equal(page.fields.password.value, "");
+  assert.doesNotMatch(page.status.textContent, /PRIVATE_SERVER_DIAGNOSTIC/);
+
+  page.fields.password.value = "unsent secret";
+  page.events.get("pagehide")();
+
+  assert.equal(page.fields.password.value, "");
+});
+
+test("owner setup submits its scoped CSRF proof and returns to password sign-in", async () => {
+  const page = passwordPage("#owner-password", { ok: true, status: 204 });
+
+  await page.listeners.get("submit")({ preventDefault() {}, currentTarget: page.form });
+
+  assert.equal(page.requests[0].url, "/api/v1/auth/owner/password");
+  assert.equal(page.requests[0].options.headers["X-CSRF-Token"], "bound-csrf");
+  assert.equal(page.fields.password.value, "");
+  assert.deepEqual(page.navigations, ["/admin/login"]);
+});

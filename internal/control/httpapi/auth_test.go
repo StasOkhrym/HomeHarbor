@@ -28,17 +28,21 @@ func (failingAuthAuditor) RecordIdentity(context.Context, string, bool) error {
 
 func TestBrowserAuthUsesInjectedLoggerForFailedAudit(t *testing.T) {
 	var logs bytes.Buffer
+
 	auth, err := webauth.NewBrowserAuth(webauth.BrowserAuthConfig{
-		Origin:     "https://tunnel.example.com",
-		SigningKey: bytes.Repeat([]byte("k"), 32),
-		SessionTTL: time.Hour,
-		Auditor:    failingAuthAuditor{},
-		Logger:     slog.New(slog.NewJSONHandler(&logs, nil)),
+		Origin:           "https://tunnel.example.com",
+		SigningKey:       bytes.Repeat([]byte("k"), 32),
+		SessionTTL:       time.Hour,
+		AllowRemoteSetup: true,
+		Auditor:          failingAuthAuditor{},
+		Logger:           slog.New(slog.NewJSONHandler(&logs, nil)),
 	}, fakePasskeys{}, &fakeSessions{})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
+
 	if principal, err := auth.AdminPrincipal(
 		request.Context(),
 		request,
@@ -46,6 +50,7 @@ func TestBrowserAuthUsesInjectedLoggerForFailedAudit(t *testing.T) {
 		!errors.Is(err, identity.ErrInvalidCredential) {
 		t.Fatalf("missing session principal=%v err=%v", principal, err)
 	}
+
 	if output := logs.String(); !strings.Contains(output, `"msg":"persist identity audit event"`) ||
 		!strings.Contains(output, `"action":"admin.auth"`) ||
 		!strings.Contains(output, "audit sink unavailable") {
@@ -143,9 +148,10 @@ func newBrowserAuthTest(t *testing.T) (*webauth.BrowserAuth, *fakeSessions) {
 	}
 	auth, err := webauth.NewBrowserAuth(
 		webauth.BrowserAuthConfig{
-			Origin:     "https://tunnel.example.com",
-			SigningKey: []byte(strings.Repeat("k", 32)),
-			SessionTTL: time.Hour,
+			Origin:           "https://tunnel.example.com",
+			SigningKey:       []byte(strings.Repeat("k", 32)),
+			SessionTTL:       time.Hour,
+			AllowRemoteSetup: true,
 		},
 		fakePasskeys{},
 		sessions,
@@ -153,6 +159,7 @@ func newBrowserAuthTest(t *testing.T) (*webauth.BrowserAuth, *fakeSessions) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return auth, sessions
 }
 

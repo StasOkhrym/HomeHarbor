@@ -87,19 +87,22 @@ func bootstrapFixture(t *testing.T) (*webauth.BrowserAuth, *persistedPasskeys, *
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	passkeys := &persistedPasskeys{PasskeyService: service, store: store}
 	sessions := &bootstrapSessions{
 		AdminSessions: identity.NewService(store, store, store, nil, nil),
 	}
 	auth, err := webauth.NewBrowserAuth(webauth.BrowserAuthConfig{
-		Origin:     "https://tunnel.example.com",
-		SigningKey: bytes.Repeat([]byte{8}, 32),
-		SessionTTL: time.Hour,
-		SetupState: passkeys,
+		Origin:           "https://tunnel.example.com",
+		SigningKey:       bytes.Repeat([]byte{8}, 32),
+		SessionTTL:       time.Hour,
+		AllowRemoteSetup: true,
+		SetupState:       passkeys,
 	}, passkeys, sessions)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return auth, passkeys, sessions
 }
 

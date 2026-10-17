@@ -11,8 +11,9 @@ type ActionOption struct {
 func Actions() []ActionOption {
 	return []ActionOption{
 		{"admin.bootstrap", "First administrator passkey setup", "security"},
-		{"admin.login", "Passkey sign-in", "security"},
+		{"admin.login", "Administrator sign-in", "security"},
 		{"admin.recovery", "Recovery sign-in", "security"},
+		{"admin.account_configured", "Owner email and password configured", "administrators"},
 		{"admin.logout", "Administrator sign-out", "security"},
 		{"admin.auth", "Administrator authentication check", "security"},
 		{"device.enrolled", "Device registered", "devices"},

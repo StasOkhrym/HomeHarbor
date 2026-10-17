@@ -82,6 +82,14 @@ func buildHTTP(
 			destination.Status == devices.StatusActive &&
 			source.Role != destination.Role
 	}
+	trustedProxyCIDRs := make([]netip.Prefix, 0, len(cfg.Security.TrustedProxyCIDRs))
+	for _, value := range cfg.Security.TrustedProxyCIDRs {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return nil, nil, nil, errors.Join(errors.New("parse trusted proxy CIDR"), err)
+		}
+		trustedProxyCIDRs = append(trustedProxyCIDRs, prefix)
+	}
 	var signedSnapshots *controlsnapshots.Service
 	identityStore := identitystorage.New(pool)
 	sessionStore, err := identityredis.NewSessions(
@@ -100,6 +108,32 @@ func buildHTTP(
 		time.Now,
 		nil,
 	)
+
+	passwordHasher, err := identity.NewPasswordHasher(2)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	preauthStore, err := identityredis.NewPreauth(
+		redisClient,
+		"homeharbor:"+cfg.Networking.NetworkID,
+		time.Now,
+		cfg.Runtime.RedisTimeout,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	loginService, err := identity.NewLoginService(
+		identity.LoginConfig{SessionTTL: cfg.Auth.SessionDuration()},
+		identityStore,
+		preauthStore,
+		identityService,
+		passwordHasher,
+		time.Now,
+		nil,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	passkeyService, err := identity.NewPasskeyService(identity.PasskeyConfig{
 		RPID:          cfg.Auth.RPID,
 		RPOrigin:      cfg.Auth.RPOrigin,
@@ -110,6 +144,8 @@ func buildHTTP(
 		return nil, nil, nil, errors.Join(errors.New("configure passkeys"), err)
 	}
 	auth, err := webauth.NewBrowserAuth(webauth.BrowserAuthConfig{
+		Accounts: identityStore, PasswordLogin: loginService,
+		AllowRemoteSetup: cfg.Auth.AllowRemoteSetup, TrustedProxyCIDRs: trustedProxyCIDRs,
 		Origin:     cfg.Auth.RPOrigin,
 		SigningKey: []byte(cfg.Auth.SessionSigningKey),
 		SessionTTL: cfg.Auth.SessionDuration(),
@@ -187,14 +223,6 @@ func buildHTTP(
 		Issuer: relay.TicketIssuer{Key: []byte(cfg.Relay.TicketKey)},
 		URL:    cfg.Relay.PublicURL,
 		TTL:    relayTTL,
-	}
-	trustedProxyCIDRs := make([]netip.Prefix, 0, len(cfg.Security.TrustedProxyCIDRs))
-	for _, value := range cfg.Security.TrustedProxyCIDRs {
-		prefix, err := netip.ParsePrefix(value)
-		if err != nil {
-			return nil, nil, nil, errors.Join(errors.New("parse trusted proxy CIDR"), err)
-		}
-		trustedProxyCIDRs = append(trustedProxyCIDRs, prefix)
 	}
 	deps.Security.TrustedProxyCIDRs = trustedProxyCIDRs
 	if cfg.Security.RootPublicKeyFile != "" {

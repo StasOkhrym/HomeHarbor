@@ -13,6 +13,7 @@ import (
 )
 
 type Repository struct {
+	preauth       map[[32]byte]domainpkg.Preauth
 	mu            sync.Mutex
 	recoveryCodes map[string]map[[32]byte]domainpkg.RecoveryCode
 	accounts      map[string]domainpkg.Account
@@ -372,11 +373,8 @@ var (
 func (s *Repository) SetAccountForTest(account domainpkg.Account) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	account.UserHandle = bytes.Clone(account.UserHandle)
-	if account.EmailVerifiedAt != nil {
-		value := *account.EmailVerifiedAt
-		account.EmailVerifiedAt = &value
-	}
+
+	account = cloneAccount(account)
 	s.accounts[account.ID] = account
 }
 
@@ -384,16 +382,24 @@ func (s *Repository) Account(ctx context.Context, id string) (domainpkg.Account,
 	if err := ctx.Err(); err != nil {
 		return domainpkg.Account{}, err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	account, ok := s.accounts[id]
 	if !ok {
 		return domainpkg.Account{}, domainpkg.ErrInvalidCredential
 	}
+
+	return cloneAccount(account), nil
+}
+
+func cloneAccount(account domainpkg.Account) domainpkg.Account {
 	account.UserHandle = bytes.Clone(account.UserHandle)
 	if account.EmailVerifiedAt != nil {
 		value := *account.EmailVerifiedAt
 		account.EmailVerifiedAt = &value
 	}
-	return account, nil
+
+	return account
 }

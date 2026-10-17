@@ -14,6 +14,9 @@ password_file = "/run/secrets/redis_password"
 # The key prefix is derived from networking.network_id by the control runtime.
 
 [auth]
+# Fresh owner bootstrap is loopback-only. Enable temporarily for an explicitly
+# controlled setup behind a container/proxy; disable after owner setup.
+allow_remote_setup = false
 rp_id = "tunnel.example.com"
 rp_origin = "https://tunnel.example.com"
 session_signing_key_file = "/run/secrets/session_signing_key"

@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sign in · HomeHarbor</title>
-    <link rel="stylesheet" href="/assets/admin.css?v=ui-4">
-    <script src="/assets/login.js?v=ui-3" defer></script>
+    <link rel="stylesheet" href="/assets/admin.css?v=ui-6">
+    <script src="/assets/login.js?v=auth-4" defer></script>
   </head>
   <body class="auth-page">
     <main class="auth-card" aria-labelledby="login-title">
@@ -14,24 +14,28 @@
       aria-hidden="true">↗</span> HomeHarbor</a>
       {{if .Unavailable}}
         <h1 id="login-title">Sign-in is unavailable</h1>
-        <p class="muted">We could not check your account state. No account changes have been made.</p>
-        <p class="alert alert-error"
-           role="alert">Please check the control service and try again.</p>
+        <p class="muted">We could not check your account state. Please try again shortly.</p>
         <a class="button" href="/admin/login">Try again</a>
+      {{else if .SetupBlocked}}
+        <p class="eyebrow">Owner setup</p>
+        <h1 id="login-title">Start from your host</h1>
+        <p class="muted">Open HomeHarbor from the machine running the control service, or ask its operator to enable owner setup temporarily.</p>
+        <a class="button secondary" href="/admin/login">Check again</a>
       {{else}}
         {{if .FirstRun}}
-          <p class="eyebrow">First-time setup</p>
+          <p class="eyebrow">Owner setup · 1 of 2</p>
           <h1 id="login-title">Welcome to your network</h1>
-          <p class="muted">Create an administrator passkey using your device's fingerprint, face recognition or security key.</p>
-          <button id="bootstrap" class="button" type="button">Create admin passkey</button>
-          <p class="help">Next, save your recovery codes somewhere safe. Your network's signing key is configured separately on your Mac.</p>
-        {{else}}
-          <h1 id="login-title">Welcome back</h1>
-          <p class="muted">Sign in to manage your devices, services and access.</p>
-          <button id="passkey" class="button" type="button">Sign in with passkey</button>
+          <p class="muted">Create your owner passkey, then set an email and password for future sign-ins.</p>
+          <button id="bootstrap" class="button" type="button">Create owner passkey</button>
+          <p class="help">Use your device's fingerprint, face recognition or a security key.</p>
+        {{else if .Migration}}
+          <p class="eyebrow">Secure your owner account</p>
+          <h1 id="login-title">Keep your existing passkey</h1>
+          <p class="muted">Confirm your identity to add email and password. Your network and passkey stay in place.</p>
+          <button id="passkey" class="button" type="button">Continue with existing passkey</button>
           <details class="recovery-details">
             <summary>Can't use your passkey?</summary>
-            <p class="help">Use one of your saved recovery codes. Each code works only once.</p>
+            <p class="help">Use a saved recovery code to continue owner setup. Each code works once.</p>
             <form id="recovery" method="post" action="/admin/login">
               <fieldset disabled>
                 <label for="recovery-code">Recovery code</label>
@@ -44,6 +48,87 @@
               </fieldset>
             </form>
           </details>
+        {{else if .OwnerPassword}}
+          <p class="eyebrow">Owner setup · 2 of 2</p>
+          <h1 id="login-title">Make this account yours</h1>
+          <p class="muted">Use email and password, then your passkey or authenticator, each time you sign in.</p>
+          <form id="owner-password" method="post" action="/admin/login">
+            <fieldset disabled>
+              <input type="hidden" name="_csrf" value="{{.CSRF}}">
+              <label for="email">Email</label>
+              <input type="email"
+                     id="email"
+                     name="email"
+                     autocomplete="username"
+                     spellcheck="false"
+                     maxlength="254"
+                     required>
+              <label for="new-password">Password</label>
+              <input type="password"
+                     id="new-password"
+                     name="password"
+                     autocomplete="new-password"
+                     minlength="12"
+                     maxlength="1024"
+                     aria-describedby="password-help"
+                     required>
+              <button id="toggle-new-password"
+                      class="button secondary"
+                      type="button"
+                      aria-controls="new-password"
+                      aria-pressed="false">Show password</button>
+              <p id="password-help" class="help">At least 12 characters. A unique password from your password manager works well.</p>
+              <button class="button" type="submit">Save account</button>
+            </fieldset>
+          </form>
+        {{else if .SecondFactor}}
+          <p class="eyebrow">Sign in · 2 of 2</p>
+          <h1 id="login-title">Verify it's you</h1>
+          <p class="muted">Enter the six-digit code from your authenticator.</p>
+          <form id="factor-code" method="post" action="/admin/login">
+            <fieldset disabled>
+              <label for="one-time-code">Authenticator code</label>
+              <input id="one-time-code"
+                     name="code"
+                     type="text"
+                     inputmode="numeric"
+                     autocomplete="one-time-code"
+                     pattern="[0-9]{6}"
+                     maxlength="6"
+                     required>
+              <button class="button" type="submit">Verify and sign in</button>
+            </fieldset>
+          </form>
+          <a class="button secondary" href="/admin/login?restart=1">Use another account</a>
+        {{else}}
+          <p class="eyebrow">Sign in · 1 of 2</p>
+          <h1 id="login-title">Welcome back</h1>
+          <p class="muted">Sign in to manage your home network.</p>
+          <form id="password-login" method="post" action="/admin/login">
+            <fieldset disabled>
+              <label for="email">Email</label>
+              <input type="email"
+                     id="email"
+                     name="email"
+                     autocomplete="username"
+                     spellcheck="false"
+                     maxlength="254"
+                     required>
+              <label for="current-password">Password</label>
+              <input type="password"
+                     id="current-password"
+                     name="password"
+                     autocomplete="current-password"
+                     maxlength="1024"
+                     required>
+              <button id="toggle-current-password"
+                      class="button secondary"
+                      type="button"
+                      aria-controls="current-password"
+                      aria-pressed="false">Show password</button>
+              <button class="button" type="submit">Continue to verification</button>
+            </fieldset>
+          </form>
         {{end}}
         <p id="status" class="auth-status" role="status" aria-live="polite"></p>
         <section id="recovery-codes"
@@ -51,14 +136,14 @@
                  hidden
                  aria-labelledby="codes-title">
           <h2 id="codes-title">Save your recovery codes</h2>
-          <p>These codes are shown only now. Store them in your password manager or another safe place.</p>
+          <p>Store these in your password manager. They're shown only now.</p>
           <pre id="codes-value" class="secret-value"></pre>
           <button id="codes-saved"
                   class="button"
                   type="button">I've saved my codes · Continue</button>
         </section>
         <noscript>
-          <p class="alert">Passkey sign-in requires JavaScript. Enable it and reload this page.</p>
+          <p class="alert">Enable JavaScript to sign in securely, then reload this page.</p>
         </noscript>
       {{end}}
       <p class="auth-footer">Private access. Trusted configuration.</p>
