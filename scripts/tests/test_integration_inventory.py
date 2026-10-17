@@ -1,4 +1,4 @@
-"""The real contract-result validator must require the new telemetry adapter."""
+"""The real contract-result validator must require the telemetry and private notification adapters."""
 
 import importlib.util
 import json
@@ -15,8 +15,13 @@ sys.path.pop(0)
 
 
 class IntegrationInventoryTests(unittest.TestCase):
-    def test_missing_telemetry_adapter_cannot_pass_contract_gate(self):
-        packages = sorted(integration.ADAPTERS - {"control/telemetry/storage"})
+    def test_missing_adapter_cannot_pass_contract_gate(self):
+        for adapter in ("control/telemetry/storage", "control/notifications/storage"):
+            with self.subTest(adapter=adapter):
+                self.assert_missing_adapter_rejected(adapter)
+
+    def assert_missing_adapter_rejected(self, adapter):
+        packages = sorted(integration.ADAPTERS - {adapter})
         records = [
             {
                 "Action": "pass",
@@ -37,5 +42,6 @@ class IntegrationInventoryTests(unittest.TestCase):
             {"Action": "pass", "Package": "test/internal/" + package, "Test": name}
             for package, name in named
         )
-        with self.assertRaisesRegex(ValueError, "control/telemetry/storage"):
+
+        with self.assertRaisesRegex(ValueError, adapter):
             integration.validate_events(json.dumps(record) for record in records)

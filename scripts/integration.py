@@ -32,6 +32,7 @@ ADAPTERS = {
         "devices",
         "identity",
         "invites",
+        "notifications",
         "policy",
         "profiles",
         "routes",

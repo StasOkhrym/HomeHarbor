@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net/mail"
-	"strings"
 	"time"
+
+	platformmail "github.com/StasOkhrym/homeharbor/internal/platform/mail"
 )
 
 // Preauth records password proof, not administrative authority. It is admitted
@@ -108,14 +108,11 @@ func NewLoginService(
 }
 
 func CanonicalEmail(input string) (string, error) {
-	email := strings.ToLower(strings.TrimSpace(input))
-	if len(email) < 3 || len(email) > 254 {
+	email, err := platformmail.CanonicalAddress(input)
+	if err != nil {
 		return "", ErrInvalidCredential
 	}
-	parsed, err := mail.ParseAddress(email)
-	if err != nil || parsed.Address != email || parsed.Name != "" {
-		return "", ErrInvalidCredential
-	}
+
 	return email, nil
 }
 

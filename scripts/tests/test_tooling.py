@@ -155,6 +155,7 @@ class ToolingTests(unittest.TestCase):
             "audit",
             "identity",
             "invites",
+            "notifications",
             "policy",
             "profiles",
             "routes",
@@ -169,6 +170,7 @@ class ToolingTests(unittest.TestCase):
                     "Test": "TestPostgresContract",
                 }
             )
+
         events.append(
             {
                 "Action": "pass",
@@ -184,6 +186,7 @@ class ToolingTests(unittest.TestCase):
                     "Test": "TestRedisChallenge",
                 }
             )
+
         if not missing_recovery:
             events.extend(
                 [
@@ -199,6 +202,7 @@ class ToolingTests(unittest.TestCase):
                     },
                 ]
             )
+
         if not missing_coordination:
             events.append(
                 {
@@ -207,6 +211,7 @@ class ToolingTests(unittest.TestCase):
                     "Test": "TestPostgresCoordinationCrossReplicaRevoke",
                 }
             )
+
         if not missing_sessions:
             events.append(
                 {
@@ -215,6 +220,7 @@ class ToolingTests(unittest.TestCase):
                     "Test": "TestRedisSessionSharedTTLAndRevoke",
                 }
             )
+
         self.cli(
             "go",
             '[ "$1" = test ] || exit 99\n[ "$2" = -json ] || exit 98\n'
