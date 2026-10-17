@@ -87,3 +87,30 @@ func TestIdentityAuditDoesNotInventOwnerForUnattributedSuccess(t *testing.T) {
 		t.Fatalf("unattributed success became global owner: %+v", sink.event)
 	}
 }
+
+func TestFactorAuditTargetsPersonalAccountAndKnownActivity(t *testing.T) {
+	sink := &recordingAuditSink{}
+
+	ctx := audit.WithContext(
+		t.Context(),
+		audit.Context{
+			ActorType:      "admin",
+			ActorID:        "account-1",
+			Authentication: "password_totp",
+			Reason:         "invalid_proof",
+			SourceIP:       "192.0.2.10",
+		},
+	)
+	for _, action := range []string{"admin.totp_added", "admin.totp_removed", "admin.passkey_added", "admin.passkey_removed", "admin.recovery_codes_replaced"} {
+		if err := NewIdentityAuditor(sink, nil).RecordIdentity(ctx, action, false); err != nil {
+			t.Fatal(err)
+		}
+
+		if sink.event.TargetType != "admin_account" || sink.event.TargetID != "account-1" ||
+			sink.event.Metadata["auth_method"] != "password_totp" ||
+			sink.event.Metadata["reason"] != "invalid_proof" ||
+			audit.ActionLabel(action) == "Other activity" {
+			t.Fatalf("unusable factor history: %+v", sink.event)
+		}
+	}
+}

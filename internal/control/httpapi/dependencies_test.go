@@ -92,3 +92,13 @@ func TestNewServerAllowsUnavailableOptionalResources(t *testing.T) {
 		t.Fatalf("missing optional services: status=%d", response.Code)
 	}
 }
+
+func TestNewServerRejectsAccountAPIWithoutBrowserSecurity(t *testing.T) {
+	deps := explicitTestDependencies()
+
+	deps.Browser.AccountAPI = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+
+	if app, err := NewServer(deps); err == nil || app != nil {
+		t.Fatal("account management accepted without its browser security boundary")
+	}
+}

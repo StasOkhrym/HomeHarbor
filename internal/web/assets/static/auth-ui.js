@@ -1,5 +1,33 @@
 "use strict";
 
+let authAlive = true;
+const authOperations = new Set();
+function requireActivePage() {
+  if (!authAlive) {
+    const error = new Error("Sign-in page closed");
+    error.name = "AbortError";
+    throw error;
+  }
+}
+async function credentialRequest(kind, publicKey) {
+  requireActivePage();
+
+  const controller = new AbortController();
+  authOperations.add(controller);
+
+  try {
+    const credential = await navigator.credentials[kind]({ publicKey, signal: controller.signal });
+    requireActivePage();
+    return credential;
+  } finally {
+    authOperations.delete(controller);
+  }
+}
+
+const returnToSecurity =
+  document.querySelector("[data-login-return]")?.dataset.loginReturn === "security";
+const signInURL = returnToSecurity ? "/admin/login?return_to=security" : "/admin/login";
+const completedURL = returnToSecurity ? "/admin/security" : "/admin/";
 const statusElement = document.querySelector("#status");
 const codesSection = document.querySelector("#recovery-codes");
 const codesValue = document.querySelector("#codes-value");
@@ -21,7 +49,9 @@ function showStatus(message, isError = false) {
 }
 
 async function authRequest(path, body, csrf) {
+  requireActivePage();
   const controller = new AbortController();
+  authOperations.add(controller);
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     const response = await fetch(`/api/v1/auth/${path}`, {
@@ -31,6 +61,7 @@ async function authRequest(path, body, csrf) {
       body: JSON.stringify(body || {}),
       signal: controller.signal,
     });
+    requireActivePage();
     if (!response.ok) {
       // Only the post-registration boundary can assert that the passkey exists.
       // Never echo arbitrary server error text or store recovery material.
@@ -53,9 +84,12 @@ async function authRequest(path, body, csrf) {
         throw new Error("We could not verify your details. Please try again.");
       throw new Error("The request could not be completed. Reload this page and try again.");
     }
-    return response.status === 204 ? null : response.json();
+    const result = response.status === 204 ? null : await response.json();
+    requireActivePage();
+    return result;
   } finally {
     clearTimeout(timeout);
+    authOperations.delete(controller);
   }
 }
 
@@ -67,6 +101,7 @@ async function runAuth(button, action, progress = "Checking your details…") {
   try {
     await action();
   } catch (error) {
+    if (!authAlive) return;
     if (error.bootstrapIncomplete) button.hidden = true;
     const cancelled = error.name === "NotAllowedError";
     const networkFailure = error.name === "AbortError" || error instanceof TypeError;
@@ -84,39 +119,52 @@ async function runAuth(button, action, progress = "Checking your details…") {
   }
 }
 
-document.querySelector("#passkey")?.addEventListener("click", (event) => {
-  runAuth(event.currentTarget, async () => {
-    if (!window.PublicKeyCredential)
-      throw new Error(
-        "This browser does not support passkeys. Use a supported browser or a recovery code.",
-      );
-    const begin = await authRequest("login/begin");
-    const options = begin.options.publicKey;
-    options.challenge = decodeBytes(options.challenge);
-    options.allowCredentials?.forEach((item) => {
-      item.id = decodeBytes(item.id);
-    });
-    const credential = await navigator.credentials.get({ publicKey: options });
-    if (!credential) throw new Error("No passkey was selected. Try again.");
-    await authRequest("login/finish", {
-      ceremony_id: begin.ceremony_id,
-      response: {
-        id: credential.id,
-        rawId: encodeBytes(credential.rawId),
-        type: credential.type,
-        response: {
-          authenticatorData: encodeBytes(credential.response.authenticatorData),
-          clientDataJSON: encodeBytes(credential.response.clientDataJSON),
-          signature: encodeBytes(credential.response.signature),
-          userHandle: credential.response.userHandle
-            ? encodeBytes(credential.response.userHandle)
-            : null,
-        },
-      },
-    });
-    location.replace("/admin/login");
+async function passkeyProof(beginPath, finishPath) {
+  if (!window.PublicKeyCredential)
+    throw new Error(
+      "This browser does not support passkeys. Use a supported browser or a recovery code.",
+    );
+
+  const begin = await authRequest(beginPath);
+  const options = begin.options.publicKey;
+  options.challenge = decodeBytes(options.challenge);
+  options.allowCredentials?.forEach((item) => {
+    item.id = decodeBytes(item.id);
   });
-});
+
+  const credential = await credentialRequest("get", options);
+  if (!credential) throw new Error("No passkey was selected. Try again.");
+
+  await authRequest(finishPath, {
+    ...(finishPath === "factor" ? { method: "passkey" } : {}),
+    ceremony_id: begin.ceremony_id,
+    response: {
+      id: credential.id,
+      rawId: encodeBytes(credential.rawId),
+      type: credential.type,
+      response: {
+        authenticatorData: encodeBytes(credential.response.authenticatorData),
+        clientDataJSON: encodeBytes(credential.response.clientDataJSON),
+        signature: encodeBytes(credential.response.signature),
+        userHandle: credential.response.userHandle
+          ? encodeBytes(credential.response.userHandle)
+          : null,
+      },
+    },
+  });
+}
+document.querySelector("#passkey")?.addEventListener("click", (event) =>
+  runAuth(event.currentTarget, async () => {
+    await passkeyProof("login/begin", "login/finish");
+    location.replace(signInURL);
+  }),
+);
+document.querySelector("#factor-passkey")?.addEventListener("click", (event) =>
+  runAuth(event.currentTarget, async () => {
+    await passkeyProof("passkey/begin", "factor");
+    location.replace(completedURL);
+  }),
+);
 
 document.querySelector("#bootstrap")?.addEventListener("click", (event) => {
   const button = event.currentTarget;
@@ -132,7 +180,7 @@ document.querySelector("#bootstrap")?.addEventListener("click", (event) => {
     options.excludeCredentials?.forEach((item) => {
       item.id = decodeBytes(item.id);
     });
-    const credential = await navigator.credentials.create({ publicKey: options });
+    const credential = await credentialRequest("create", options);
     if (!credential) throw new Error("No passkey was created. Try again.");
     const result = await authRequest("bootstrap/finish", {
       ceremony_id: begin.ceremony_id,
@@ -158,13 +206,14 @@ document.querySelector("#bootstrap")?.addEventListener("click", (event) => {
 const recoveryForm = document.querySelector("#recovery");
 recoveryForm?.addEventListener("submit", (event) => {
   event.preventDefault();
+
   const form = event.currentTarget;
   const codeInput = form.elements.namedItem("code");
   const code = codeInput.value.trim();
   codeInput.value = "";
   runAuth(form.querySelector("button"), async () => {
     await authRequest("recovery", { code });
-    location.replace("/admin/login");
+    location.replace(signInURL);
   });
 });
 // Enable secret entry only after submission is intercepted. A failed or late
@@ -173,21 +222,23 @@ if (recoveryForm) recoveryForm.querySelector("fieldset").disabled = false;
 
 document.querySelector("#codes-saved")?.addEventListener("click", () => {
   codesValue.textContent = "";
-  location.replace("/admin/login");
+  location.replace(signInURL);
 });
 
 function bindPasswordForm(selector, path) {
   const form = document.querySelector(selector);
   if (!form) return;
+
   form.addEventListener("submit", (event) => {
     event.preventDefault();
+
     const password = form.elements.namedItem("password");
     const body = { email: form.elements.namedItem("email").value, password: password.value };
     const csrf = form.elements.namedItem("_csrf")?.value;
     password.value = "";
     return runAuth(form.querySelector('button[type="submit"]'), async () => {
       await authRequest(path, body, csrf);
-      location.replace("/admin/login");
+      location.replace(signInURL);
     });
   });
   form.querySelector("fieldset").disabled = false;
@@ -195,19 +246,24 @@ function bindPasswordForm(selector, path) {
 bindPasswordForm("#password-login", "password");
 bindPasswordForm("#owner-password", "owner/password");
 
-const factorForm = document.querySelector("#factor-code");
-if (factorForm) {
-  factorForm.addEventListener("submit", (event) => {
+for (const [selector, method] of [
+  ["#factor-code", "totp"],
+  ["#factor-recovery", "recovery"],
+]) {
+  const form = document.querySelector(selector);
+  if (!form) continue;
+  form.addEventListener("submit", (event) => {
     event.preventDefault();
-    const input = factorForm.elements.namedItem("code");
+
+    const input = form.elements.namedItem("code");
     const code = input.value.trim();
     input.value = "";
-    return runAuth(factorForm.querySelector('button[type="submit"]'), async () => {
-      await authRequest("factor", { method: "totp", code });
-      location.replace("/admin/");
+    return runAuth(form.querySelector('button[type="submit"]'), async () => {
+      await authRequest("factor", { method, code });
+      location.replace(completedURL);
     });
   });
-  factorForm.querySelector("fieldset").disabled = false;
+  form.querySelector("fieldset").disabled = false;
 }
 for (const id of ["current-password", "new-password"]) {
   const input = document.querySelector(`#${id}`);
@@ -220,13 +276,21 @@ for (const id of ["current-password", "new-password"]) {
   });
 }
 window.addEventListener("pagehide", () => {
+  authAlive = false;
+  authOperations.forEach((operation) => operation.abort());
+  authOperations.clear();
   if (codesValue) codesValue.textContent = "";
   if (codesSection) codesSection.hidden = true;
   const input = document.querySelector("#recovery-code");
   if (input) input.value = "";
-  for (const selector of ["#password-login", "#owner-password", "#factor-code"]) {
+  for (const selector of [
+    "#password-login",
+    "#owner-password",
+    "#factor-code",
+    "#factor-recovery",
+  ]) {
     const form = document.querySelector(selector);
-    const secret = form?.elements.namedItem(selector === "#factor-code" ? "code" : "password");
+    const secret = form?.elements.namedItem(selector.startsWith("#factor-") ? "code" : "password");
     if (secret) secret.value = "";
   }
 });

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
+	"github.com/StasOkhrym/homeharbor/internal/platform/sealed"
 	memory "github.com/StasOkhrym/homeharbor/internal/testutil/control/identity"
 )
 
@@ -40,28 +42,15 @@ func fixturePasswordHash(t *testing.T) string {
 	return passwordFixture.hash
 }
 
-type verifiedPasswordFactor struct{}
-
-func (verifiedPasswordFactor) VerifySecondFactor(
-	_ context.Context,
-	scope identity.FactorContext,
-	proof identity.SecondFactorProof,
-) (string, error) {
-	if scope.AccountID != identity.OwnerAccountID || scope.AuthVersion != 2 ||
-		scope.Purpose != identity.SessionAdmin ||
-		proof.Method != "totp" ||
-		proof.Code != "123456" {
-		return "", identity.ErrInvalidCredential
-	}
-	return "totp", nil
-}
-
 func personalAuthFixture(
 	t *testing.T,
 	active bool,
 ) (*BrowserAuth, *memory.Repository, *identity.Service) {
 	t.Helper()
 	store := memory.NewRepository()
+
+	now := time.Unix(2000000000, 0).UTC()
+	clock := func() time.Time { return now }
 	if active {
 		store.SetAccountForTest(
 			identity.Account{
@@ -69,29 +58,102 @@ func personalAuthFixture(
 				Email:        "owner@example.test",
 				Role:         identity.RoleOwner,
 				Status:       identity.AccountActive,
-				AuthVersion:  2,
+				AuthVersion:  1,
 				PasswordHash: fixturePasswordHash(t),
 				UserHandle:   []byte("homeharbor-admin-v1"),
 			},
 		)
 	}
-	sessions := identity.NewService(store, store, store, time.Now, nil)
+
+	sessions := identity.NewService(store, store, store, clock, nil)
+
 	hasher, err := identity.NewPasswordHasher(1)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	login, err := identity.NewLoginService(
 		identity.LoginConfig{SessionTTL: time.Hour},
 		store,
 		store,
 		sessions,
 		hasher,
-		time.Now,
+		clock,
 		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	passkeys, err := identity.NewPasskeyService(
+		identity.PasskeyConfig{
+			RPID:          "home.example.test",
+			RPOrigin:      "https://home.example.test",
+			EncryptionKey: bytes.Repeat([]byte{7}, 32),
+			CeremonyTTL:   time.Minute,
+		},
+		store,
+		store,
+		clock,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mfa, err := identity.NewMFAService(
+		identity.MFAConfig{EncryptionKey: bytes.Repeat([]byte{7}, 32)},
+		store,
+		passkeys,
+		sessions,
+		clock,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if active {
+		box, err := sealed.New(bytes.Repeat([]byte{7}, 32), "identity.totp")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ciphertext, err := box.Seal(identity.OwnerAccountID, []byte("12345678901234567890"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		scope := identity.AccountScope{
+			AccountID:   identity.OwnerAccountID,
+			AuthVersion: 1,
+			Purpose:     identity.SessionAdmin,
+		}
+		record := identity.TOTPRecord{
+			ID:                "fixture-seed",
+			AccountID:         identity.OwnerAccountID,
+			EnrollmentVersion: 1,
+			Ciphertext:        ciphertext,
+			CreatedAt:         now.Add(-time.Minute),
+			ExpiresAt:         now.Add(time.Minute),
+			LastStep:          -1,
+		}
+
+		if err := store.SavePendingTOTP(t.Context(), scope, record); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := store.ConfirmTOTP(
+			t.Context(),
+			scope,
+			record.ID,
+			now.Unix()/30-1,
+			now.Add(-time.Second),
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	auth, err := NewBrowserAuth(
 		BrowserAuthConfig{
 			Origin:        "https://home.example.test",
@@ -100,7 +162,7 @@ func personalAuthFixture(
 			SetupState:    store,
 			Accounts:      store,
 			PasswordLogin: login,
-			Factors:       verifiedPasswordFactor{},
+			Factors:       mfa,
 		},
 		verifiedLegacyPasskey{},
 		sessions,
@@ -108,6 +170,7 @@ func personalAuthFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return auth, store, sessions
 }
 
@@ -120,27 +183,35 @@ func TestPasswordHTTPRequiresSecondFactorBeforeAdminSession(t *testing.T) {
 	)
 	request.Header.Set("Origin", "https://home.example.test")
 	response := httptest.NewRecorder()
+
 	auth.Handler().ServeHTTP(response, request)
+
 	if response.Code != http.StatusOK {
 		t.Fatalf("password status%d %s", response.Code, response.Body.String())
 	}
+
 	var preauth *http.Cookie
 	for _, cookie := range response.Result().Cookies() {
 		if cookie.Name == sessionCookieName {
 			t.Fatal("password minted an admin cookie")
 		}
+
 		if cookie.Name == preauthCookieName {
 			preauth = cookie
 		}
 	}
+
 	if preauth == nil || !preauth.HttpOnly || !preauth.Secure ||
 		preauth.SameSite != http.SameSiteStrictMode ||
 		preauth.MaxAge > 300 ||
 		strings.Contains(response.Body.String(), preauth.Value) {
 		t.Fatal("preauth proof exposed or unbounded")
 	}
+
 	protected := httptest.NewRequest(http.MethodGet, "/admin/", nil)
+
 	protected.AddCookie(preauth)
+
 	if _, err := auth.AdminPrincipal(
 		t.Context(),
 		protected,
@@ -150,34 +221,43 @@ func TestPasswordHTTPRequiresSecondFactorBeforeAdminSession(t *testing.T) {
 	) {
 		t.Fatal("password-only browser acquired admin access")
 	}
+
 	factor := httptest.NewRequest(
 		http.MethodPost,
 		"/factor",
-		strings.NewReader(`{"method":"totp","code":"123456"}`),
+		strings.NewReader(`{"method":"totp","code":"279037"}`),
 	)
 	factor.Header.Set("Origin", "https://home.example.test")
 	factor.AddCookie(preauth)
 	completed := httptest.NewRecorder()
+
 	auth.Handler().ServeHTTP(completed, factor)
+
 	if completed.Code != http.StatusNoContent {
 		t.Fatalf("factor status%d %s", completed.Code, completed.Body.String())
 	}
+
 	for _, cookie := range completed.Result().Cookies() {
 		protected.AddCookie(cookie)
 	}
+
 	principal, err := auth.AdminPrincipal(t.Context(), protected)
+
 	if err != nil || principal.AccountID != identity.OwnerAccountID || principal.Method != "totp" {
 		t.Fatalf("factor did not establish personal session: %+v %v", principal, err)
 	}
+
 	replayRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/factor",
-		strings.NewReader(`{"method":"totp","code":"123456"}`),
+		strings.NewReader(`{"method":"totp","code":"279037"}`),
 	)
 	replayRequest.Header.Set("Origin", "https://home.example.test")
 	replayRequest.AddCookie(preauth)
 	replay := httptest.NewRecorder()
+
 	auth.Handler().ServeHTTP(replay, replayRequest)
+
 	if replay.Code != http.StatusUnauthorized {
 		t.Fatalf("factor replay admitted: %d", replay.Code)
 	}

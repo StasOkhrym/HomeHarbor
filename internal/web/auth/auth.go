@@ -48,7 +48,7 @@ type AdminSessions interface {
 type BrowserAuthConfig struct {
 	Accounts          identity.AccountReader
 	PasswordLogin     PasswordLogin
-	Factors           identity.SecondFactorVerifier
+	Factors           MFAActions
 	AllowRemoteSetup  bool
 	TrustedProxyCIDRs []netip.Prefix
 	Origin            string
@@ -75,7 +75,7 @@ type AuthAuditor interface {
 type BrowserAuth struct {
 	accounts          identity.AccountReader
 	passwordLogin     PasswordLogin
-	factors           identity.SecondFactorVerifier
+	factors           MFAActions
 	allowRemoteSetup  bool
 	trustedProxyCIDRs []netip.Prefix
 	origin            string
@@ -146,6 +146,7 @@ func (a *BrowserAuth) Handler() http.Handler {
 		write.Post("/recovery", a.recoveryLogin)
 		write.Post("/password", a.passwordProof)
 		write.Post("/factor", a.factorProof)
+		write.Post("/passkey/begin", a.beginPersonalPasskey)
 		write.Post("/owner/password", a.ownerPassword)
 		write.Post("/logout", a.logout)
 	})
@@ -283,6 +284,7 @@ var loginTemplate = template.Must(template.New("login").Parse(string(loginPage))
 
 func (a *BrowserAuth) loginPage(w http.ResponseWriter, r *http.Request) {
 	model, status := a.loginState(w, r)
+	model.ReturnToSecurity = r.URL.Query().Get("return_to") == "security"
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)

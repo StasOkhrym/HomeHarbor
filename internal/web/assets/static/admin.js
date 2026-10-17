@@ -32,6 +32,7 @@ document.addEventListener("submit", async (event) => {
     }
     return;
   }
+  if (form.matches("[data-security-action]")) return;
   const submitter = event.submitter;
   if (submitter) {
     // Keep the successful submit control in the request. Disabling it here

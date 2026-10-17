@@ -14,6 +14,7 @@ var (
 	activityScript    = assets.Static("activity.js")
 	livePollScript    = assets.Static("live-poll.js")
 	connectionsScript = assets.Static("connections.js")
+	securityScript    = assets.Static("security.js")
 	htmxScript        = assets.Static("htmx-2.0.11.min.js")
 )
 
@@ -32,6 +33,7 @@ func registerBrowserAssets(router chi.Router) {
 		{"/assets/activity.js", activityScript, "public, max-age=3600, immutable"},
 		{"/assets/live-poll.js", livePollScript, "public, max-age=3600, immutable"},
 		{"/assets/connections.js", connectionsScript, "public, max-age=3600, immutable"},
+		{"/assets/security.js", securityScript, "public, max-age=3600, immutable"},
 		{"/assets/htmx-2.0.11.min.js", htmxScript, "public, max-age=31536000, immutable"},
 	} {
 		router.Get(asset.path, func(w http.ResponseWriter, _ *http.Request) {

@@ -10,11 +10,16 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	"github.com/StasOkhrym/homeharbor/internal/control/profiles"
 	"github.com/StasOkhrym/homeharbor/internal/control/routes"
 	"github.com/StasOkhrym/homeharbor/internal/control/services"
 	websession "github.com/StasOkhrym/homeharbor/internal/web/session"
 )
+
+type AccountSecurityReader interface {
+	Factors(context.Context, identity.Principal) (identity.FactorState, error)
+}
 
 type DeviceManager interface {
 	List(context.Context) ([]devices.Device, error)
@@ -47,6 +52,7 @@ type PolicyManager interface {
 // Dependencies are browser-only capabilities. The composition root supplies
 // domain services; the JSON transport has no dependency on this adapter.
 type Dependencies struct {
+	AccountSecurity    AccountSecurityReader
 	Devices            DeviceManager
 	Routes             RouteManager
 	Services           ServiceManager
@@ -63,6 +69,7 @@ type Dependencies struct {
 }
 
 type Handler struct {
+	accountSecurity    AccountSecurityReader
 	devices            DeviceManager
 	routes             RouteManager
 	services           ServiceManager
@@ -84,7 +91,8 @@ func NewHandler(deps Dependencies) *Handler {
 		logger = slog.Default()
 	}
 	return &Handler{
-		devices: deps.Devices, routes: deps.Routes, services: deps.Services,
+		accountSecurity: deps.AccountSecurity,
+		devices:         deps.Devices, routes: deps.Routes, services: deps.Services,
 		profiles: deps.Profiles, policy: deps.Policy, invites: deps.Invites,
 		snapshots: deps.Snapshots, audit: deps.Audit, telemetry: deps.Telemetry, ready: deps.Ready,
 		actionConfirmation: deps.ActionConfirmation,

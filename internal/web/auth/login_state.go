@@ -10,13 +10,15 @@ import (
 )
 
 type loginPageModel struct {
-	FirstRun      bool
-	Migration     bool
-	OwnerPassword bool
-	SecondFactor  bool
-	SetupBlocked  bool
-	Unavailable   bool
-	CSRF          string
+	ReturnToSecurity bool
+	FirstRun         bool
+	Migration        bool
+	OwnerPassword    bool
+	SecondFactor     bool
+	Methods          identity.SignInMethods
+	SetupBlocked     bool
+	Unavailable      bool
+	CSRF             string
 }
 
 func (a *BrowserAuth) loginState(w http.ResponseWriter, r *http.Request) (loginPageModel, int) {
@@ -24,8 +26,10 @@ func (a *BrowserAuth) loginState(w http.ResponseWriter, r *http.Request) (loginP
 	if a.accounts == nil {
 		return unavailable()
 	}
+
 	operation, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+
 	owner, err := a.accounts.Account(operation, identity.OwnerAccountID)
 	if err != nil || owner.ID != identity.OwnerAccountID || owner.Role != identity.RoleOwner ||
 		owner.AuthVersion == 0 {
@@ -37,13 +41,34 @@ func (a *BrowserAuth) loginState(w http.ResponseWriter, r *http.Request) (loginP
 			http.SetCookie(w, expiredPreauthCookie())
 			return loginPageModel{}, http.StatusOK
 		}
-		return loginPageModel{
-			SecondFactor: err == nil && len(cookie.Value) > 0 && len(cookie.Value) <= 128,
-		}, http.StatusOK
+		if err != nil || len(cookie.Value) == 0 || len(cookie.Value) > 128 {
+			return loginPageModel{}, http.StatusOK
+		}
+		if a.passwordLogin == nil || a.factors == nil {
+			return unavailable()
+		}
+
+		factor, err := a.passwordLogin.SecondFactorContext(operation, cookie.Value)
+		if err != nil {
+			if !errors.Is(err, identity.ErrInvalidCredential) {
+				return unavailable()
+			}
+
+			http.SetCookie(w, expiredPreauthCookie())
+			return loginPageModel{}, http.StatusOK
+		}
+
+		methods, err := a.factors.SignInMethods(operation, factor)
+		if err != nil {
+			return unavailable()
+		}
+
+		return loginPageModel{SecondFactor: true, Methods: methods}, http.StatusOK
 	}
 	if owner.Status != identity.AccountSetup {
 		return unavailable()
 	}
+
 	if _, ok := a.sessionToken(r); ok {
 		principal, err := a.sessionPrincipal(r.Context(), r)
 		if err != nil && !errors.Is(err, identity.ErrInvalidCredential) {
@@ -56,20 +81,25 @@ func (a *BrowserAuth) loginState(w http.ResponseWriter, r *http.Request) (loginP
 			if err == nil {
 				probe.Header.Set(csrfHeaderName, csrf.Value)
 			}
+
 			token, _ := a.sessionToken(r)
 			if err != nil || !a.validCSRF(probe, token) {
 				csrf, err = a.csrfCookie(token, principal.AuthenticatedAt.Add(5*time.Minute))
 				if err != nil {
 					return unavailable()
 				}
+
 				http.SetCookie(w, csrf)
 			}
+
 			return loginPageModel{OwnerPassword: true, CSRF: csrf.Value}, http.StatusOK
 		}
 	}
+
 	if a.setupState == nil {
 		return unavailable()
 	}
+
 	registered, err := a.setupState.HasCredentials(operation)
 	if err != nil {
 		return unavailable()
@@ -80,5 +110,6 @@ func (a *BrowserAuth) loginState(w http.ResponseWriter, r *http.Request) (loginP
 	if !a.bootstrapAllowed(r) {
 		return loginPageModel{SetupBlocked: true}, http.StatusForbidden
 	}
+
 	return loginPageModel{FirstRun: true}, http.StatusOK
 }

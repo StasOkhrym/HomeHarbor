@@ -143,8 +143,19 @@ func buildHTTP(
 	if err != nil {
 		return nil, nil, nil, errors.Join(errors.New("configure passkeys"), err)
 	}
+	mfaService, err := identity.NewMFAService(
+		identity.MFAConfig{EncryptionKey: []byte(cfg.Auth.CeremonyEncryptionKey)},
+		identityStore,
+		passkeyService,
+		identityService,
+		time.Now,
+		nil,
+	)
+	if err != nil {
+		return nil, nil, nil, errors.Join(errors.New("configure account security"), err)
+	}
 	auth, err := webauth.NewBrowserAuth(webauth.BrowserAuthConfig{
-		Accounts: identityStore, PasswordLogin: loginService,
+		Accounts: identityStore, PasswordLogin: loginService, Factors: mfaService,
 		AllowRemoteSetup: cfg.Auth.AllowRemoteSetup, TrustedProxyCIDRs: trustedProxyCIDRs,
 		Origin:     cfg.Auth.RPOrigin,
 		SigningKey: []byte(cfg.Auth.SessionSigningKey),
@@ -177,6 +188,7 @@ func buildHTTP(
 		},
 		Browser: httpapi.BrowserDependencies{
 			API:                auth.Handler(),
+			AccountAPI:         auth.AccountHandler(),
 			LoginPage:          auth.LoginHandler(),
 			LoginAsset:         auth.LoginAssetHandler(),
 			MutationAuthorizer: auth.AuthorizeMutation,
@@ -328,6 +340,7 @@ func buildHTTP(
 	deps.SnapshotHistory = http.HandlerFunc(coordinationHandler.ServeHistory)
 	deps.Relay.PeerAuthorizer = peerAuthorization
 	deps.Browser.Admin = webadmin.NewHandler(webadmin.Dependencies{
+		AccountSecurity:    mfaService,
 		Devices:            deps.Resources.Devices,
 		Routes:             deps.Resources.Routes,
 		Services:           deps.Resources.Services,

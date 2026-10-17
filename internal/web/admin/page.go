@@ -7,6 +7,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	"github.com/StasOkhrym/homeharbor/internal/control/invites"
 	"github.com/StasOkhrym/homeharbor/internal/control/profiles"
 	"github.com/StasOkhrym/homeharbor/internal/control/routes"
@@ -55,7 +56,17 @@ func LoadCollection[T any](
 
 // Page is the typed presentation contract shared by full pages and fragments.
 // The admin handler loads it; this package owns template-facing state.
+type Security struct {
+	Ready     bool
+	Recent    bool
+	Email     string
+	Role      string
+	Factors   identity.FactorState
+	CanRemove bool
+}
+
 type Page struct {
+	Security      Security
 	Page          string
 	Section       string
 	Title         string
@@ -137,7 +148,7 @@ var titles = map[string][2]string{
 	"activity":    {"Activity", "Recent audit events from the control plane."},
 	"security": {
 		"Security",
-		"Your passkey, recovery codes and network signing key have separate roles.",
+		"Manage your password verification methods and recovery options.",
 	},
 }
 

@@ -31,20 +31,28 @@ func (s *Server) registerAPI(api chi.Router) {
 func (s *Server) registerAdminAPI(api chi.Router) {
 	api.Route("/admin", func(admin chi.Router) {
 		admin.Use(s.requireAdmin)
+		if s.accountAPI != nil {
+			admin.Mount("/account", s.accountAPI)
+		}
+
 		admin.Post("/enrollment-tokens", s.issueToken)
 		admin.Get("/devices", s.listDevices)
 		if s.telemetry != nil {
 			admin.Get("/connections", s.listConnections)
 		}
+
 		if s.audit != nil {
 			admin.Get("/audit", s.listAudit)
 		}
+
 		if s.routes != nil {
 			admin.Get("/routes", s.listRoutes)
 		}
+
 		if s.services != nil {
 			admin.Get("/services", s.listServices)
 		}
+
 		if s.profiles != nil {
 			admin.Get("/access-profiles", s.listProfiles)
 		}
@@ -58,10 +66,12 @@ func (s *Server) registerAdminAPI(api chi.Router) {
 			admin.Post("/routes/{id}/approve", s.approveRoute)
 			admin.Post("/routes/{id}/reject", s.rejectRoute)
 		}
+
 		if s.policy != nil {
 			admin.Get("/policy", s.latestPolicy)
 			admin.Put("/policy", s.replacePolicy)
 		}
+
 		if s.profiles != nil {
 			admin.Get("/access-profiles", s.listProfiles)
 			admin.Post("/access-profiles", s.createProfile)

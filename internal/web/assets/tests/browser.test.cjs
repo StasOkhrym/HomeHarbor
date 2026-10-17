@@ -802,6 +802,7 @@ function passwordPage(pathname, response) {
   const navigations = [];
   const fields = {
     email: { value: "owner@example.test" },
+    code: { value: "279037" },
     password: { value: " private long password " },
     _csrf: { value: "bound-csrf" },
   };
@@ -821,6 +822,7 @@ function passwordPage(pathname, response) {
       return selector === "fieldset" ? fieldset : selector.includes("button") ? button : null;
     },
   };
+
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../static/auth-ui.js"), "utf8"), {
     document: {
       querySelector(selector) {
@@ -895,4 +897,242 @@ test("owner setup submits its scoped CSRF proof and returns to password sign-in"
   assert.equal(page.requests[0].options.headers["X-CSRF-Token"], "bound-csrf");
   assert.equal(page.fields.password.value, "");
   assert.deepEqual(page.navigations, ["/admin/login"]);
+});
+
+function securityPage(fetchImpl, credentialImpl) {
+  const events = new Map();
+  const windowEvents = new Map();
+  const requests = [];
+  const navigations = [];
+  const seed = { textContent: "", hidden: true };
+  const codes = { textContent: "", hidden: true };
+  const status = { textContent: "", classList: { toggle() {} }, focus() {} };
+  const button = {
+    disabled: false,
+    hidden: false,
+    textContent: "Continue",
+    setAttribute() {},
+    removeAttribute() {},
+  };
+  const fields = {
+    code: { value: "123456" },
+    name: { value: "MacBook" },
+    id: { value: "owned-key" },
+  };
+  const fieldset = { disabled: true };
+  const root = {
+    dataset: { csrf: "personal-csrf", recent: "true" },
+    querySelector(selector) {
+      if (selector === "[data-security-status]") return status;
+      if (["[data-totp-secret]", "[data-totp-enrollment]"].includes(selector)) return seed;
+      if (["[data-recovery-values]", "[data-security-codes]"].includes(selector)) return codes;
+      return null;
+    },
+    querySelectorAll(selector) {
+      return selector === "fieldset" ? [fieldset] : [fields.code];
+    },
+    contains() {
+      return true;
+    },
+  };
+  let signals = 0;
+
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../static/security.js"), "utf8"), {
+    document: {
+      querySelector(selector) {
+        return selector === "[data-account-security]" ? root : null;
+      },
+      addEventListener(name, callback) {
+        events.set(name, callback);
+      },
+    },
+    window: {
+      PublicKeyCredential: {
+        signalUnknownCredential() {
+          signals++;
+        },
+        signalAllAcceptedCredentials() {
+          signals++;
+        },
+      },
+      addEventListener(name, callback) {
+        windowEvents.set(name, callback);
+      },
+    },
+    navigator: { credentials: { create: credentialImpl } },
+    location: {
+      replace(value) {
+        navigations.push(value);
+      },
+    },
+    fetch: async (url, options) => {
+      requests.push({ url, options });
+      return fetchImpl(url, options);
+    },
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    atob,
+    btoa,
+    Uint8Array,
+    TypeError,
+  });
+
+  const submit = async (action) => {
+    const form = {
+      dataset: { securityAction: action },
+      elements: {
+        namedItem(name) {
+          return fields[name];
+        },
+      },
+      closest(selector) {
+        return selector === "[data-account-security]" ? root : this;
+      },
+      querySelector() {
+        return button;
+      },
+      matches(selector) {
+        return selector === "[data-security-action]";
+      },
+    };
+
+    await events.get("submit")({ target: form, preventDefault() {} });
+  };
+
+  return {
+    events,
+    windowEvents,
+    requests,
+    navigations,
+    seed,
+    codes,
+    status,
+    button,
+    fields,
+    fieldset,
+    root,
+    submit,
+    signals: () => signals,
+  };
+}
+
+test("security recovery generation uses CSRF and wipes secrets on departure", async () => {
+  const page = securityPage(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ codes: ["private-code"] }),
+  }));
+
+  assert.equal(page.fieldset.disabled, false);
+
+  await page.submit("recovery-codes");
+
+  assert.equal(page.requests.length, 1);
+  assert.equal(page.requests[0].url, "/api/v1/admin/account/recovery-codes");
+  assert.equal(page.requests[0].options.headers["X-CSRF-Token"], "personal-csrf");
+  assert.equal(page.codes.textContent, "private-code");
+  assert.equal(page.codes.hidden, false);
+
+  page.seed.textContent = "private-seed";
+  page.windowEvents.get("pagehide")();
+
+  assert.equal(page.codes.textContent, "");
+  assert.equal(page.seed.textContent, "");
+  assert.equal(page.fields.code.value, "");
+});
+
+test("security ignores an in-flight secret response after HTMX departure", async () => {
+  let deliver;
+  const page = securityPage(
+    () =>
+      new Promise((resolve) => {
+        deliver = resolve;
+      }),
+  );
+  const pending = page.submit("recovery-codes");
+
+  page.events.get("htmx:beforeSwap")({ detail: { target: { id: "admin-shell" } } });
+  deliver({ ok: true, status: 200, json: async () => ({ codes: ["late-private-code"] }) });
+  await pending;
+
+  assert.equal(page.codes.textContent, "");
+  assert.equal(page.codes.hidden, true);
+  assert.deepEqual(page.navigations, []);
+});
+
+test("security never deletes provider passkeys or retries after an ambiguous save", async () => {
+  const credential = {
+    id: "key",
+    type: "public-key",
+    rawId: new Uint8Array([1]),
+    response: { attestationObject: new Uint8Array([2]), clientDataJSON: new Uint8Array([3]) },
+  };
+  const page = securityPage(
+    async (url) =>
+      url.endsWith("/begin")
+        ? {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ceremony_id: "one-use",
+              options: { publicKey: { challenge: "AQ", user: { id: "Ag" } } },
+            }),
+          }
+        : { ok: false, status: 503 },
+    async () => credential,
+  );
+
+  await page.submit("passkeys/add");
+
+  assert.equal(page.requests.length, 2);
+  assert.equal(page.signals(), 0);
+  assert.deepEqual(page.navigations, []);
+  assert.match(page.status.textContent, /reload.*review/i);
+  assert.equal(page.button.disabled, true);
+});
+
+test("second factor code reaches admin only after server verification", async () => {
+  const page = passwordPage("#factor-code", { ok: true, status: 204 });
+
+  await page.listeners.get("submit")({ preventDefault() {}, currentTarget: page.form });
+
+  assert.equal(page.requests[0].url, "/api/v1/auth/factor");
+  assert.equal(JSON.parse(page.requests[0].options.body).method, "totp");
+  assert.equal(page.fields.code.value, "");
+  assert.deepEqual(page.navigations, ["/admin/"]);
+});
+test("second factor recovery remains password-bound and clears its input", async () => {
+  const page = passwordPage("#factor-recovery", { ok: false, status: 401, json: async () => ({}) });
+
+  assert.equal(typeof page.listeners.get("submit"), "function");
+
+  await page.listeners.get("submit")({ preventDefault() {}, currentTarget: page.form });
+
+  assert.equal(page.requests[0].url, "/api/v1/auth/factor");
+  assert.equal(JSON.parse(page.requests[0].options.body).method, "recovery");
+  assert.equal(page.fields.code.value, "");
+  assert.deepEqual(page.navigations, []);
+
+  page.fields.code.value = "unsent-recovery";
+  page.events.get("pagehide")();
+
+  assert.equal(page.fields.code.value, "");
+});
+
+test("password response cannot navigate after leaving sign-in", async () => {
+  let deliver;
+  const page = passwordPage(
+    "#password-login",
+    new Promise((resolve) => {
+      deliver = resolve;
+    }),
+  );
+  const pending = page.listeners.get("submit")({ preventDefault() {}, currentTarget: page.form });
+
+  page.events.get("pagehide")();
+  deliver({ ok: true, status: 200, json: async () => ({ next: "second_factor" }) });
+  await pending;
+
+  assert.deepEqual(page.navigations, []);
 });

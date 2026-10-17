@@ -50,6 +50,7 @@ type Server struct {
 	mutationAuthorizer  func(context.Context, *http.Request) (bool, error)
 	browserAPI          http.Handler
 	browserAdmin        http.Handler
+	accountAPI          http.Handler
 	loginPage           http.Handler
 	loginAsset          http.Handler
 	logger              *slog.Logger

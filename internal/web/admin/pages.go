@@ -77,6 +77,7 @@ func (s *Handler) loadAdminPage(r *http.Request, page string) (Page, int) {
 		return model, status
 	case "security":
 		s.loadSignedReadiness(ctx, &model)
+		return model, s.loadAccountSecurity(r, &model)
 	}
 	return model, http.StatusOK
 }

@@ -1054,3 +1054,44 @@ summary {
     grid-template-columns: 1fr;
   }
 }
+
+.security-method {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-block: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.security-method > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.security-method h3 {
+  margin: 0;
+}
+
+.security-secret {
+  padding: 16px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  user-select: all;
+}
+
+[data-account-security] fieldset {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+[data-account-security] .confirmation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  margin: 0;
+}

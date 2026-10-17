@@ -46,6 +46,7 @@ type ResourceDependencies struct {
 type BrowserDependencies struct {
 	API                http.Handler
 	Admin              http.Handler
+	AccountAPI         http.Handler
 	LoginPage          http.Handler
 	LoginAsset         http.Handler
 	MutationAuthorizer func(context.Context, *http.Request) (bool, error)
@@ -91,14 +92,17 @@ func NewServer(deps Dependencies) (*Server, error) {
 	if security.Authorizer == nil {
 		return nil, errors.New("HTTP admin authorizer is required")
 	}
+
 	for _, limiter := range []*RateLimiter{security.APILimiter, security.AuthLimiter, security.DeviceLimiter} {
 		if limiter == nil || limiter.limit <= 0 || limiter.window <= 0 ||
 			(limiter.shared == nil && limiter.clients == nil) {
 			return nil, errors.New("HTTP rate limits require explicit valid authority")
 		}
 	}
+
 	browser := deps.Browser
-	if browser.API != nil || browser.LoginPage != nil || browser.LoginAsset != nil {
+	if browser.API != nil || browser.AccountAPI != nil || browser.LoginPage != nil ||
+		browser.LoginAsset != nil {
 		if browser.API == nil || browser.Admin == nil || browser.LoginPage == nil ||
 			browser.LoginAsset == nil ||
 			browser.MutationAuthorizer == nil {
@@ -107,9 +111,11 @@ func NewServer(deps Dependencies) (*Server, error) {
 			)
 		}
 	}
+
 	if (deps.Activation.Challenge == nil) != (deps.Activation.Claim == nil) {
 		return nil, errors.New("activation challenge and claim must be configured together")
 	}
+
 	relay := deps.Relay
 	if relay.Issuer != nil || relay.URL != "" ||
 		relay.PeerAuthorizer != nil {
@@ -120,20 +126,24 @@ func NewServer(deps Dependencies) (*Server, error) {
 				"relay issuance requires devices, peer authorization, URL and ticket lifetime",
 			)
 		}
+
 		if err := protocol.ValidateRelayControlURL(relay.URL); err != nil {
 			return nil, err
 		}
 	}
+
 	if len(security.RootPublicKey) != 0 && (len(security.RootPublicKey) != ed25519.PublicKeySize ||
 		security.Challenges == nil || security.CompanionTTL <= 0) {
 		return nil, errors.New(
 			"companion trust requires a public key, challenge authority and lifetime",
 		)
 	}
+
 	logger := deps.Observability.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
+
 	// Limiter pointers are handed to this server; finish validating the entire
 	// dependency graph before applying their configured store deadline.
 	if security.StoreTimeout > 0 {
@@ -163,6 +173,7 @@ func NewServer(deps Dependencies) (*Server, error) {
 		companionRoot:       append(ed25519.PublicKey(nil), security.RootPublicKey...),
 		browserAPI:          browser.API,
 		browserAdmin:        browser.Admin,
+		accountAPI:          browser.AccountAPI,
 		loginPage:           browser.LoginPage,
 		loginAsset:          browser.LoginAsset,
 		mutationAuthorizer:  browser.MutationAuthorizer,
@@ -184,5 +195,6 @@ func NewServer(deps Dependencies) (*Server, error) {
 			security.CompanionTTL,
 		)
 	}
+
 	return server, nil
 }

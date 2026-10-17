@@ -4,10 +4,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sign in · HomeHarbor</title>
-    <link rel="stylesheet" href="/assets/admin.css?v=ui-6">
-    <script src="/assets/login.js?v=auth-4" defer></script>
+    <link rel="stylesheet" href="/assets/admin.css?v=ui-7">
+    <script src="/assets/login.js?v=auth-5" defer></script>
   </head>
-  <body class="auth-page">
+  <body class="auth-page"
+        data-login-return="{{if .ReturnToSecurity}}security{{end}}">
     <main class="auth-card" aria-labelledby="login-title">
       <a class="brand"
          href="/admin/"><span class="brand-mark"
@@ -84,22 +85,50 @@
         {{else if .SecondFactor}}
           <p class="eyebrow">Sign in · 2 of 2</p>
           <h1 id="login-title">Verify it's you</h1>
-          <p class="muted">Enter the six-digit code from your authenticator.</p>
-          <form id="factor-code" method="post" action="/admin/login">
-            <fieldset disabled>
-              <label for="one-time-code">Authenticator code</label>
-              <input id="one-time-code"
-                     name="code"
-                     type="text"
-                     inputmode="numeric"
-                     autocomplete="one-time-code"
-                     pattern="[0-9]{6}"
-                     maxlength="6"
-                     required>
-              <button class="button" type="submit">Verify and sign in</button>
-            </fieldset>
-          </form>
-          <a class="button secondary" href="/admin/login?restart=1">Use another account</a>
+          <p class="muted">Complete the second step with one of your saved methods.</p>
+          {{if .Methods.Passkey}}<button id="factor-passkey"
+        type="button"
+        class="button">Verify with a passkey</button>{{end}}
+          {{if .Methods.TOTP}}
+            <form id="factor-code" method="post" action="/admin/login">
+              <fieldset disabled>
+                <label for="one-time-code">Authenticator code</label>
+                <input id="one-time-code"
+                       name="code"
+                       type="text"
+                       inputmode="numeric"
+                       autocomplete="one-time-code"
+                       pattern="[0-9]{6}"
+                       maxlength="6"
+                       required>
+                <button class="button" type="submit">Verify and sign in</button>
+              </fieldset>
+            </form>
+          {{end}}
+          {{if .Methods.Recovery}}
+            <details>
+              <summary>Use a recovery code</summary>
+              <p class="help">Use a saved recovery code after your password. Each code works once.</p>
+              <form id="factor-recovery" method="post" action="/admin/login">
+                <fieldset disabled>
+                  <label for="factor-recovery-code">Recovery code</label>
+                  <input id="factor-recovery-code"
+                         name="code"
+                         type="text"
+                         autocomplete="off"
+                         spellcheck="false"
+                         maxlength="128"
+                         required>
+                  <button class="button secondary" type="submit">Verify recovery code</button>
+                </fieldset>
+              </form>
+            </details>
+          {{end}}
+          {{if not (or .Methods.Passkey .Methods.TOTP .Methods.Recovery)}}
+            <p class="alert alert-info">No verification method is available. Contact the network owner.</p>
+          {{end}}
+          <a class="button secondary"
+             href="/admin/login?restart=1{{if .ReturnToSecurity}}&amp;return_to=security{{end}}">Use another account</a>
         {{else}}
           <p class="eyebrow">Sign in · 1 of 2</p>
           <h1 id="login-title">Welcome back</h1>

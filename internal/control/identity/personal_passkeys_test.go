@@ -285,3 +285,136 @@ func TestLastPersonalPasskeyCannotBeRemoved(t *testing.T) {
 		t.Fatalf("last personal passkey removed: %v", err)
 	}
 }
+
+func TestRecoveryRegenerationRequiresRecentProofAndActiveMFA(t *testing.T) {
+	service, store, principal, now := mfaFixture(t)
+
+	if _, err := service.RegenerateRecoveryCodes(
+		t.Context(),
+		principal,
+	); !errors.Is(
+		err,
+		identity.ErrLastMFA,
+	) {
+		t.Fatal("recovery-only state regenerated indefinitely", err)
+	}
+
+	_, principal = enrollPersonalPasskey(t, service, store, principal)
+
+	codes, err := service.RegenerateRecoveryCodes(t.Context(), principal)
+
+	if err != nil || len(codes) != 10 {
+		t.Fatal("new recovery set unavailable", err)
+	}
+
+	factor := identity.FactorContext{
+		AccountScope: identity.AccountScope{
+			AccountID:   "a",
+			AuthVersion: principal.AuthVersion,
+			Purpose:     identity.SessionAdmin,
+		},
+		Binding: sha256.Sum256([]byte("password-proof")),
+	}
+
+	if method, err := service.VerifySecondFactor(
+		t.Context(),
+		factor,
+		identity.SecondFactorProof{Method: "recovery", Code: codes[0]},
+	); err != nil ||
+		method != "recovery" {
+		t.Fatal("recovery proof rejected after password", err)
+	}
+
+	if _, err := service.VerifySecondFactor(
+		t.Context(),
+		factor,
+		identity.SecondFactorProof{Method: "recovery", Code: codes[0]},
+	); !errors.Is(
+		err,
+		identity.ErrInvalidCredential,
+	) {
+		t.Fatal("recovery code reused", err)
+	}
+
+	replacement, err := service.RegenerateRecoveryCodes(t.Context(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.VerifySecondFactor(
+		t.Context(),
+		factor,
+		identity.SecondFactorProof{Method: "recovery", Code: codes[1]},
+	); !errors.Is(
+		err,
+		identity.ErrInvalidCredential,
+	) {
+		t.Fatal("replaced recovery code remained valid", err)
+	}
+
+	stale := principal
+	stale.AuthenticatedAt = now.Add(-5 * time.Minute)
+
+	if _, err := service.RegenerateRecoveryCodes(
+		t.Context(),
+		stale,
+	); !errors.Is(
+		err,
+		identity.ErrRecentAuthentication,
+	) {
+		t.Fatal("old session regenerated recovery codes", err)
+	}
+
+	if _, err := service.VerifySecondFactor(
+		t.Context(),
+		factor,
+		identity.SecondFactorProof{Method: "recovery", Code: replacement[0]},
+	); err != nil {
+		t.Fatal("rejected regeneration changed code set", err)
+	}
+}
+
+func TestSignInMethodsRequireBoundCurrentPasswordProof(t *testing.T) {
+	service, store, principal, _ := mfaFixture(t)
+
+	_, principal = enrollPersonalPasskey(t, service, store, principal)
+	factor := identity.FactorContext{
+		AccountScope: identity.AccountScope{
+			AccountID:   "a",
+			AuthVersion: principal.AuthVersion,
+			Purpose:     identity.SessionAdmin,
+		},
+		Binding: sha256.Sum256([]byte("password-proof")),
+	}
+
+	methods, err := service.SignInMethods(t.Context(), factor)
+
+	if err != nil || !methods.Passkey || methods.TOTP || methods.Recovery {
+		t.Fatalf("wrong personal method availability: %+v %v", methods, err)
+	}
+
+	factor.Binding = [32]byte{}
+
+	if _, err := service.SignInMethods(
+		t.Context(),
+		factor,
+	); !errors.Is(
+		err,
+		identity.ErrInvalidCredential,
+	) {
+		t.Fatal("anonymous method discovery admitted", err)
+	}
+
+	factor.Binding = sha256.Sum256([]byte("password-proof"))
+	factor.AuthVersion--
+
+	if _, err := service.SignInMethods(
+		t.Context(),
+		factor,
+	); !errors.Is(
+		err,
+		identity.ErrInvalidCredential,
+	) {
+		t.Fatal("stale password proof discovered methods", err)
+	}
+}

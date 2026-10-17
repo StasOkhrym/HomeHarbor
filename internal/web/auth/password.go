@@ -14,6 +14,7 @@ import (
 const preauthCookieName = "__Host-homeharbor_preauth"
 
 type PasswordLogin interface {
+	SecondFactorContext(context.Context, string) (identity.FactorContext, error)
 	Password(context.Context, string, string) (identity.IssuedPreauth, error)
 	Complete(
 		context.Context,

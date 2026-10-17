@@ -37,6 +37,69 @@ type FactorState struct {
 	TOTP                   bool          `json:"totp_enabled"`
 	RecoveryCodesRemaining int           `json:"recovery_codes_remaining"`
 }
+
+// SignInMethods exposes availability only after a current password proof.
+// Credential names and identifiers are reserved for authenticated settings.
+type SignInMethods struct {
+	Passkey  bool `json:"passkey"`
+	TOTP     bool `json:"totp"`
+	Recovery bool `json:"recovery"`
+}
+
+func (s *MFAService) SignInMethods(
+	ctx context.Context,
+	factor FactorContext,
+) (SignInMethods, error) {
+	if factor.Binding == ([32]byte{}) {
+		return SignInMethods{}, ErrInvalidCredential
+	}
+
+	account, err := readAccount(ctx, s.store, factor.AccountID)
+	if err != nil {
+		return SignInMethods{}, err
+	}
+	if factor.Purpose != SessionAdmin || !factor.Allows(account) {
+		return SignInMethods{}, ErrInvalidCredential
+	}
+
+	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	state, err := s.store.FactorState(operation, factor.AccountScope)
+	if err != nil {
+		return SignInMethods{}, mfaStoreError(err)
+	}
+
+	return SignInMethods{
+		Passkey:  len(state.Passkeys) > 0,
+		TOTP:     state.TOTP,
+		Recovery: state.RecoveryCodesRemaining > 0,
+	}, nil
+}
+
+func (s *MFAService) RegenerateRecoveryCodes(
+	ctx context.Context,
+	principal Principal,
+) ([]string, error) {
+	scope, _, err := s.recentScope(ctx, principal)
+	if err != nil {
+		return nil, err
+	}
+
+	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	state, err := s.store.FactorState(operation, scope)
+	if err != nil {
+		return nil, mfaStoreError(err)
+	}
+	if len(state.Passkeys) == 0 && !state.TOTP {
+		return nil, ErrLastMFA
+	}
+
+	return s.recovery.GenerateRecoveryCodes(operation, scope, 10)
+}
+
 type personalCeremony struct {
 	Scope   AccountScope
 	Binding [32]byte

@@ -1,15 +1,165 @@
 {{define "security"}}
-  <section class="panel">
-    <h2>Administrator account</h2>
-    <p>Passkey authentication protects this panel. Recovery codes work once each and cannot be shown again after bootstrap.</p>
-    <p class="help">Passkey management and recovery-code regeneration are not supported by the current API.</p>
-    {{template "logout" .}}
-  </section>
-  <section class="panel">
-    <h2>Network trust</h2>
-    <p>The control plane does not hold your companion private key and cannot independently authorize LAN access.</p>
+  {{if .Security.Ready}}
+    <div data-account-security
+         data-csrf="{{.CSRF}}"
+         data-recent="{{.Security.Recent}}">
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Your administrator account · {{.Security.Role}}</p>
+            <h2>{{.Security.Email}}</h2>
+          </div>
+          {{template "logout" .}}
+        </div>
+        <p>Your password is the first step. A passkey or authenticator confirms it's you.</p>
+        <p class="help">Adding or removing a method signs out all your sessions. Keep an alternate method before removing one.</p>
+        {{if not .Security.Recent}}
+          <p class="alert alert-info">Sign in again to make security changes. You can still review your methods.</p>
+        {{end}}
+        <a href="/admin/login?restart=1&amp;return_to=security">Sign in again →</a>
+      </section>
+      <p data-security-status role="status" aria-live="polite" tabindex="-1"></p>
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Passkeys</h2>
+          <span class="badge">{{len .Security.Factors.Passkeys}} saved</span>
+        </div>
+        <p class="muted">Use Touch ID, Face ID, a password manager or a security key after your password.</p>
+        {{range .Security.Factors.Passkeys}}
+          <div class="security-method">
+            <div>
+              <h3>{{.Name}}</h3>
+              <p class="help">Added {{.CreatedAt.UTC.Format "02 Jan 2006"}} · {{if .LastUsedAt}}Last used {{.LastUsedAt.UTC.Format "02 Jan 2006, 15:04 UTC"}}{{else}}Last used unknown{{end}}</p>
+            </div>
+            {{if $.Security.CanRemove}}
+              <form method="post"
+                    action="/admin/security"
+                    data-security-action="passkeys/remove">
+                <fieldset disabled>
+                  <input type="hidden" name="id" value="{{.ID}}">
+                  <label class="confirmation">
+                    <input type="checkbox" name="confirmed" required>
+                    I have another method
+                  </label>
+                  <button class="secondary" type="submit">Remove {{.Name}}</button>
+                </fieldset>
+              </form>
+            {{else}}
+              <p class="help">Add another method to remove this passkey.</p>
+            {{end}}
+          </div>
+        {{else}}
+          <p class="empty-state">No passkeys yet. Add one on a device you trust.</p>
+        {{end}}
+        <form method="post"
+              action="/admin/security"
+              data-security-action="passkeys/add"
+              data-passkey-add>
+          <fieldset disabled>
+            <label for="passkey-name">Name this passkey</label>
+            <input id="passkey-name"
+                   name="name"
+                   type="text"
+                   maxlength="80"
+                   placeholder="For example, MacBook"
+                   autocomplete="off">
+            <button type="submit">Add a passkey</button>
+          </fieldset>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Authenticator app</h2>
+          <span class="badge">{{if .Security.Factors.TOTP}}Enabled{{else}}Not set up{{end}}</span>
+        </div>
+        <p class="muted">A six-digit code from an authenticator app is an alternative to a passkey.</p>
+        {{if .Security.Factors.TOTP}}
+          {{if .Security.CanRemove}}
+            <form method="post"
+                  action="/admin/security"
+                  data-security-action="totp/remove"
+                  data-totp-remove>
+              <fieldset disabled>
+                <label class="confirmation">
+                  <input type="checkbox" name="confirmed" required>
+                  I can sign in with a passkey
+                </label>
+                <button class="secondary" type="submit">Remove authenticator</button>
+              </fieldset>
+            </form>
+          {{else}}
+            <p class="help" data-totp-remove>Add a passkey before removing your authenticator.</p>
+          {{end}}
+        {{else}}
+          <form method="post"
+                action="/admin/security"
+                data-security-action="totp/begin">
+            <fieldset disabled>
+              <button type="submit">Set up authenticator</button>
+            </fieldset>
+          </form>
+          <section data-totp-enrollment hidden aria-labelledby="totp-setup-title">
+            <h3 id="totp-setup-title">Add HomeHarbor to your authenticator</h3>
+            <p>Choose manual setup, enter this key, and select time-based codes. This key expires in 10 minutes.</p>
+            <pre data-totp-secret class="security-secret"></pre>
+            <p class="help">Keep this key private. Setup is complete only after you confirm a code.</p>
+            <form method="post"
+                  action="/admin/security"
+                  data-security-action="totp/confirm">
+              <fieldset disabled>
+                <label for="totp-confirm-code">Authenticator code</label>
+                <input id="totp-confirm-code"
+                       name="code"
+                       type="text"
+                       inputmode="numeric"
+                       autocomplete="one-time-code"
+                       pattern="[0-9]{6}"
+                       maxlength="6"
+                       required>
+                <button type="submit">Confirm authenticator</button>
+              </fieldset>
+            </form>
+          </section>
+        {{end}}
+      </section>
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Recovery codes</h2>
+          <span class="badge">{{.Security.Factors.RecoveryCodesRemaining}} unused</span>
+        </div>
+        <p>Use one after your password if you lose access to your other methods. Each code works once.</p>
+        <form method="post"
+              action="/admin/security"
+              data-security-action="recovery-codes">
+          <fieldset disabled>
+            <label class="confirmation">
+              <input type="checkbox" name="confirmed" required>
+              Replace my previous recovery codes
+            </label>
+            <button class="secondary" type="submit">Create new recovery codes</button>
+          </fieldset>
+        </form>
+        <section data-security-codes hidden aria-labelledby="recovery-title">
+          <h3 id="recovery-title">Save these codes somewhere private</h3>
+          <p>Your previous codes no longer work. These new codes will not be shown again.</p>
+          <pre data-recovery-values class="security-secret"></pre>
+          <button type="button" class="secondary" data-clear-recovery>I've saved my codes</button>
+        </section>
+      </section>
+      <noscript>
+        <p class="alert alert-info">JavaScript is required for security changes. Review your methods here, then enable JavaScript to continue.</p>
+      </noscript>
+    </div>
+  {{else}}
+    <section class="panel">
+      <h2>Administrator account</h2>
+      <p>Account security is unavailable. Try again shortly.</p>
+    </section>
+  {{end}}
+  <details class="panel">
+    <summary>Advanced · Network trust</summary>
+    <p>Your account controls this panel. Access to private services also requires your companion's signature.</p>
     <p>Keep the encrypted signing key and passphrase on your trusted Mac. This panel never asks for either.</p>
     <a href="/admin/setup">Companion setup instructions →</a>
-  </section>
-  {{template "signed-state" .}}
+  </details>
 {{end}}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	controlservices "github.com/StasOkhrym/homeharbor/internal/control/services"
 	memorydevices "github.com/StasOkhrym/homeharbor/internal/testutil/control/devices"
@@ -220,5 +221,75 @@ func TestBrowserMutationRejectsForeignOriginWithValidCSRF(t *testing.T) {
 
 	if err != nil || allowed {
 		t.Fatal("valid CSRF allowed a foreign-origin browser mutation")
+	}
+}
+
+func TestAccountAPIIsMountedBehindSessionAndCSRF(t *testing.T) {
+	calls := 0
+
+	auth, sessions := newBrowserAuthTest(t)
+
+	handler := newTestServer(nil, auth, Dependencies{Browser: BrowserDependencies{
+		API:                auth.Handler(),
+		LoginPage:          auth.LoginHandler(),
+		LoginAsset:         auth.LoginAssetHandler(),
+		MutationAuthorizer: auth.AuthorizeMutation,
+		AccountAPI: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+
+			if principal, ok := identity.PrincipalFromContext(
+				r.Context(),
+			); !ok ||
+				!principal.CanManageNetwork() {
+				t.Error("missing verified principal")
+			}
+
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	}}, auth).Handler()
+	for _, tc := range []struct {
+		name                  string
+		session, csrf, origin bool
+		want                  int
+	}{
+		{"anonymous", false, false, true, http.StatusUnauthorized}, {"missing-csrf", true, false, true, http.StatusUnauthorized}, {"wrong-origin", true, true, false, http.StatusUnauthorized}, {"authorized", true, true, true, http.StatusNoContent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/api/v1/admin/account/recovery-codes",
+				strings.NewReader("{}"),
+			)
+			if tc.session {
+				request.AddCookie(browserSessionCookie(t, sessions.session))
+			}
+
+			request.Header.Set("Origin", "https://tunnel.example.com")
+			if !tc.origin {
+				request.Header.Set("Origin", "https://attacker.example")
+			}
+
+			if tc.csrf {
+				cookie, err := browserCSRFCookie(t, sessions.session)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				request.AddCookie(cookie)
+				request.Header.Set("X-CSRF-Token", cookie.Value)
+			}
+
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != tc.want {
+				t.Fatalf("status %d want %d: %s", response.Code, tc.want, response.Body.String())
+			}
+		})
+	}
+
+	if calls != 1 {
+		t.Fatal("account handler called outside security boundary", calls)
 	}
 }

@@ -31,9 +31,20 @@ func (a *IdentityAuditor) RecordIdentity(ctx context.Context, action string, suc
 	facts := audit.FromContext(ctx).Safe()
 	metadata := facts.Metadata()
 	metadata["success"] = success
+	targetType := "admin_session"
+	switch action {
+	case "admin.account_configured",
+		"admin.totp_added",
+		"admin.totp_removed",
+		"admin.passkey_added",
+		"admin.passkey_removed",
+		"admin.recovery_codes_replaced":
+		targetType = "admin_account"
+	}
+
 	return a.sink.Write(ctx, audit.Event{
 		OccurredAt: a.now().UTC(), ActorType: facts.ActorType, ActorID: facts.ActorID,
-		Action: action, TargetType: "admin_session", TargetID: facts.ActorID,
+		Action: action, TargetType: targetType, TargetID: facts.ActorID,
 		Metadata: metadata,
 	})
 }
