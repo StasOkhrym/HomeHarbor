@@ -17,6 +17,7 @@ type Control struct {
 	Database      Database        `toml:"database"`
 	Redis         Redis           `toml:"redis"`
 	Auth          Auth            `toml:"auth"`
+	SMTP          SMTP            `toml:"smtp"`
 	Relay         Relay           `toml:"relay"`
 	Networking    Networking      `toml:"networking"`
 	DNS           DNS             `toml:"dns"`
@@ -262,15 +263,17 @@ func LoadDatabase(source Sources) (Database, error) {
 }
 
 func LoadControl(source Sources) (Control, error) {
-	cfg := Control{Runtime: DefaultRuntime(false)}
+	cfg := Control{Runtime: DefaultRuntime(false), SMTP: defaultSMTP()}
 	fileKeys, err := readFileStrict(source.File, &cfg)
 	if err != nil {
 		return Control{}, err
 	}
+
 	envKeys, flagKeys, err := applySources(&cfg, source)
 	if err != nil {
 		return Control{}, err
 	}
+
 	for _, pair := range []struct {
 		target       *string
 		path         string
@@ -287,6 +290,21 @@ func LoadControl(source Sources) (Control, error) {
 			return Control{}, err
 		}
 	}
+
+	if cfg.SMTP.Enabled {
+		if err := selectedSecret(
+			&cfg.SMTP.Password,
+			cfg.SMTP.PasswordFile,
+			"smtp.password",
+			"smtp.password_file",
+			fileKeys,
+			envKeys,
+			flagKeys,
+		); err != nil {
+			return Control{}, err
+		}
+	}
+
 	if cfg.Redis.URL != "" {
 		endpoint, err := url.Parse(cfg.Redis.URL)
 		if err != nil || endpoint.Host == "" ||
@@ -297,19 +315,24 @@ func LoadControl(source Sources) (Control, error) {
 			)
 		}
 	}
+
 	if err := validateDatabase(&cfg.Database); err != nil {
 		return Control{}, err
 	}
+
 	if cfg.Relay.TicketTTL == "" && (fileKeys["relay.ticket_ttl"] ||
 		envKeys["relay.ticket_ttl"] || flagKeys["relay.ticket_ttl"]) {
 		return Control{}, errors.New("relay.ticket_ttl must be a positive duration")
 	}
+
 	if err := cfg.validate(); err != nil {
 		return Control{}, err
 	}
+
 	if err := cfg.Runtime.Validate(); err != nil {
 		return Control{}, err
 	}
+
 	return cfg, nil
 }
 
@@ -317,6 +340,7 @@ func (c Control) validate() error {
 	if err := c.Database.validateDriver(); err != nil {
 		return err
 	}
+
 	var missing []string
 	values := []struct{ name, value string }{
 		{"server.listen_address", c.Server.ListenAddress},
@@ -339,6 +363,7 @@ func (c Control) validate() error {
 			missing = append(missing, field.name)
 		}
 	}
+
 	if len(missing) > 0 {
 		return errors.New("missing required configuration: " + strings.Join(missing, ", "))
 	}
@@ -351,12 +376,15 @@ func (c Control) validate() error {
 	if len(c.Relay.TicketKey) < 32 {
 		return errors.New("relay.ticket_key must be at least 32 bytes")
 	}
+
 	if err := protocol.ValidateRelayControlURL(c.Relay.PublicURL); err != nil {
 		return errors.New("relay.public_url must be a WSS origin with /relay/udp path")
 	}
+
 	if _, err := c.RelayDuration(); err != nil {
 		return err
 	}
+
 	origin, err := url.Parse(c.Auth.RPOrigin)
 	if err != nil || origin.Scheme != "https" || origin.Hostname() == "" || origin.Path != "" ||
 		origin.RawQuery != "" ||
@@ -372,7 +400,8 @@ func (c Control) validate() error {
 	if c.Auth.CeremonyDuration() <= 0 {
 		return errors.New("auth.ceremony_ttl must be a positive duration")
 	}
-	return nil
+
+	return c.SMTP.validate()
 }
 
 func (c Control) RelayDuration() (time.Duration, error) {

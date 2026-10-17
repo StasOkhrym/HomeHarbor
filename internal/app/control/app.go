@@ -12,6 +12,7 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/control/coordination"
 	"github.com/StasOkhrym/homeharbor/internal/control/events"
+	notificationstorage "github.com/StasOkhrym/homeharbor/internal/control/notifications/storage"
 	"github.com/StasOkhrym/homeharbor/internal/platform/config"
 	"github.com/StasOkhrym/homeharbor/internal/platform/lifecycle"
 )
@@ -26,6 +27,7 @@ type App struct {
 	metricsServer   *http.Server
 	logger          *slog.Logger
 	auditDispatcher *events.Dispatcher
+	notifications   *notificationRuntime
 	coordination    *coordination.Handler
 	shutdownTimeout time.Duration
 }
@@ -84,6 +86,10 @@ func (a *App) assemble(ctx context.Context) error {
 			stores.close()
 		}
 	}()
+	a.notifications, err = buildNotifications(cfg, notificationstorage.New(stores.pool), logger)
+	if err != nil {
+		return err
+	}
 	httpServer, coordinationHandler, auditDispatcher, err := buildHTTP(cfg, logger, stores)
 	if err != nil {
 		return err
@@ -111,17 +117,20 @@ func (a *App) Run(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return nil
 	}
+
 	if err := a.assemble(ctx); err != nil {
 		return err
 	}
 	// Run owns every dependency even if listener creation fails. Workers stop
 	// before stores close; a deferred cleanup cannot race a still-running sink.
 	defer a.stores.close()
+
 	listener, err := net.Listen("tcp", a.server.Addr)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = listener.Close() }()
+
 	var metricsListener net.Listener
 	if a.metricsServer != nil {
 		metricsListener, err = net.Listen("tcp", a.metricsServer.Addr)
@@ -130,6 +139,7 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		defer func() { _ = metricsListener.Close() }()
 	}
+
 	workers := []lifecycle.Worker{
 		{Name: "coordination", Component: a.coordination},
 		{Name: "outbox", Component: a.auditDispatcher},
@@ -137,6 +147,10 @@ func (a *App) Run(ctx context.Context) error {
 			func(ctx context.Context) error { return serveHTTP(ctx, a.server, listener, a.shutdownTimeout) },
 		)},
 	}
+	if a.notifications != nil {
+		workers = append(workers, lifecycle.Worker{Name: "mail", Component: a.notifications.worker})
+	}
+
 	if a.metricsServer != nil {
 		workers = append(
 			workers,
@@ -148,5 +162,6 @@ func (a *App) Run(ctx context.Context) error {
 			},
 		)
 	}
+
 	return lifecycle.RunEssential(ctx, workers...)
 }

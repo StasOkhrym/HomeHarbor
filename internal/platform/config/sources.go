@@ -55,6 +55,16 @@ func readFileStrict(path string, target any) (presence, error) {
 // envBindings is intentionally explicit: adding a TOML field does not silently
 // make it remotely configurable through the process environment.
 var envBindings = map[string]string{
+	"smtp.enabled":                      "HOMEHARBOR_SMTP_ENABLED",
+	"smtp.host":                         "HOMEHARBOR_SMTP_HOST",
+	"smtp.port":                         "HOMEHARBOR_SMTP_PORT",
+	"smtp.username":                     "HOMEHARBOR_SMTP_USERNAME",
+	"smtp.password":                     "HOMEHARBOR_SMTP_PASSWORD",
+	"smtp.password_file":                "HOMEHARBOR_SMTP_PASSWORD_FILE",
+	"smtp.from":                         "HOMEHARBOR_SMTP_FROM",
+	"smtp.mode":                         "HOMEHARBOR_SMTP_MODE",
+	"smtp.timeout":                      "HOMEHARBOR_SMTP_TIMEOUT",
+	"smtp.ca_file":                      "HOMEHARBOR_SMTP_CA_FILE",
 	"server.listen_address":             "HOMEHARBOR_SERVER_LISTEN_ADDRESS",
 	"database.url":                      "HOMEHARBOR_DATABASE_URL",
 	"database.password":                 "HOMEHARBOR_DATABASE_PASSWORD",
