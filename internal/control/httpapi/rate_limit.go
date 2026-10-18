@@ -150,3 +150,21 @@ func (l *RateLimiter) Middleware(key func(*http.Request) string) func(http.Handl
 		})
 	}
 }
+
+// The bounded set of stages keeps password guessing shared across every costly
+// alias while allowing setup to finish and immediately enter ordinary sign-in.
+// Never use an arbitrary path/query/token as the distributed quota identity.
+func (s *Server) authQuotaKey(r *http.Request) string {
+	stage := "proof"
+	switch r.URL.Path {
+	case "/api/v1/auth/password", "/api/v1/auth/enrollment/password",
+		"/api/v1/auth/invitation/accept", "/api/v1/auth/password/reset/finish", "/api/v1/auth/owner/password":
+		stage = "password"
+	case "/api/v1/auth/password/reset/request", "/api/v1/auth/email/verify":
+		stage = "email"
+	case "/api/v1/auth/logout":
+		stage = "session"
+	}
+
+	return s.clientKey(r) + ":" + stage
+}

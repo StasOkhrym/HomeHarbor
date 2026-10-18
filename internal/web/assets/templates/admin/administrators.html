@@ -1,0 +1,102 @@
+{{define "administrators"}}
+  {{if .Administrators.Ready}}
+    <div data-account-settings
+         data-csrf="{{.CSRF}}"
+         data-recent="{{.Administrators.Recent}}">
+      <section class="panel">
+        <h2>Who can manage this home</h2>
+        <p>Administrators can manage devices, services and access. Only you can invite or remove administrators.</p>
+        {{if not .Administrators.Recent}}
+          <p class="alert alert-info">Sign in again before changing administrator access.</p>
+          <a href="/admin/login?restart=1">Sign in again →</a>{{end}}
+        <ul class="resource-list">
+          {{range .Administrators.Accounts}}
+            <li class="security-method">
+              <div>
+                <h3 id="administrator-{{.ID}}">{{.Email}}</h3>
+                {{if eq .Role "owner"}}
+                  <p class="help">Owner account · protected</p>
+                {{else if eq .Status "invited"}}
+                  <p class="help">Invitation pending · password and verification setup required</p>
+                {{else if eq .Status "revoked"}}
+                  <p class="help">Access revoked</p>
+                {{else}}
+                  <p class="help">Active administrator · {{if .EmailVerified}}Email confirmed{{else}}Email not confirmed{{end}}</p>
+                {{end}}
+                <p class="help">Added {{timeLabel .CreatedAt}}</p>
+              </div>
+              {{if and (ne .Role "owner") (ne .Status "revoked")}}
+                <details class="account-actions">
+                  <summary aria-describedby="administrator-{{.ID}}">Manage access</summary>
+                  {{if and (eq .Status "invited") $.Administrators.EmailEnabled}}
+                    <form method="post"
+                          action="/admin/administrators"
+                          data-account-action="invite">
+                      <fieldset disabled aria-labelledby="administrator-{{.ID}}">
+                        <input type="hidden" name="email" value="{{.Email}}">
+                        <label class="confirmation">
+                          <input type="checkbox" name="confirmed" required>Restart this invitation
+                        </label>
+                        <p class="help">Replaces the previous invitation and restarts unfinished setup.</p>
+                        <button class="secondary" type="submit">Send a new invitation</button>
+                      </fieldset>
+                    </form>
+                  {{end}}
+                  <form method="post"
+                        action="/admin/administrators"
+                        data-account-action="revoke">
+                    <fieldset disabled aria-labelledby="administrator-{{.ID}}">
+                      <input type="hidden" name="id" value="{{.ID}}">
+                      <label class="confirmation">
+                        <input type="checkbox"
+                               name="confirmed"
+                               required>Revoke this administrator's access
+                      </label>
+                      <p class="help">Ends this person's administrator access and invalidates their sessions.</p>
+                      <button class="danger" type="submit">Revoke access</button>
+                    </fieldset>
+                  </form>
+                </details>
+              {{end}}
+            </li>
+          {{end}}
+        </ul>
+      </section>
+      <section class="panel">
+        <h2>Invite administrator</h2>
+        {{if .Administrators.EmailEnabled}}
+          <p>Send an invitation to someone you trust. They choose their own password and verification method.</p>
+          <form method="post"
+                action="/admin/administrators"
+                data-account-action="invite">
+            <fieldset disabled>
+              <label for="invite-email">Their email address</label>
+              <input id="invite-email"
+                     name="email"
+                     type="email"
+                     maxlength="254"
+                     autocomplete="off"
+                     autocorrect="off"
+                     autocapitalize="off"
+                     spellcheck="false"
+                     required>
+              <button type="submit">Send invitation</button>
+            </fieldset>
+          </form>
+        {{else}}
+          <p class="muted">Configure account email before sending invitations.</p>
+          <a href="/admin/mail">Review email settings →</a>{{end}}
+      </section>
+      {{template "account-settings-status" .}}
+    </div>
+  {{end}}
+{{end}}
+{{define "account-settings-status"}}
+  <p data-account-settings-status
+     role="status"
+     aria-live="polite"
+     tabindex="-1"></p>
+  <noscript>
+    <p class="alert alert-info">Enable JavaScript to change account settings. You can still review this page.</p>
+  </noscript>
+{{end}}

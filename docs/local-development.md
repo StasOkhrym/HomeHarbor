@@ -36,6 +36,13 @@ optional: a properly operated SMTP relay works too. Configure a CA file only for
 a private SMTP authority. Password reset changes the password and invalidates
 old sessions; it keeps the account's existing MFA methods.
 
+The configured authentication rate is per client IP and bounded stage: password,
+MFA/proofs, account email, and logout. Password-bearing setup/reset aliases share
+one password budget; query strings never create a fresh budget. This permits a
+complete invitation and immediate normal sign-in without increasing the password
+guessing allowance. Redis failure closes every stage; the overall API limit also
+applies.
+
 Configuration, certificates and the companion root live in ignored `.local/`
 and `secrets/`. The private companion key is age-encrypted; Compose mounts only
 its public half. Local apps run as the owner of bind-mounted secrets, avoiding
@@ -47,7 +54,12 @@ UDP or grant network-admin capabilities. It is not a VPN demonstration.
 
 `make integration` starts disposable authenticated DB/Redis containers, runs all
 required adapter contracts and cleans only its own project on exit. Existing
-development DB/state is untouched. `make acceptance` runs current relay and Linux
+development DB/state is untouched. `make integration-mail` separately creates two
+authenticated TLS Mailpit captures with temporary credentials, verifies real
+STARTTLS and implicit TLS delivery plus password/CA/hostname rejection, then
+removes only its own containers and temporary state. Both integration gates run
+in CI when durable/backend changes require them, and in `make verify FULL=1`.
+They never contact a real email provider. `make acceptance` runs current relay and Linux
 namespace and real systemd-resolved tests, starting the Lima test VM on Mac when
 needed. `LIMA_INSTANCE=my-vm make acceptance` consistently selects another VM.
 Native Linux acceptance requires root plus ip/nft/WireGuard/curl/Python and an

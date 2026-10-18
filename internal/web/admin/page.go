@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/acl"
 	"github.com/StasOkhrym/homeharbor/internal/control/devices"
@@ -12,6 +13,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/profiles"
 	"github.com/StasOkhrym/homeharbor/internal/control/routes"
 	"github.com/StasOkhrym/homeharbor/internal/control/services"
+	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/snapshot"
 )
 
@@ -57,46 +59,66 @@ func LoadCollection[T any](
 // Page is the typed presentation contract shared by full pages and fragments.
 // The admin handler loads it; this package owns template-facing state.
 type Security struct {
-	Ready     bool
-	Recent    bool
-	Email     string
-	Role      string
-	Factors   identity.FactorState
-	CanRemove bool
+	EmailStatusKnown bool
+	EmailVerified    bool
+	EmailEnabled     bool
+	SessionStartedAt time.Time
+	SessionMethod    string
+	Ready            bool
+	Recent           bool
+	Email            string
+	Role             string
+	Factors          identity.FactorState
+	CanRemove        bool
+}
+
+type AccountManagement struct {
+	Ready        bool
+	Recent       bool
+	EmailEnabled bool
+	Accounts     []identity.AccountSummary
+}
+type MailSettings struct {
+	Ready  bool
+	Recent bool
+	State  workflows.MailStatus
 }
 
 type Page struct {
-	Security      Security
-	Page          string
-	Section       string
-	Title         string
-	Description   string
-	CSRF          string
-	Notice        string
-	Error         string
-	Values        url.Values
-	FieldErrors   map[string]string
-	Devices       Collection[devices.Device]
-	Services      Collection[services.Service]
-	Profiles      Collection[profiles.AccessProfile]
-	Routes        Collection[routes.Advertisement]
-	Activity      Activity
-	Connections   Connections
-	Device        *devices.Device
-	Policy        acl.Snapshot
-	PolicyReady   bool
-	PolicyJSON    string
-	PolicyError   string
-	Signed        *snapshot.NetworkSnapshot
-	SignedState   string
-	Readiness     string
-	PendingRoutes string
-	Invite        *Invite
-	InviteError   string
-	InvitesReady  bool
-	Preview       *PolicyPreview
-	RevokeProof   string
-	PolicyRows    []PolicyRow
+	ManageAccounts bool
+	Administrators AccountManagement
+	Mail           MailSettings
+	Security       Security
+	Page           string
+	Section        string
+	Title          string
+	Description    string
+	CSRF           string
+	Notice         string
+	Error          string
+	Values         url.Values
+	FieldErrors    map[string]string
+	Devices        Collection[devices.Device]
+	Services       Collection[services.Service]
+	Profiles       Collection[profiles.AccessProfile]
+	Routes         Collection[routes.Advertisement]
+	Activity       Activity
+	Connections    Connections
+	Device         *devices.Device
+	Policy         acl.Snapshot
+	PolicyReady    bool
+	PolicyJSON     string
+	PolicyError    string
+	Signed         *snapshot.NetworkSnapshot
+	SignedState    string
+	Readiness      string
+	PendingRoutes  string
+	Invite         *Invite
+	InviteError    string
+	InvitesReady   bool
+	Preview        *PolicyPreview
+	RevokeProof    string
+	PolicyRows     []PolicyRow
 }
 
 func NewPage(page, csrf, noticeCode string) Page {
@@ -105,9 +127,10 @@ func NewPage(page, csrf, noticeCode string) Page {
 	switch page {
 	case "invites":
 		section = "devices"
-	case "access", "network", "security", "setup":
+	case "access", "network", "security", "setup", "administrators", "mail":
 		section = "settings"
 	}
+
 	return Page{
 		Section:       section,
 		Page:          page,
@@ -124,8 +147,10 @@ func NewPage(page, csrf, noticeCode string) Page {
 }
 
 var titles = map[string][2]string{
-	"settings": {"Settings", "Manage who has access and how your network is configured."},
-	"overview": {"Overview", "Your network, without the guesswork."},
+	"administrators": {"Administrators", "Choose who can help manage your home network."},
+	"mail":           {"Email", "Review account email delivery and send a test to yourself."},
+	"settings":       {"Settings", "Manage who has access and how your network is configured."},
+	"overview":       {"Overview", "Your network, without the guesswork."},
 	"setup": {
 		"Set up your network",
 		"Follow the steps without losing access to the rest of the panel.",
@@ -153,13 +178,16 @@ var titles = map[string][2]string{
 }
 
 var notices = map[string]string{
-	"service-created": "Service saved to the catalog. This does not grant network access.",
-	"profile-created": "Access profile saved. Signed network configuration is a separate step.",
-	"route-created":   "Route saved and awaiting approval.",
-	"route-approved":  "Route approved in control. Gateway application is not confirmed.",
-	"route-rejected":  "Route rejected in control. Existing signed grants are unchanged.",
-	"policy-updated":  "Policy saved. This is not a signed network update.",
-	"device-revoked":  "Credentials revoked. Use your trusted companion to remove the signed access grant.",
+	"administrator_invited": "Administrator invitation queued. Only completed password and MFA setup grants access.",
+	"administrator_revoked": "Administrator access revoked and existing sessions invalidated.",
+	"mail_test_queued":      "Test email queued. Refresh delivery status to check the result.",
+	"service-created":       "Service saved to the catalog. This does not grant network access.",
+	"profile-created":       "Access profile saved. Signed network configuration is a separate step.",
+	"route-created":         "Route saved and awaiting approval.",
+	"route-approved":        "Route approved in control. Gateway application is not confirmed.",
+	"route-rejected":        "Route rejected in control. Existing signed grants are unchanged.",
+	"policy-updated":        "Policy saved. This is not a signed network update.",
+	"device-revoked":        "Credentials revoked. Use your trusted companion to remove the signed access grant.",
 }
 
 // Invite contains status metadata only; signed permits and proofs never enter

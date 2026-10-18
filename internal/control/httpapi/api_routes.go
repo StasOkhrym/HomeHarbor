@@ -12,8 +12,9 @@ func (s *Server) registerAPI(api chi.Router) {
 	api.Use(limitRequestBody)
 	api.Use(s.apiLimiter.Middleware(s.clientKey))
 	if s.browserAPI != nil {
-		api.Mount("/auth", s.authLimiter.Middleware(s.clientKey)(s.browserAPI))
+		api.Mount("/auth", s.authLimiter.Middleware(s.authQuotaKey)(s.browserAPI))
 	}
+
 	s.registerAdminAPI(api)
 	s.registerDeviceAPI(api)
 	s.registerServiceAPI(api)

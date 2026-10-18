@@ -9,7 +9,6 @@
             <p class="eyebrow">Your administrator account · {{.Security.Role}}</p>
             <h2>{{.Security.Email}}</h2>
           </div>
-          {{template "logout" .}}
         </div>
         <p>Your password is the first step. A passkey or authenticator confirms it's you.</p>
         <p class="help">Adding or removing a method signs out all your sessions. Keep an alternate method before removing one.</p>
@@ -19,6 +18,36 @@
         <a href="/admin/login?restart=1&amp;return_to=security">Sign in again →</a>
       </section>
       <p data-security-status role="status" aria-live="polite" tabindex="-1"></p>
+      {{if .Security.EmailStatusKnown}}
+        <section class="panel">
+          <h2>Email address</h2>
+          <p>{{.Security.Email}} · {{if .Security.EmailVerified}}Email confirmed{{else}}Email not confirmed{{end}}</p>
+          {{if not .Security.EmailVerified}}
+            {{if .Security.EmailEnabled}}
+              <form method="post"
+                    action="/admin/security"
+                    data-security-action="email/verification">
+                <fieldset disabled>
+                  <button type="submit">Send confirmation email</button>
+                </fieldset>
+              </form>
+            {{else}}
+              <p class="help">Account email must be configured before this address can be confirmed.</p>
+            {{end}}
+          {{end}}
+        </section>
+      {{end}}
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Current session</h2>
+          {{template "logout" .}}
+        </div>
+        <p>{{.Security.SessionMethod}}</p>
+        {{if .Security.SessionStartedAt}}
+          <p class="help">Signed in {{timeLabel .Security.SessionStartedAt}}</p>
+        {{end}}
+        <p class="help">Adding or removing a verification method ends all your existing sessions.</p>
+      </section>
       <section class="panel">
         <div class="panel-heading">
           <h2>Passkeys</h2>

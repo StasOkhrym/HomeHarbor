@@ -22,6 +22,7 @@ type MailAccountReader interface {
 	AccountByEmail(context.Context, string) (identity.Account, error)
 }
 type MailAccountTransaction interface {
+	OwnerForUpdate(context.Context, identity.AccountScope) (identity.Account, error)
 	identity.AccountReader
 	PrepareAdminInvitation(context.Context, identity.AccountScope, identity.Account) error
 	SaveMailToken(context.Context, identity.MailToken) error
@@ -29,6 +30,8 @@ type MailAccountTransaction interface {
 	RevokeAdmin(context.Context, identity.AccountScope, string) error
 }
 type AccountMailDelivery interface {
+	EnqueueSMTPTest(context.Context, notifications.Prepared) error
+	LastSMTPTest(context.Context, string) (notifications.TestStatus, error)
 	Enqueue(context.Context, notifications.Prepared) error
 	CancelPending(context.Context, string, notifications.Kind) error
 }
@@ -82,6 +85,9 @@ func NewAccountMail(
 }
 func (s *AccountMail) clock() time.Time { return s.now().UTC().Truncate(time.Microsecond) }
 func mailStateError(err error) error {
+	if errors.Is(err, notifications.ErrRateLimited) {
+		return identity.ErrMailRateLimited
+	}
 	if err == nil || errors.Is(err, identity.ErrInvalidCredential) ||
 		errors.Is(err, identity.ErrMailRateLimited) ||
 		errors.Is(err, identity.ErrRecentAuthentication) ||

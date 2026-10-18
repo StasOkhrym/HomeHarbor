@@ -1,0 +1,48 @@
+{{define "mail-settings"}}
+  {{if .Mail.Ready}}
+    <div data-account-settings
+         data-csrf="{{.CSRF}}"
+         data-recent="{{.Mail.Recent}}">
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Account email</h2>
+          <span class="badge">{{if .Mail.State.Configured}}Configured{{else}}Not configured{{end}}</span>
+        </div>
+        <p>Invitations, email confirmation, password recovery and security notices use your configured SMTP server.</p>
+        <p class="help">Configuration alone does not confirm current connectivity or delivery to an inbox.</p>
+        {{if not .Mail.State.Configured}}
+          <p class="alert alert-info">Configure authenticated TLS SMTP to send account email.</p>
+        {{end}}
+        <h3>Test recipient</h3>
+        <p>{{.Mail.State.Recipient}} · {{if .Mail.State.RecipientVerified}}Email confirmed{{else}}Email not confirmed{{end}}</p>
+        <p class="help">Test messages go only to your own confirmed address.</p>
+        {{if not .Mail.State.RecipientVerified}}
+          <p><a href="/admin/security">Confirm your email in Security →</a></p>
+        {{end}}
+        {{if not .Mail.Recent}}
+          <p class="alert alert-info">Sign in again before sending a test email.</p>
+          <a href="/admin/login?restart=1">Sign in again →</a>{{end}}
+        {{if and .Mail.State.Configured .Mail.State.RecipientVerified}}
+          <form method="post" action="/admin/mail" data-account-action="mail-test">
+            <fieldset disabled>
+              <button type="submit">Send test email</button>
+              <p class="help">One test per minute. Sending runs in the background.</p>
+            </fieldset>
+          </form>
+        {{end}}
+      </section>
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Last delivery test</h2>
+          <a href="/admin/mail">Refresh status</a>
+        </div>
+        <p>{{mailTestLabel .Mail.State.Test.State}}</p>
+        {{if .Mail.State.Test.CreatedAt}}
+          <p class="help">Requested {{timeLabel .Mail.State.Test.CreatedAt}} · {{.Mail.State.Test.Attempts}} delivery {{if eq .Mail.State.Test.Attempts 1}}attempt{{else}}attempts{{end}}</p>
+        {{end}}
+        <p class="help">SMTP acceptance confirms the server accepted the message. Check your inbox or local capture for receipt.</p>
+      </section>
+      {{template "account-settings-status" .}}
+    </div>
+  {{end}}
+{{end}}

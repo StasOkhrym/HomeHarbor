@@ -15,8 +15,10 @@ document.addEventListener("submit", async (event) => {
   const form = event.target;
   if (form.matches("[data-logout]")) {
     event.preventDefault();
+
     const button = form.querySelector("button");
     button.disabled = true;
+
     try {
       const response = await fetch("/api/v1/auth/logout", {
         method: "POST",
@@ -25,14 +27,17 @@ document.addEventListener("submit", async (event) => {
         body: new URLSearchParams(new FormData(form)),
       });
       if (!response.ok) throw new Error("Sign-out could not be completed. Try again.");
+
       location.replace("/admin/login");
     } catch (error) {
       browserMessage(error.message);
       button.disabled = false;
     }
+
     return;
   }
-  if (form.matches("[data-security-action]")) return;
+  if (form.matches("[data-security-action], [data-account-action]")) return;
+
   const submitter = event.submitter;
   if (submitter) {
     // Keep the successful submit control in the request. Disabling it here

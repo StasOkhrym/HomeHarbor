@@ -14,6 +14,7 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/events"
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
+	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
 	memory "github.com/StasOkhrym/homeharbor/internal/testutil/control/identity"
 	authenticator "github.com/StasOkhrym/homeharbor/internal/testutil/webauthn"
 )
@@ -656,5 +657,97 @@ func TestInvitationHTTPNeverUsesInputEmailAsAccountAuthority(t *testing.T) {
 
 	if err != nil || context.AccountID != "invited" {
 		t.Fatal("accepted invitation setup belongs to another account", err)
+	}
+}
+
+func (s mailActionsStub) SMTPStatus(
+	context.Context,
+	identity.Principal,
+) (workflows.MailStatus, error) {
+	return workflows.MailStatus{
+		Configured:        true,
+		Recipient:         "owner@example.test",
+		RecipientVerified: true,
+	}, s.failure
+}
+
+func (s mailActionsStub) SendSMTPTest(
+	context.Context,
+	identity.Principal,
+) error {
+	return s.failure
+}
+
+func TestSMTPSettingsHTTPRequiresOwnerAndRejectsRecipientOverrides(t *testing.T) {
+	auth, _ := mailAuthFixture(t)
+	request := func(method, path, body string, role identity.Role) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		if role != "" {
+			r = r.WithContext(
+				identity.WithPrincipal(
+					r.Context(),
+					identity.Principal{
+						AccountID:   identity.OwnerAccountID,
+						Role:        role,
+						Purpose:     identity.SessionAdmin,
+						AuthVersion: 1,
+						Email:       "owner@example.test",
+					},
+				),
+			)
+		}
+
+		w := httptest.NewRecorder()
+
+		auth.AccountHandler().ServeHTTP(w, r)
+		return w
+	}
+	for _, route := range []struct{ method, path string }{{http.MethodGet, "/mail/status"}, {http.MethodPost, "/mail/test"}} {
+		if w := request(route.method, route.path, "{}", ""); w.Code != http.StatusUnauthorized {
+			t.Fatal("anonymous SMTP settings admitted", w.Code)
+		}
+
+		if w := request(
+			route.method,
+			route.path,
+			"{}",
+			identity.RoleAdmin,
+		); w.Code != http.StatusForbidden {
+			t.Fatal("admin SMTP settings admitted", w.Code)
+		}
+
+		w := request(route.method, route.path, "{}", identity.RoleOwner)
+		want := http.StatusOK
+		if route.method == http.MethodPost {
+			want = http.StatusAccepted
+		}
+
+		if w.Code != want || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("owner SMTP settings unavailable", w.Code, w.Body.String())
+		}
+	}
+
+	if w := request(
+		http.MethodPost,
+		"/mail/test",
+		`{"to":"other@example.test"}`,
+		identity.RoleOwner,
+	); w.Code != http.StatusBadRequest {
+		t.Fatal("SMTP test accepts arbitrary recipient", w.Code)
+	}
+
+	auth.mail = mailActionsStub{failure: errors.New("PRIVATE_PROVIDER_REPLY")}
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		path := "/mail/status"
+		if method == http.MethodPost {
+			path = "/mail/test"
+		}
+
+		w := request(method, path, "{}", identity.RoleOwner)
+
+		if w.Code != http.StatusServiceUnavailable || strings.Contains(w.Body.String(), "PRIVATE") {
+			t.Fatal("unsafe SMTP settings diagnostic", w.Code)
+		}
 	}
 }

@@ -199,3 +199,14 @@ func (scope AccountScope) Allows(account Account) bool {
 		return false
 	}
 }
+
+// AccountSummary is owner-visible directory data, never an authority or a
+// credential record. Keeping it distinct prevents accidental secret projection.
+type AccountSummary struct {
+	ID            string        `json:"id"`
+	Email         string        `json:"email"`
+	Role          Role          `json:"role"`
+	Status        AccountStatus `json:"status"`
+	EmailVerified bool          `json:"email_verified"`
+	CreatedAt     time.Time     `json:"created_at"`
+}

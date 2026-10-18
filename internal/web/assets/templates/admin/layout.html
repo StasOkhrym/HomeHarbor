@@ -6,13 +6,14 @@
       <meta name="htmx-config"
             content='{"allowEval":false,"allowScriptTags":false,"historyCacheSize":0,"includeIndicatorStyles":false,"selfRequestsOnly":true}'>
       <title>{{.Title}} · HomeHarbor</title>
-      <link rel="stylesheet" href="/assets/admin.css?v=ui-8">
+      <link rel="stylesheet" href="/assets/admin.css?v=ui-9">
       <script src="/assets/htmx-2.0.11.min.js" defer></script>
-      <script src="/assets/admin.js?v=ui-5" defer></script>
+      <script src="/assets/admin.js?v=ui-6" defer></script>
       <script src="/assets/live-poll.js?v=ui-1" defer></script>
       <script src="/assets/activity.js?v=ui-3" defer></script>
       <script src="/assets/connections.js?v=ui-1" defer></script>
-      <script src="/assets/security.js?v=ui-1" defer></script>
+      <script src="/assets/security.js?v=ui-2" defer></script>
+      <script src="/assets/account-settings.js?v=ui-1" defer></script>
     </head>
     <body hx-history="false">
       <a class="skip-link" href="#main-content">Skip to content</a>
@@ -50,6 +51,8 @@
           {{end}}
           {{template "section-navigation" .}}
           {{if eq .Page "settings"}}{{template "settings" .}}{{end}}
+          {{if eq .Page "administrators"}}{{template "administrators" .}}{{end}}
+          {{if eq .Page "mail"}}{{template "mail-settings" .}}{{end}}
           {{if eq .Page "overview"}}{{template "overview" .}}{{end}}
           {{if eq .Page "setup"}}{{template "setup" .}}{{end}}
           {{if eq .Page "devices"}}{{template "devices" .}}{{end}}

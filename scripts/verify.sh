@@ -11,7 +11,7 @@ set -- ${GO_PACKAGES:-./cmd/... ./internal/... ./migrations/...}
 go test -race "$@" -count=1 -timeout=90s
 go build ./cmd/...
 if [ "${FULL:-0}" = 1 ]; then
-    make integration security
+    make integration integration-mail security
     "$python_command" scripts/compose_check.py
     make acceptance
 fi

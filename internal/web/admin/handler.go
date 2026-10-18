@@ -14,8 +14,16 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/profiles"
 	"github.com/StasOkhrym/homeharbor/internal/control/routes"
 	"github.com/StasOkhrym/homeharbor/internal/control/services"
+	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
 	websession "github.com/StasOkhrym/homeharbor/internal/web/session"
 )
+
+type AdministratorReader interface {
+	Administrators(context.Context, identity.Principal) ([]identity.AccountSummary, error)
+}
+type MailSettingsReader interface {
+	SMTPStatus(context.Context, identity.Principal) (workflows.MailStatus, error)
+}
 
 type AccountSecurityReader interface {
 	Factors(context.Context, identity.Principal) (identity.FactorState, error)
@@ -52,6 +60,10 @@ type PolicyManager interface {
 // Dependencies are browser-only capabilities. The composition root supplies
 // domain services; the JSON transport has no dependency on this adapter.
 type Dependencies struct {
+	Accounts           identity.AccountReader
+	Administrators     AdministratorReader
+	MailSettings       MailSettingsReader
+	EmailEnabled       bool
 	AccountSecurity    AccountSecurityReader
 	Devices            DeviceManager
 	Routes             RouteManager
@@ -69,6 +81,10 @@ type Dependencies struct {
 }
 
 type Handler struct {
+	accounts           identity.AccountReader
+	administrators     AdministratorReader
+	mailSettings       MailSettingsReader
+	emailEnabled       bool
 	accountSecurity    AccountSecurityReader
 	devices            DeviceManager
 	routes             RouteManager
@@ -90,13 +106,26 @@ func NewHandler(deps Dependencies) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
+
 	return &Handler{
-		accountSecurity: deps.AccountSecurity,
-		devices:         deps.Devices, routes: deps.Routes, services: deps.Services,
-		profiles: deps.Profiles, policy: deps.Policy, invites: deps.Invites,
-		snapshots: deps.Snapshots, audit: deps.Audit, telemetry: deps.Telemetry, ready: deps.Ready,
+		accounts:           deps.Accounts,
+		administrators:     deps.Administrators,
+		mailSettings:       deps.MailSettings,
+		emailEnabled:       deps.EmailEnabled,
+		accountSecurity:    deps.AccountSecurity,
+		devices:            deps.Devices,
+		routes:             deps.Routes,
+		services:           deps.Services,
+		profiles:           deps.Profiles,
+		policy:             deps.Policy,
+		invites:            deps.Invites,
+		snapshots:          deps.Snapshots,
+		audit:              deps.Audit,
+		telemetry:          deps.Telemetry,
+		ready:              deps.Ready,
 		actionConfirmation: deps.ActionConfirmation,
-		invalidateDevice:   deps.InvalidateDevice, logger: logger,
+		invalidateDevice:   deps.InvalidateDevice,
+		logger:             logger,
 	}
 }
 
@@ -106,10 +135,11 @@ func (h *Handler) Routes() http.Handler {
 	router := chi.NewRouter()
 	router.Get("/", h.adminDashboard)
 	for _, page := range []string{
-		"setup", "devices", "services", "access", "network", "invites", "activity", "security", "connections", "settings",
+		"setup", "devices", "services", "access", "network", "invites", "activity", "security", "connections", "settings", "administrators", "mail",
 	} {
 		router.Get("/"+page, h.adminView(page))
 	}
+
 	router.Get("/activity/fragment", ActivityFragment(h.audit, h.logger))
 	router.Get("/connections/fragment", h.connectionsFragment)
 	router.Get("/devices/{id}", h.adminView("devices"))
@@ -122,6 +152,7 @@ func (h *Handler) Routes() http.Handler {
 		router.Post("/routes/{id}/approve", h.approveRouteForm)
 		router.Post("/routes/{id}/reject", h.rejectRouteForm)
 	}
+
 	router.Post("/services", h.createServiceForm)
 	router.Post("/access-profiles", h.createProfileForm)
 	router.Post("/policy", h.replacePolicyForm)

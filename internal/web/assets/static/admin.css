@@ -452,13 +452,15 @@ select[aria-invalid="true"] {
 }
 
 summary {
+  min-height: 44px;
   cursor: pointer;
   color: var(--accent);
   font-weight: 600;
   padding: 8px 0;
 }
 
-.auth-card summary {
+.auth-card summary,
+[data-account-settings] summary {
   min-height: 44px;
   padding-block: 12px;
   cursor: pointer;
@@ -1088,13 +1090,15 @@ summary {
   user-select: all;
 }
 
-[data-account-security] fieldset {
+[data-account-security] fieldset,
+[data-account-settings] fieldset {
   display: grid;
   justify-items: start;
   gap: 8px;
 }
 
-[data-account-security] .confirmation {
+[data-account-security] .confirmation,
+[data-account-settings] .confirmation {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1104,4 +1108,13 @@ summary {
 
 .auth-card :where(.secret-value, .muted) {
   overflow-wrap: anywhere;
+}
+
+.account-actions {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.account-actions form + form {
+  margin-block-start: 24px;
 }

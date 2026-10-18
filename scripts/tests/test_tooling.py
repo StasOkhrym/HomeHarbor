@@ -101,6 +101,7 @@ class ToolingTests(unittest.TestCase):
         python_scripts = {
             "dev-init": "dev_init",
             "dev-mail-init": "dev_mail",
+            "integration-mail": "integration_mail",
             "compose-check": "compose_check",
             "integration": "integration",
             "integration-local": "integration",
@@ -921,7 +922,7 @@ exit 94
         result = self.run_script("verify")
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = (self.root / "make-calls").read_text()
-        self.assertIn("integration security", calls)
+        self.assertIn("integration integration-mail security", calls)
         self.assertIn("acceptance", calls)
         python = (self.root / "python-calls").read_text()
         self.assertIn("compose_check.py", python)
@@ -1051,6 +1052,59 @@ exit 94
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(counter.read_text(), "x", "verify ignored the explicit Python override")
+
+    def capture_go_events(self, *, missing=False, skipped=False):
+        root = "TestMailpitSMTPVerifiedTLSAndMIME"
+        names = [root, root + "/starttls", root + "/tls"]
+        names += [
+            root + "/" + mode + "/" + fault
+            for mode in ("starttls", "tls")
+            for fault in ("password", "authority", "hostname")
+        ]
+        if missing:
+            names.remove(root + "/tls/authority")
+
+        events = [
+            {"Action": "skip" if skipped and name == root else "pass", "Test": name}
+            for name in names
+        ]
+        payload = "\n".join(json.dumps(event) for event in events)
+        self.cli("go", "cat <<'EVENTS'\n" + payload + "\nEVENTS\n")
+
+    def test_mail_capture_gate_requires_both_modes_and_all_tls_rejections(self):
+        for fault in ("none", "missing", "skipped"):
+            with self.subTest(fault=fault):
+                self.capture_go_events(missing=fault == "missing", skipped=fault == "skipped")
+                self.cli("docker", 'printf "%s\\n" "$*" >> docker-calls\n')
+                result = self.run_script("integration-mail")
+                if fault == "none":
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0, "missing/skipped SMTP proof passed")
+
+                calls = (self.root / "docker-calls").read_text().splitlines()
+
+                self.assertIn("up --detach --wait", calls[-2])
+                self.assertIn("down --volumes --remove-orphans", calls[-1])
+                self.assertFalse((self.root / ".local").exists())
+                self.assertFalse((self.root / "secrets").exists())
+
+    def test_mail_capture_gate_cleans_owned_project_after_failed_start_without_raw_reply(self):
+        self.cli(
+            "docker",
+            'printf "%s\\n" "$*" >> docker-calls\ncase " $* " in *" up "*) echo PRIVATE_PROVIDER_REPLY >&2; exit 19 ;; esac\n',
+        )
+        self.cli("go", "exit 93\n")
+        result = self.run_script("integration-mail")
+
+        self.assertEqual(result.returncode, 19, result.stderr)
+        self.assertNotIn("PRIVATE_PROVIDER_REPLY", result.stderr + result.stdout)
+
+        calls = (self.root / "docker-calls").read_text().splitlines()
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("down --volumes --remove-orphans", calls[1])
+        self.assertFalse((self.root / ".local").exists())
 
     def test_dev_up_does_not_require_production_checks(self):
         self.cli("id", 'case "$1" in -u|-g) printf "501\\n" ;; esac\n')

@@ -14,6 +14,7 @@ var pageTemplate = template.Must(assets.AdminTemplate(template.FuncMap{
 	"timeLabel":        func(value time.Time) string { return value.UTC().Format("02 Jan 2006, 15:04 UTC") },
 	"timeISO":          func(value time.Time) string { return value.UTC().Format(time.RFC3339) },
 	"actionLabel":      ActionLabel,
+	"mailTestLabel":    MailTestLabel,
 	"auditOutcome":     Outcome,
 	"auditActor":       Actor,
 	"auditSubject":     Subject,

@@ -57,9 +57,9 @@ jobs:
           sudo install -m 0755 /tmp/hadolint /usr/local/bin/hadolint
       - name: Portable gate
         run: make verify
-      - name: SQL and Redis integration
+      - name: SQL, Redis and captured SMTP integration
         if: fromJSON(needs.changes.outputs.gates).integration
-        run: make integration
+        run: make integration integration-mail
       - name: Parser fuzzing
         if: fromJSON(needs.changes.outputs.gates).fuzz
         run: make security SECURITY=fuzz

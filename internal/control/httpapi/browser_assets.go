@@ -9,13 +9,14 @@ import (
 )
 
 var (
-	adminCSS          = assets.Static("admin.css")
-	adminScript       = assets.Static("admin.js")
-	activityScript    = assets.Static("activity.js")
-	livePollScript    = assets.Static("live-poll.js")
-	connectionsScript = assets.Static("connections.js")
-	securityScript    = assets.Static("security.js")
-	htmxScript        = assets.Static("htmx-2.0.11.min.js")
+	adminCSS              = assets.Static("admin.css")
+	adminScript           = assets.Static("admin.js")
+	activityScript        = assets.Static("activity.js")
+	livePollScript        = assets.Static("live-poll.js")
+	connectionsScript     = assets.Static("connections.js")
+	securityScript        = assets.Static("security.js")
+	accountSettingsScript = assets.Static("account-settings.js")
+	htmxScript            = assets.Static("htmx-2.0.11.min.js")
 )
 
 func registerBrowserAssets(router chi.Router) {
@@ -34,6 +35,7 @@ func registerBrowserAssets(router chi.Router) {
 		{"/assets/live-poll.js", livePollScript, "public, max-age=3600, immutable"},
 		{"/assets/connections.js", connectionsScript, "public, max-age=3600, immutable"},
 		{"/assets/security.js", securityScript, "public, max-age=3600, immutable"},
+		{"/assets/account-settings.js", accountSettingsScript, "public, max-age=3600, immutable"},
 		{"/assets/htmx-2.0.11.min.js", htmxScript, "public, max-age=31536000, immutable"},
 	} {
 		router.Get(asset.path, func(w http.ResponseWriter, _ *http.Request) {

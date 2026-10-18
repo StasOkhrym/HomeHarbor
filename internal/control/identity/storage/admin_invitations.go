@@ -75,18 +75,43 @@ func (s *Repository) PrepareAdminInvitation(
 	return tx.Commit(ctx)
 }
 
-func lockOwner(ctx context.Context, tx pgx.Tx, scope identity.AccountScope) error {
-	if scope.AccountID != identity.OwnerAccountID || scope.Purpose != identity.SessionAdmin {
-		return identity.ErrInvalidCredential
+// OwnerForUpdate participates only in an explicitly bound caller transaction.
+// The retained account lock serializes owner actions across control replicas.
+func (s *Repository) OwnerForUpdate(
+	ctx context.Context,
+	scope identity.AccountScope,
+) (identity.Account, error) {
+	tx, ok := s.pool.(pgx.Tx)
+	if !ok {
+		return identity.Account{}, identity.ErrSecurityStateUnavailable
 	}
+
+	return lockedOwner(ctx, tx, scope)
+}
+
+func lockOwner(ctx context.Context, tx pgx.Tx, scope identity.AccountScope) error {
+	_, err := lockedOwner(ctx, tx, scope)
+	return err
+}
+
+func lockedOwner(
+	ctx context.Context,
+	tx pgx.Tx,
+	scope identity.AccountScope,
+) (identity.Account, error) {
+	if scope.AccountID != identity.OwnerAccountID || scope.Purpose != identity.SessionAdmin {
+		return identity.Account{}, identity.ErrInvalidCredential
+	}
+
 	account, err := lockedAccountScope(ctx, tx, scope)
 	if err != nil {
-		return err
+		return identity.Account{}, err
 	}
 	if account.Role != identity.RoleOwner {
-		return identity.ErrInvalidCredential
+		return identity.Account{}, identity.ErrInvalidCredential
 	}
-	return nil
+
+	return account, nil
 }
 
 func (s *Repository) RevokeAdmin(

@@ -15,14 +15,17 @@
 
   function clearSecrets(panel) {
     if (!panel) return;
+
     for (const selector of ["[data-totp-secret]", "[data-recovery-values]"]) {
       const value = panel.querySelector(selector);
       if (value) value.textContent = "";
     }
+
     for (const selector of ["[data-totp-enrollment]", "[data-security-codes]"]) {
       const section = panel.querySelector(selector);
       if (section) section.hidden = true;
     }
+
     panel.querySelectorAll('input[name="code"]').forEach((input) => {
       input.value = "";
     });
@@ -39,6 +42,7 @@
   function enhance() {
     const panel = root();
     if (!panel) return;
+
     panel.querySelectorAll("fieldset").forEach((fieldset) => {
       fieldset.disabled = panel.dataset.recent !== "true";
     });
@@ -53,6 +57,7 @@
 
   async function request(path, body, operation, panel) {
     const timeout = setTimeout(() => operation.abort(), 15000);
+
     try {
       const response = await fetch(`/api/v1/admin/account/${path}`, {
         method: "POST",
@@ -71,9 +76,18 @@
           throw new Error("Keep another active method. The requested change is unavailable.");
         if (response.status === 429)
           throw new Error("Too many requests. Wait a minute and try again.");
+
         throw new Error("Account security is temporarily unavailable. Try again shortly.");
       }
-      return response.status === 204 ? null : await response.json();
+      if (response.status === 204) return null;
+
+      try {
+        return await response.json();
+      } catch {
+        throw new Error(
+          "The change may have completed. Reload and review your account before trying again.",
+        );
+      }
     } finally {
       clearTimeout(timeout);
     }
@@ -82,11 +96,15 @@
   document.addEventListener("submit", async (event) => {
     const form = event.target;
     if (!form.matches("[data-security-action]")) return;
+
     event.preventDefault();
+
     const panel = form.closest("[data-account-security]");
     if (!panel || busy || panel.dataset.recent !== "true") return;
+
     const button = form.querySelector('button[type="submit"]');
     if (button.disabled) return;
+
     const action = form.dataset.securityAction;
     const epoch = generation;
     const operation = new AbortController();
@@ -98,12 +116,14 @@
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
     announce(panel, "Updating account security…");
+
     try {
       if (action === "passkeys/add") {
         if (!window.PublicKeyCredential)
           throw new Error(
             "This browser cannot create passkeys. Use a supported browser or set up an authenticator.",
           );
+
         const begin = await request(
           "passkeys/begin",
           { name: form.elements.namedItem("name").value },
@@ -111,6 +131,7 @@
           panel,
         );
         if (!current()) return;
+
         // Manual byte conversion also supports Safari versions without the
         // newer JSON option helpers. Security keys remain eligible.
         const options = begin.options.publicKey;
@@ -119,12 +140,14 @@
         options.excludeCredentials?.forEach((item) => {
           item.id = bytes(item.id);
         });
+
         const credential = await navigator.credentials.create({
           publicKey: options,
           signal: operation.signal,
         });
         if (!current()) return;
         if (!credential) throw new Error("No passkey was created. Try again.");
+
         ambiguous = true;
         await request(
           "passkeys/finish",
@@ -147,18 +170,28 @@
       } else if (action === "totp/begin") {
         const enrollment = await request(action, {}, operation, panel);
         if (!current()) return;
+
         panel.querySelector("[data-totp-secret]").textContent = enrollment.secret;
         panel.querySelector("[data-totp-enrollment]").hidden = false;
         button.hidden = true;
         announce(panel, "Enter the setup key in your authenticator, then confirm a code.");
+        return;
+      } else if (action === "email/verification") {
+        await request(action, {}, operation, panel);
+        if (!current()) return;
+
+        button.hidden = true;
+        announce(panel, "Email confirmation queued. Open the email link to confirm your address.");
         return;
       } else if (action === "recovery-codes") {
         // A lost response can still have committed a replacement. Never retry
         // automatically or retain a previously displayed invalid set.
         panel.querySelector("[data-recovery-values]").textContent = "";
         panel.querySelector("[data-security-codes]").hidden = true;
+
         const result = await request(action, {}, operation, panel);
         if (!current()) return;
+
         panel.querySelector("[data-recovery-values]").textContent = result.codes.join("\n");
         panel.querySelector("[data-security-codes]").hidden = false;
         announce(panel, "New recovery codes are ready. Save them before leaving this page.");
@@ -170,15 +203,18 @@
           body.code = input.value.trim();
           input.value = "";
         }
+
         if (action === "passkeys/remove") body.id = form.elements.namedItem("id").value;
         await request(action, body, operation, panel);
       }
+
       if (current()) {
         clearSecrets(panel);
         location.replace("/admin/login?return_to=security");
       }
     } catch (error) {
       if (!current()) return;
+
       const cancelled = error.name === "NotAllowedError";
       announce(
         panel,
@@ -204,6 +240,7 @@
 
   document.addEventListener("click", (event) => {
     if (!event.target.closest("[data-clear-recovery]")) return;
+
     const panel = root();
     clearSecrets(panel);
     if (panel) announce(panel, "Recovery codes cleared from this page.");

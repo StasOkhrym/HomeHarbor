@@ -1136,3 +1136,29 @@ test("password response cannot navigate after leaving sign-in", async () => {
 
   assert.deepEqual(page.navigations, []);
 });
+
+test("security never renders private successful-response parse diagnostics", async () => {
+  const page = securityPage(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => {
+      throw new SyntaxError("PRIVATE_RECOVERY_CODE in JSON response");
+    },
+  }));
+
+  await page.submit("recovery-codes");
+
+  assert.doesNotMatch(page.status.textContent, /PRIVATE_RECOVERY_CODE/);
+  assert.equal(page.codes.textContent, "");
+  assert.match(page.status.textContent, /Reload/);
+});
+
+test("email confirmation request keeps the current security session", async () => {
+  const page = securityPage(async () => ({ ok: true, status: 204 }));
+
+  await page.submit("email/verification");
+
+  assert.equal(page.requests[0].url, "/api/v1/admin/account/email/verification");
+  assert.deepEqual(page.navigations, []);
+  assert.match(page.status.textContent, /confirmation.*queued/i);
+});

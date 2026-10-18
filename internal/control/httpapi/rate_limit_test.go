@@ -115,3 +115,67 @@ func TestRateLimiterBoundsTrackedClients(t *testing.T) {
 		t.Fatalf("tracked clients = %d, want %d", got, maxTrackedRateLimitClients)
 	}
 }
+
+func authQuotaHandler(t *testing.T) http.Handler {
+	t.Helper()
+	deps := explicitTestDependencies()
+
+	noop := http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
+	)
+	deps.Browser = BrowserDependencies{
+		API: noop, Admin: noop, LoginPage: noop, LoginAsset: noop,
+		MutationAuthorizer: func(context.Context, *http.Request) (bool, error) { return true, nil },
+	}
+
+	server, err := NewServer(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return server.Handler()
+}
+
+func TestAuthQuotaAllowsInvitationAndFreshPasskeyLogin(t *testing.T) {
+	handler := authQuotaHandler(t)
+	for _, path := range []string{
+		"/invitation/accept", "/enrollment/passkey/begin", "/enrollment/passkey/finish",
+		"/password", "/passkey/begin", "/factor",
+	} {
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/auth"+path, nil))
+
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("complete setup/login stopped at %s: %d", path, response.Code)
+		}
+	}
+}
+
+func TestAuthQuotaKeepsPasswordAndProofAliasesBounded(t *testing.T) {
+	for name, paths := range map[string][]string{
+		"password": {"/password", "/enrollment/password", "/invitation/accept", "/password/reset/finish", "/owner/password", "/password?rotate=1"},
+		"proof":    {"/factor", "/passkey/begin", "/enrollment/passkey/begin", "/enrollment/passkey/finish", "/enrollment/totp/confirm", "/factor?rotate=1"},
+		"email":    {"/password/reset/request", "/email/verify", "/password/reset/request?rotate=1", "/email/verify?rotate=2", "/email/verify?rotate=3", "/password/reset/request?rotate=4"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			handler := authQuotaHandler(t)
+			for index, path := range paths {
+				response := httptest.NewRecorder()
+
+				handler.ServeHTTP(
+					response,
+					httptest.NewRequest(http.MethodPost, "/api/v1/auth"+path, nil),
+				)
+				want := http.StatusNoContent
+				if index == 5 {
+					want = http.StatusTooManyRequests
+				}
+
+				if response.Code != want {
+					t.Fatalf("attempt%d %s: status%d want%d", index+1, path, response.Code, want)
+				}
+			}
+		})
+	}
+}

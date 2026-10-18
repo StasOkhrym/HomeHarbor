@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	controlroutes "github.com/StasOkhrym/homeharbor/internal/control/routes"
 )
 
@@ -25,6 +26,9 @@ func (s *Handler) adminView(page string) http.HandlerFunc {
 func (s *Handler) loadAdminPage(r *http.Request, page string) (Page, int) {
 	model := NewPage(page, csrfFormToken(r), r.URL.Query().Get("notice"))
 	model.InvitesReady = s.invites != nil
+	principal, _ := identity.PrincipalFromContext(r.Context())
+	model.ManageAccounts = principal.CanManageAccounts() &&
+		principal.AccountID == identity.OwnerAccountID
 	ctx := r.Context()
 	switch page {
 	case "overview":
@@ -41,6 +45,7 @@ func (s *Handler) loadAdminPage(r *http.Request, page string) (Page, int) {
 		if !model.Devices.Ready {
 			return model, http.StatusServiceUnavailable
 		}
+
 		s.loadDeviceDetail(r.PathValue("id"), &model)
 		if r.PathValue("id") != "" && model.Device == nil {
 			model.Error = "Device not found"
@@ -74,11 +79,15 @@ func (s *Handler) loadAdminPage(r *http.Request, page string) (Page, int) {
 	case "activity":
 		var status int
 		model.Activity, status = LoadActivity(ctx, s.audit, r.URL.Query())
+
 		return model, status
+	case "administrators", "mail":
+		return model, s.loadOwnerSettings(r, &model)
 	case "security":
 		s.loadSignedReadiness(ctx, &model)
 		return model, s.loadAccountSecurity(r, &model)
 	}
+
 	return model, http.StatusOK
 }
 

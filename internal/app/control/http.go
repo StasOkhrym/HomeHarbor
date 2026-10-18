@@ -74,6 +74,7 @@ func buildHTTP(
 			if err != nil {
 				return false, err
 			}
+
 			return device.Status == devices.StatusActive, nil
 		},
 	)
@@ -89,14 +90,18 @@ func buildHTTP(
 		if err != nil {
 			return nil, nil, nil, errors.Join(errors.New("parse trusted proxy CIDR"), err)
 		}
+
 		trustedProxyCIDRs = append(trustedProxyCIDRs, prefix)
 	}
+
 	var signedSnapshots *controlsnapshots.Service
 	var mailCodec *notifications.Codec
 	if mail != nil {
 		mailCodec = mail.codec
 	}
+
 	identityStore := workflowstorage.NewIdentityWithNotifications(pool, mailCodec, time.Now)
+
 	sessionStore, err := identityredis.NewSessions(
 		redisClient,
 		"homeharbor:"+cfg.Networking.NetworkID,
@@ -106,6 +111,7 @@ func buildHTTP(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	identityService := identity.NewService(
 		identityStore,
 		sessionStore,
@@ -118,6 +124,7 @@ func buildHTTP(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	proofs, err := newPasswordProofStores(
 		redisClient,
 		"homeharbor:"+cfg.Networking.NetworkID,
@@ -127,6 +134,7 @@ func buildHTTP(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	loginService, err := identity.NewLoginService(
 		identity.LoginConfig{SessionTTL: cfg.Auth.SessionDuration()},
 		identityStore,
@@ -139,6 +147,7 @@ func buildHTTP(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	passkeyService, err := identity.NewPasskeyService(identity.PasskeyConfig{
 		RPID:          cfg.Auth.RPID,
 		RPOrigin:      cfg.Auth.RPOrigin,
@@ -148,6 +157,7 @@ func buildHTTP(
 	if err != nil {
 		return nil, nil, nil, errors.Join(errors.New("configure passkeys"), err)
 	}
+
 	mfaService, err := identity.NewMFAService(
 		identity.MFAConfig{EncryptionKey: []byte(cfg.Auth.CeremonyEncryptionKey)},
 		identityStore,
@@ -159,6 +169,7 @@ func buildHTTP(
 	if err != nil {
 		return nil, nil, nil, errors.Join(errors.New("configure account security"), err)
 	}
+
 	accountMail, err := workflows.NewAccountMail(
 		workflowstorage.NewAccountMailUnitOfWork(pool),
 		identityStore,
@@ -170,6 +181,7 @@ func buildHTTP(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	enrollment, err := identity.NewEnrollmentService(
 		identityStore,
 		proofs.enrollment,
@@ -181,6 +193,7 @@ func buildHTTP(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
 	auth, err := webauth.NewBrowserAuth(webauth.BrowserAuthConfig{
 		Accounts: identityStore, PasswordLogin: loginService, Factors: mfaService,
 		Mail: accountMail, Enrollment: enrollment, EmailEnabled: cfg.SMTP.Enabled,
@@ -245,20 +258,25 @@ func buildHTTP(
 				if err := auditDispatcher.Ready(readinessCtx); err != nil {
 					return err
 				}
+
 				if err := redisClient.Ping(readinessCtx).Err(); err != nil {
 					return errors.New("redis security state unavailable")
 				}
+
 				if err := pool.Ping(readinessCtx); err != nil {
 					return err
 				}
+
 				return migrations.Ready(readinessCtx, pool)
 			},
 		},
 	}
+
 	relayTTL, err := cfg.RelayDuration()
 	if err != nil {
 		return nil, nil, nil, errors.Join(errors.New("configure relay sessions"), err)
 	}
+
 	deps.Relay = httpapi.RelayDependencies{
 		Issuer: relay.TicketIssuer{Key: []byte(cfg.Relay.TicketKey)},
 		URL:    cfg.Relay.PublicURL,
@@ -275,6 +293,7 @@ func buildHTTP(
 				"networking.network_id is required when invite verification is enabled",
 			)
 		}
+
 		signedSnapshots = controlsnapshots.NewService(
 			snapshotsstorage.New(pool),
 			rootPublic,
@@ -324,6 +343,7 @@ func buildHTTP(
 			)
 		}
 	}
+
 	// Construct one coordination handler after all security dependencies are
 	// known. The same instance owns live snapshot broadcasts and WebSocket
 	// connections; creating a temporary handler earlier would silently strand
@@ -348,6 +368,7 @@ func buildHTTP(
 				if err != nil {
 					return false, err
 				}
+
 				return authorizeTelemetryPeer(
 					ctx,
 					signedSnapshots,
@@ -360,15 +381,20 @@ func buildHTTP(
 			time.Now,
 		)
 	}
+
 	if signedSnapshots != nil {
 		deps.Resources.SnapshotBroadcaster = coordinationHandler
 	}
+
 	deps.Resources.InvalidateDevice = coordinationHandler.InvalidateDevice
 	deps.Coordination = coordinationHandler
 	deps.SnapshotHistory = http.HandlerFunc(coordinationHandler.ServeHistory)
 	deps.Relay.PeerAuthorizer = peerAuthorization
 	deps.Browser.Admin = webadmin.NewHandler(webadmin.Dependencies{
-		AccountSecurity:    mfaService,
+		Accounts:        identityStore,
+		AccountSecurity: mfaService,
+		Administrators:  workflows.NewAccountAdministration(identityStore),
+		MailSettings:    accountMail, EmailEnabled: cfg.SMTP.Enabled,
 		Devices:            deps.Resources.Devices,
 		Routes:             deps.Resources.Routes,
 		Services:           deps.Resources.Services,
@@ -383,10 +409,12 @@ func buildHTTP(
 		InvalidateDevice:   deps.Resources.InvalidateDevice,
 		Logger:             logger,
 	}).Routes()
+
 	httpServer, err := httpapi.NewServer(deps)
 	if err != nil {
 		return nil, nil, nil, errors.Join(errors.New("configure HTTP dependencies"), err)
 	}
+
 	return httpServer, coordinationHandler, auditDispatcher, nil
 }
 

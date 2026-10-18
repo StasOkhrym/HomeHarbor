@@ -9,10 +9,13 @@ import (
 
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
+	"github.com/StasOkhrym/homeharbor/internal/control/workflows"
 	"github.com/StasOkhrym/homeharbor/internal/platform/httpresponse"
 )
 
 type MailActions interface {
+	SMTPStatus(context.Context, identity.Principal) (workflows.MailStatus, error)
+	SendSMTPTest(context.Context, identity.Principal) error
 	RequestPasswordReset(context.Context, string) error
 	RequestEmailVerification(context.Context, identity.Principal) error
 	ResetPassword(context.Context, string, string) (identity.AccountSubject, error)
@@ -249,6 +252,7 @@ func (a *BrowserAuth) registerAccountMailRoutes(router chi.Router) {
 				next.ServeHTTP(w, r)
 			})
 		})
+		a.registerSMTPSettingsRoutes(owner)
 		owner.Post("/admins/invite", func(w http.ResponseWriter, r *http.Request) {
 			var input struct {
 				Email string `json:"email"`
@@ -324,4 +328,41 @@ func (a *BrowserAuth) auditAccount(
 	); err != nil {
 		a.logger.ErrorContext(ctx, "account audit unavailable")
 	}
+}
+
+// These routes inherit both normal account admission and the owner-only group.
+func (a *BrowserAuth) registerSMTPSettingsRoutes(owner chi.Router) {
+	owner.Get("/mail/status", func(w http.ResponseWriter, r *http.Request) {
+		principal, _ := identity.PrincipalFromContext(r.Context())
+		state, err := a.mail.SMTPStatus(r.Context(), principal)
+		if err != nil {
+			a.writeMailError(w, err)
+			return
+		}
+
+		httpresponse.WriteJSON(w, http.StatusOK, state)
+	})
+	owner.Post("/mail/test", func(w http.ResponseWriter, r *http.Request) {
+		var input struct{}
+		if !httpresponse.DecodeJSON(w, r, &input) {
+			return
+		}
+
+		principal, _ := identity.PrincipalFromContext(r.Context())
+		ctx := principalAuditContext(r.Context(), principal)
+		err := a.mail.SendSMTPTest(ctx, principal)
+		a.auditAccount(
+			ctx,
+			"admin.smtp_test_requested",
+			identity.AccountSubject{ID: principal.AccountID, Email: principal.Email},
+			err,
+		)
+		if err != nil {
+			a.writeMailError(w, err)
+			return
+		}
+
+		// Asynchronous enqueue is not an SMTP/inbox delivery acknowledgement.
+		httpresponse.WriteJSON(w, http.StatusAccepted, map[string]string{"next": "queued"})
+	})
 }
