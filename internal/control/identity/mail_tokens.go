@@ -14,7 +14,12 @@ const (
 	MailPasswordReset     MailPurpose = "password_reset"
 )
 
-var ErrMailRateLimited = errors.New("account email request already pending")
+var (
+	ErrMailRateLimited    = errors.New("account email request already pending")
+	ErrInvitationConflict = errors.New(
+		"administrator account cannot be invited in its current state",
+	)
+)
 
 // MailToken contains only a token hash. Its email, account epoch and purpose
 // bind consumption to the authority that requested it; it is never a session.

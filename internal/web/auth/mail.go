@@ -195,6 +195,12 @@ func (a *BrowserAuth) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 
 func (a *BrowserAuth) writeMailError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, identity.ErrInvitationConflict):
+		httpresponse.WriteError(
+			w,
+			http.StatusConflict,
+			"This account cannot be invited right now. Refresh the administrator list.",
+		)
 	case errors.Is(err, identity.ErrInvalidCredential):
 		httpresponse.WriteError(w, http.StatusUnauthorized, "invalid or expired account proof")
 	case errors.Is(err, identity.ErrRecentAuthentication):
@@ -219,6 +225,7 @@ func (a *BrowserAuth) registerAccountMailRoutes(router chi.Router) {
 		if !a.requireMail(w) {
 			return
 		}
+
 		principal, _ := identity.PrincipalFromContext(r.Context())
 		ctx := principalAuditContext(r.Context(), principal)
 		err := a.mail.RequestEmailVerification(ctx, principal)
@@ -232,6 +239,7 @@ func (a *BrowserAuth) registerAccountMailRoutes(router chi.Router) {
 			a.writeMailError(w, err)
 			return
 		}
+
 		w.WriteHeader(http.StatusNoContent)
 	})
 	router.Group(func(owner chi.Router) {
@@ -249,6 +257,7 @@ func (a *BrowserAuth) registerAccountMailRoutes(router chi.Router) {
 				if !a.requireMail(w) {
 					return
 				}
+
 				next.ServeHTTP(w, r)
 			})
 		})
@@ -260,14 +269,22 @@ func (a *BrowserAuth) registerAccountMailRoutes(router chi.Router) {
 			if !httpresponse.DecodeJSON(w, r, &input) {
 				return
 			}
+
+			email, err := identity.CanonicalEmail(input.Email)
+			if err != nil {
+				httpresponse.WriteError(w, http.StatusBadRequest, "use a valid email address")
+				return
+			}
+
 			principal, _ := identity.PrincipalFromContext(r.Context())
 			ctx := principalAuditContext(r.Context(), principal)
-			subject, err := a.mail.InviteAdmin(ctx, principal, input.Email)
+			subject, err := a.mail.InviteAdmin(ctx, principal, email)
 			a.auditAccount(ctx, "admin.invited", subject, err)
 			if err != nil {
 				a.writeMailError(w, err)
 				return
 			}
+
 			w.WriteHeader(http.StatusCreated)
 		})
 		owner.Post("/admins/{accountID}/revoke", func(w http.ResponseWriter, r *http.Request) {
@@ -279,6 +296,7 @@ func (a *BrowserAuth) registerAccountMailRoutes(router chi.Router) {
 				a.writeMailError(w, err)
 				return
 			}
+
 			w.WriteHeader(http.StatusNoContent)
 		})
 	})
@@ -308,18 +326,23 @@ func (a *BrowserAuth) auditAccount(
 	if a.auditor == nil {
 		return
 	}
+
 	recorder, ok := a.auditor.(AccountAuthAuditor)
 	if !ok {
 		a.logger.WarnContext(ctx, "account audit capability unavailable")
 		return
 	}
+
 	facts := audit.FromContext(ctx)
 	switch {
 	case errors.Is(err, identity.ErrInvalidCredential):
 		facts.Reason = "invalid_proof"
 	case errors.Is(err, identity.ErrMailRateLimited):
 		facts.Reason = "rate_limited"
+	case errors.Is(err, identity.ErrInvitationConflict):
+		facts.Reason = "account_conflict"
 	}
+
 	if err := recorder.RecordAccount(
 		audit.WithContext(ctx, facts),
 		action,

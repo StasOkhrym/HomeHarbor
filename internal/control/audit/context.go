@@ -41,17 +41,21 @@ func (c Context) Safe() Context {
 	} else if !PublicText(c.ActorName, 128) {
 		c.ActorName = ""
 	}
+
 	if ip, err := netip.ParseAddr(c.SourceIP); err == nil && ip.Zone() == "" {
 		c.SourceIP = ip.Unmap().String()
 	} else {
 		c.SourceIP = ""
 	}
+
 	if !oneOf(c.Browser, "Safari", "Chrome", "Firefox", "Edge", "Other") {
 		c.Browser = ""
 	}
+
 	if !Platform(c.Platform) {
 		c.Platform = ""
 	}
+
 	if !oneOf(
 		c.Authentication,
 		"passkey",
@@ -64,6 +68,7 @@ func (c Context) Safe() Context {
 	) {
 		c.Authentication = ""
 	}
+
 	if !oneOf(
 		c.Reason,
 		"invalid_credentials",
@@ -71,13 +76,16 @@ func (c Context) Safe() Context {
 		"revoked",
 		"rate_limited",
 		"invalid_proof",
+		"account_conflict",
 		"signed_out",
 	) {
 		c.Reason = ""
 	}
+
 	if !safeIdentifier(c.CorrelationID) {
 		c.CorrelationID = ""
 	}
+
 	return c
 }
 

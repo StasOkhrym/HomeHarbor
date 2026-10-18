@@ -448,3 +448,91 @@ func TestPostgresAccountMailResetRollsBackWhenNoticeQueueRejects(t *testing.T) {
 		t.Fatal("aborted reset burned the one-use token", err)
 	}
 }
+
+func TestPostgresInvitationConflictPreservesActiveAndRevokedAccounts(t *testing.T) {
+	flow, store, pool, _, owner, _ := accountMailFixture(t)
+
+	subject, err := flow.InviteAdmin(t.Context(), owner, "existing@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := pool.Exec(
+		t.Context(),
+		`UPDATE admin_accounts SET status='active',password_hash=(SELECT password_hash FROM admin_accounts WHERE account_id=$2),email_verified_at=now() WHERE account_id=$1`,
+		subject.ID,
+		owner.AccountID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, status := range []identity.AccountStatus{identity.AccountActive, identity.AccountRevoked} {
+		before, err := store.Account(t.Context(), subject.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if before.Status != status {
+			t.Fatal("unexpected fixture account state", before.Status)
+		}
+
+		if _, err := flow.InviteAdmin(
+			t.Context(),
+			owner,
+			"existing@example.test",
+		); !errors.Is(
+			err,
+			identity.ErrInvitationConflict,
+		) {
+			t.Fatal("account-state conflict misclassified as authentication", err)
+		}
+
+		after, err := store.Account(t.Context(), subject.ID)
+
+		if err != nil || after.Status != before.Status || after.AuthVersion != before.AuthVersion {
+			t.Fatal("conflicting invitation changed account", err)
+		}
+
+		candidate := before
+		candidate.AuthVersion++
+		candidate.Status = identity.AccountInvited
+		candidate.PasswordHash = ""
+		candidate.EmailVerifiedAt = nil
+		scope := identity.AccountScope{
+			AccountID:   owner.AccountID,
+			AuthVersion: owner.AuthVersion,
+			Purpose:     owner.Purpose,
+		}
+
+		if err := store.PrepareAdminInvitation(
+			t.Context(),
+			scope,
+			candidate,
+		); !errors.Is(
+			err,
+			identity.ErrInvitationConflict,
+		) {
+			t.Fatal("SQL invitation conflict misclassified", err)
+		}
+
+		candidate.ID = "conflicting-new-account-id"
+		candidate.AuthVersion = 1
+
+		if err := store.PrepareAdminInvitation(
+			t.Context(),
+			scope,
+			candidate,
+		); !errors.Is(
+			err,
+			identity.ErrInvitationConflict,
+		) {
+			t.Fatal("unique account conflict misclassified", err)
+		}
+
+		if status == identity.AccountActive {
+			if _, err := flow.RevokeAdmin(t.Context(), owner, subject.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}

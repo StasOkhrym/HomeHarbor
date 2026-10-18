@@ -28,14 +28,17 @@ func (s *Repository) PrepareAdminInvitation(
 		len(candidate.UserHandle) > 64 {
 		return identity.ErrInvalidCredential
 	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
 	if err := lockOwner(ctx, tx, owner); err != nil {
 		return err
 	}
+
 	current, err := readAccountRow(
 		tx.QueryRow(ctx, accountProjection+` WHERE account_id=$1 FOR UPDATE`, candidate.ID),
 	)
@@ -43,6 +46,7 @@ func (s *Repository) PrepareAdminInvitation(
 		if candidate.AuthVersion != 1 {
 			return identity.ErrInvalidCredential
 		}
+
 		_, err = tx.Exec(
 			ctx,
 			`INSERT INTO admin_accounts(account_id,email,role,status,auth_version,user_handle,created_at)VALUES($1,$2,'admin','invited',1,$3,$4)`,
@@ -57,21 +61,25 @@ func (s *Repository) PrepareAdminInvitation(
 			candidate.AuthVersion != current.AuthVersion+1 ||
 			!bytes.Equal(current.UserHandle, candidate.UserHandle) ||
 			!current.CreatedAt.Equal(candidate.CreatedAt) {
-			return identity.ErrInvalidCredential
+			return identity.ErrInvitationConflict
 		}
+
 		_, err = tx.Exec(
 			ctx,
 			`UPDATE admin_accounts SET auth_version=auth_version+1,password_hash=NULL,email_verified_at=NULL WHERE account_id=$1`,
 			candidate.ID,
 		)
 	}
+
 	if err != nil {
 		var conflict *pgconn.PgError
 		if errors.As(err, &conflict) && conflict.Code == "23505" {
-			return identity.ErrInvalidCredential
+			return identity.ErrInvitationConflict
 		}
+
 		return err
 	}
+
 	return tx.Commit(ctx)
 }
 

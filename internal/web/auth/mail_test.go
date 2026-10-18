@@ -751,3 +751,44 @@ func TestSMTPSettingsHTTPRequiresOwnerAndRejectsRecipientOverrides(t *testing.T)
 		}
 	}
 }
+
+func TestOwnerInvitationConflictDoesNotPretendSessionExpired(t *testing.T) {
+	auth, _ := mailAuthFixture(t)
+	auth.mail = mailActionsStub{failure: identity.ErrInvitationConflict}
+	sink := &accountEventSink{}
+	auth.auditor = events.NewIdentityAuditor(sink, nil)
+	owner := identity.Principal{
+		AccountID:       identity.OwnerAccountID,
+		Email:           "owner@example.test",
+		Role:            identity.RoleOwner,
+		Purpose:         identity.SessionAdmin,
+		AuthVersion:     1,
+		Method:          "totp",
+		AuthenticatedAt: time.Now(),
+	}
+
+	response := accountRequest(
+		t,
+		auth,
+		owner,
+		"/admins/invite",
+		`{"email":"existing@example.test"}`,
+	)
+
+	if response.Code != http.StatusConflict {
+		t.Fatal("account conflict requires an unnecessary new sign-in", response.Code)
+	}
+
+	event := audit.PublicEvent(sink.event)
+
+	if event.ActorID != owner.AccountID || event.Metadata["reason"] != "account_conflict" ||
+		event.Metadata["success"] != false {
+		t.Fatal("account conflict audit became invalid proof", event.Metadata)
+	}
+
+	response = accountRequest(t, auth, owner, "/admins/invite", `{"email":"invalid address"}`)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatal("invalid owner input treated as expired session", response.Code)
+	}
+}

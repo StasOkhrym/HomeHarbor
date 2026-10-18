@@ -89,11 +89,13 @@ func mailStateError(err error) error {
 		return identity.ErrMailRateLimited
 	}
 	if err == nil || errors.Is(err, identity.ErrInvalidCredential) ||
+		errors.Is(err, identity.ErrInvitationConflict) ||
 		errors.Is(err, identity.ErrMailRateLimited) ||
 		errors.Is(err, identity.ErrRecentAuthentication) ||
 		errors.Is(err, ErrMailDisabled) {
 		return err
 	}
+
 	return identity.ErrSecurityStateUnavailable
 }
 
@@ -313,10 +315,12 @@ func (s *AccountMail) InviteAdmin(
 	if s.codec == nil {
 		return identity.AccountSubject{}, ErrMailDisabled
 	}
+
 	email, err := identity.CanonicalEmail(input)
 	if err != nil {
 		return identity.AccountSubject{}, err
 	}
+
 	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
 	candidate, err := s.accounts.AccountByEmail(operation, email)
 	cancel()
@@ -326,10 +330,12 @@ func (s *AccountMail) InviteAdmin(
 		if err != nil {
 			return identity.AccountSubject{}, identity.ErrSecurityStateUnavailable
 		}
+
 		handle := make([]byte, 32)
 		if _, err := io.ReadFull(s.random, handle); err != nil {
 			return identity.AccountSubject{}, identity.ErrSecurityStateUnavailable
 		}
+
 		candidate = identity.Account{
 			ID:          id.String(),
 			Email:       email,
@@ -343,25 +349,30 @@ func (s *AccountMail) InviteAdmin(
 		return identity.AccountSubject{}, mailStateError(err)
 	default:
 		if candidate.Role != identity.RoleAdmin || candidate.Status != identity.AccountInvited {
-			return identity.AccountSubject{}, identity.ErrInvalidCredential
+			return identity.AccountSubject{}, identity.ErrInvitationConflict
 		}
+
 		candidate.AuthVersion++
 		candidate.PasswordHash = ""
 		candidate.EmailVerifiedAt = nil
 	}
+
 	token, prepared, err := s.prepareToken(candidate, identity.MailAdminInvitation)
 	if err != nil {
 		return identity.AccountSubject{}, err
 	}
+
 	err = s.within(ctx, func(ctx context.Context, tx AccountMailTransaction) error {
 		if err := tx.Accounts.PrepareAdminInvitation(ctx, owner, candidate); err != nil {
 			return err
 		}
+
 		return s.issue(ctx, tx, token, prepared)
 	})
 	if err != nil {
 		return identity.AccountSubject{}, err
 	}
+
 	return candidate.Subject(), nil
 }
 
