@@ -147,6 +147,7 @@ func TestPostgresCompletionFailureRollsBackAudit(t *testing.T) {
 func TestPostgresTransientRetryPersisted(t *testing.T) {
 	pool := deliveryDB(t, 1)
 	ctx := context.Background()
+
 	_, err := pool.Exec(
 		ctx,
 		`CREATE FUNCTION reject_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'secret-token-123'; END $$;
@@ -155,18 +156,23 @@ func TestPostgresTransientRetryPersisted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	d := NewDispatcher(pool, auditstorage.New(pool), nil)
+
 	if err := d.DispatchBatch(ctx); err == nil {
 		t.Fatal("audit failure ignored")
 	}
+
 	var attempts int
-	var next time.Time
+	var next, databaseNow time.Time
 	var last string
-	if err := pool.QueryRow(ctx, `SELECT attempts,next_attempt_at,last_error FROM event_outbox WHERE id=1`).
-		Scan(&attempts, &next, &last); err != nil {
+
+	if err := pool.QueryRow(ctx, `SELECT attempts,next_attempt_at,last_error,now() FROM event_outbox WHERE id=1`).
+		Scan(&attempts, &next, &last, &databaseNow); err != nil {
 		t.Fatal(err)
 	}
-	if attempts != 1 || next.Before(time.Now()) || last == "" ||
+
+	if attempts != 1 || !next.After(databaseNow) || last == "" ||
 		strings.Contains(last, "secret-token") {
 		t.Fatalf(
 			"unsafe or missing persisted retry: attempts=%d next=%v error=%q",
@@ -175,18 +181,22 @@ func TestPostgresTransientRetryPersisted(t *testing.T) {
 			last,
 		)
 	}
+
 	if err := d.Check(ctx); err == nil {
 		t.Fatal("failed audit delivery reported ready")
 	}
+
 	if _, err := pool.Exec(
 		ctx,
 		`DROP TRIGGER reject_audit ON audit_events; UPDATE event_outbox SET next_attempt_at=now() WHERE id=1`,
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := NewDispatcher(pool, auditstorage.New(pool), nil).DispatchBatch(ctx); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := d.Check(ctx); err != nil {
 		t.Fatalf("recovered delivery remains degraded: %v", err)
 	}
@@ -498,31 +508,38 @@ func TestRollbackCleanupHasDeadline(t *testing.T) {
 func TestPostgresCommitFailurePersistsRetryAndDegradesReadiness(t *testing.T) {
 	pool := deliveryDB(t, 1)
 	ctx := context.Background()
+
 	_, err := pool.Exec(ctx, `CREATE TABLE audit_action_gate(action text PRIMARY KEY);
  ALTER TABLE audit_events ADD CONSTRAINT audit_action_gate_fk
  FOREIGN KEY(action) REFERENCES audit_action_gate(action) DEFERRABLE INITIALLY DEFERRED`)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	d := NewDispatcher(pool, auditstorage.New(pool), nil)
+
 	if err := d.DispatchBatch(ctx); err == nil {
 		t.Fatal("deferred audit constraint failure ignored")
 	}
+
 	var attempts, auditCount int
 	var last string
-	var next time.Time
+	var next, databaseNow time.Time
 	var pending bool
+
 	err = pool.QueryRow(ctx, `SELECT attempts,COALESCE(last_error,''),
- COALESCE(next_attempt_at,'epoch'::timestamptz),published_at IS NULL
- FROM event_outbox WHERE id=1`).Scan(&attempts, &last, &next, &pending)
+ COALESCE(next_attempt_at,'epoch'::timestamptz),published_at IS NULL,now()
+ FROM event_outbox WHERE id=1`).Scan(&attempts, &last, &next, &pending, &databaseNow)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events`).
 		Scan(&auditCount); err != nil {
 		t.Fatal(err)
 	}
-	if attempts != 1 || last != "audit projection failed" || !next.After(time.Now()) || !pending ||
+
+	if attempts != 1 || last != "audit projection failed" || !next.After(databaseNow) || !pending ||
 		auditCount != 0 {
 		t.Fatalf(
 			"commit failure state attempts=%d last=%q next=%v pending=%v audit=%d",
@@ -533,21 +550,26 @@ func TestPostgresCommitFailurePersistsRetryAndDegradesReadiness(t *testing.T) {
 			auditCount,
 		)
 	}
+
 	if err := d.Check(ctx); err == nil {
 		t.Fatal("commit failure reported ready")
 	}
+
 	if _, err := pool.Exec(ctx, `ALTER TABLE audit_events DROP CONSTRAINT audit_action_gate_fk;
  UPDATE event_outbox SET next_attempt_at=now() WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := NewDispatcher(pool, auditstorage.New(pool), nil).DispatchBatch(ctx); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE event_id='outbox:1'`).
 		Scan(&auditCount); err != nil ||
 		auditCount != 1 {
 		t.Fatalf("retry audit rows=%d err=%v", auditCount, err)
 	}
+
 	if err := d.Check(ctx); err != nil {
 		t.Fatalf("recovered commit failure reported unready: %v", err)
 	}
@@ -556,6 +578,7 @@ func TestPostgresCommitFailurePersistsRetryAndDegradesReadiness(t *testing.T) {
 func TestPostgresQuarantineCommitFailurePersistsRetry(t *testing.T) {
 	pool := deliveryDB(t, 1)
 	ctx := context.Background()
+
 	_, err := pool.Exec(
 		ctx,
 		`UPDATE event_outbox SET payload='{"schema_version":99,"event_id":"poison"}' WHERE id=1;
@@ -570,22 +593,27 @@ func TestPostgresQuarantineCommitFailurePersistsRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	d := NewDispatcher(pool, auditstorage.New(pool), nil)
+
 	if err := d.DispatchBatch(ctx); err == nil {
 		t.Fatal("quarantine commit failure ignored")
 	}
+
 	var attempts int
 	var last string
-	var next time.Time
+	var next, databaseNow time.Time
 	var quarantined bool
+
 	err = pool.QueryRow(ctx, `SELECT attempts,COALESCE(last_error,''),
- COALESCE(next_attempt_at,'epoch'::timestamptz),quarantined_at IS NOT NULL
- FROM event_outbox WHERE id=1`).Scan(&attempts, &last, &next, &quarantined)
+ COALESCE(next_attempt_at,'epoch'::timestamptz),quarantined_at IS NOT NULL,now()
+ FROM event_outbox WHERE id=1`).Scan(&attempts, &last, &next, &quarantined, &databaseNow)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if attempts != 1 || last == "" || strings.Contains(last, "sensitive-marker") ||
-		!next.After(time.Now()) ||
+		!next.After(databaseNow) ||
 		quarantined {
 		t.Fatalf(
 			"quarantine commit failure attempts=%d last=%q next=%v quarantined=%v",
@@ -595,16 +623,20 @@ func TestPostgresQuarantineCommitFailurePersistsRetry(t *testing.T) {
 			quarantined,
 		)
 	}
+
 	if err := d.Check(ctx); err == nil {
 		t.Fatal("failed quarantine reported ready")
 	}
+
 	if _, err := pool.Exec(ctx, `DROP TRIGGER reject_quarantine_commit ON event_outbox;
  UPDATE event_outbox SET next_attempt_at=now() WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := d.DispatchBatch(ctx); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := pool.QueryRow(ctx, `SELECT quarantined_at IS NOT NULL FROM event_outbox WHERE id=1`).
 		Scan(&quarantined); err != nil ||
 		!quarantined {
