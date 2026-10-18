@@ -28,6 +28,7 @@ func Actions() []ActionOption {
 		{"admin.account_activated", "Administrator account activated", "administrators"},
 		{"admin.revoked", "Administrator access revoked", "administrators"},
 		{"admin.smtp_test_requested", "Email delivery test requested", "administrators"},
+		{"admin.sessions_revoked", "All administrator sessions ended", "security"},
 		{"admin.logout", "Administrator sign-out", "security"},
 		{"admin.auth", "Administrator authentication check", "security"},
 		{"device.enrolled", "Device registered", "devices"},

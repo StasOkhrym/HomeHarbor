@@ -54,9 +54,11 @@ func (s *NotifyingIdentity) change(
 ) error {
 	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+
 	if s.codec == nil {
 		return securityMutationError(mutate(operation, s.Repository))
 	}
+
 	tx, err := s.pool.Begin(operation)
 	if err != nil {
 		return identity.ErrSecurityStateUnavailable
@@ -64,21 +66,37 @@ func (s *NotifyingIdentity) change(
 	defer func() {
 		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer stop()
+
 		_ = tx.Rollback(cleanup)
 	}()
+
 	accounts := identitypg.Bind(tx)
 	if err := mutate(operation, accounts); err != nil {
 		return securityMutationError(err)
 	}
+
 	account, err := accounts.Account(operation, scope.AccountID)
 	if err != nil {
 		return identity.ErrSecurityStateUnavailable
 	}
+
+	deliveries := notificationpg.Bind(tx)
+	if account.AuthVersion != scope.AuthVersion {
+		// Epoch changes fence these proofs. Scrub queued obsolete links in the
+		// same commit while preserving security notices and other accounts.
+		for _, kind := range []notifications.Kind{notifications.AdminInvitation, notifications.EmailVerification, notifications.PasswordReset} {
+			if err := deliveries.CancelPending(operation, account.ID, kind); err != nil {
+				return identity.ErrSecurityStateUnavailable
+			}
+		}
+	}
+
 	if account.Status == identity.AccountActive && account.EmailVerifiedAt != nil {
 		id, err := uuid.NewRandom()
 		if err != nil {
 			return identity.ErrSecurityStateUnavailable
 		}
+
 		now := s.now().UTC().Truncate(time.Microsecond)
 		prepared, err := s.codec.Prepare(
 			notifications.Intent{
@@ -93,10 +111,12 @@ func (s *NotifyingIdentity) change(
 		if err != nil {
 			return identity.ErrSecurityStateUnavailable
 		}
-		if err := notificationpg.Bind(tx).Enqueue(operation, prepared); err != nil {
+
+		if err := deliveries.Enqueue(operation, prepared); err != nil {
 			return identity.ErrSecurityStateUnavailable
 		}
 	}
+
 	return securityMutationError(tx.Commit(operation))
 }
 
@@ -148,6 +168,14 @@ func (s *NotifyingIdentity) SaveRecoveryCodes(
 	return s.change(ctx, scope, func(ctx context.Context, store *identitypg.Repository) error {
 		return store.SaveRecoveryCodes(ctx, scope, codes)
 	})
+}
+
+func (s *NotifyingIdentity) RevokeSessions(ctx context.Context, scope identity.AccountScope) error {
+	return s.change(
+		ctx,
+		scope,
+		func(ctx context.Context, store *identitypg.Repository) error { return store.RevokeSessions(ctx, scope) },
+	)
 }
 
 var (

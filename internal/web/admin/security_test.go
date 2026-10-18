@@ -98,6 +98,7 @@ func TestSecurityShowsLiveEmailConfirmationAndCurrentSession(t *testing.T) {
 			PasswordHash: "private-hash",
 		},
 	}
+
 	handler := NewHandler(
 		Dependencies{
 			AccountSecurity: &personalFactorReader{},
@@ -106,38 +107,51 @@ func TestSecurityShowsLiveEmailConfirmationAndCurrentSession(t *testing.T) {
 		},
 	).Routes()
 	response := httptest.NewRecorder()
+
 	handler.ServeHTTP(response, settingsPageRequest("/security", identity.RoleOwner))
+
 	if response.Code != http.StatusOK {
 		t.Fatal("current account security unavailable", response.Code)
 	}
-	for _, label := range []string{"Email not confirmed", "Send confirmation email", "Current session", "Password + authenticator"} {
+
+	for _, label := range []string{"Email not confirmed", "Send confirmation email", "Current session", "Password + authenticator", "Sign out all devices"} {
 		if !strings.Contains(html.UnescapeString(response.Body.String()), label) {
 			t.Fatal("missing personal security state", label)
 		}
 	}
+
 	if strings.Contains(response.Body.String(), "private-hash") {
 		t.Fatal("account secret projected into security page")
 	}
+
 	now := time.Now()
 	reader.account.EmailVerifiedAt = &now
 	response = httptest.NewRecorder()
+
 	handler.ServeHTTP(response, settingsPageRequest("/security", identity.RoleOwner))
+
 	if !strings.Contains(response.Body.String(), "Email confirmed") ||
 		strings.Contains(response.Body.String(), "Send confirmation email") {
 		t.Fatal("confirmed email still offers confirmation")
 	}
+
 	reader.err = errors.New("PRIVATE_ACCOUNT_READ_ERROR")
 	response = httptest.NewRecorder()
+
 	handler.ServeHTTP(response, settingsPageRequest("/security", identity.RoleOwner))
+
 	if response.Code != http.StatusServiceUnavailable ||
 		strings.Contains(response.Body.String(), "PRIVATE_ACCOUNT") ||
 		strings.Contains(response.Body.String(), "data-security-action=") {
 		t.Fatal("failed account read remained writable", response.Code)
 	}
+
 	reader.err = nil
 	reader.account.AuthVersion++
 	response = httptest.NewRecorder()
+
 	handler.ServeHTTP(response, settingsPageRequest("/security", identity.RoleOwner))
+
 	if response.Code != http.StatusUnauthorized ||
 		strings.Contains(response.Body.String(), "data-security-action=") {
 		t.Fatal("stale account epoch showed security controls", response.Code)

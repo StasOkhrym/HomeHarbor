@@ -29,6 +29,7 @@ type MFAActions interface {
 	ConfirmTOTP(context.Context, identity.Principal, string) error
 	RemoveTOTP(context.Context, identity.Principal) error
 	RegenerateRecoveryCodes(context.Context, identity.Principal) ([]string, error)
+	RevokeSessions(context.Context, identity.Principal) error
 }
 
 // AccountHandler must be mounted behind the normal admin session, Origin and
@@ -51,10 +52,25 @@ func (a *BrowserAuth) AccountHandler() http.Handler {
 				)
 				return
 			}
+
 			next.ServeHTTP(w, r)
 		})
 	})
 	a.registerAccountMailRoutes(router)
+	router.Post("/sessions/revoke-all", func(w http.ResponseWriter, r *http.Request) {
+		var input struct{}
+		if !httpresponse.DecodeJSON(w, r, &input) {
+			return
+		}
+
+		principal, _ := identity.PrincipalFromContext(r.Context())
+		a.finishFactorChange(
+			w,
+			r,
+			"admin.sessions_revoked",
+			a.factors.RevokeSessions(r.Context(), principal),
+		)
+	})
 	router.Post("/totp/begin", func(w http.ResponseWriter, r *http.Request) {
 		principal, _ := identity.PrincipalFromContext(r.Context())
 		enrollment, err := a.factors.BeginTOTP(r.Context(), principal)
@@ -62,6 +78,7 @@ func (a *BrowserAuth) AccountHandler() http.Handler {
 			a.writeAccountError(w, err)
 			return
 		}
+
 		httpresponse.WriteJSON(w, http.StatusOK, enrollment)
 	})
 	router.Post("/totp/confirm", func(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +88,7 @@ func (a *BrowserAuth) AccountHandler() http.Handler {
 		if !httpresponse.DecodeJSON(w, r, &input) {
 			return
 		}
+
 		principal, _ := identity.PrincipalFromContext(r.Context())
 		a.finishFactorChange(
 			w,
@@ -95,12 +113,14 @@ func (a *BrowserAuth) AccountHandler() http.Handler {
 		if !httpresponse.DecodeJSON(w, r, &input) {
 			return
 		}
+
 		principal, _ := identity.PrincipalFromContext(r.Context())
 		ceremony, err := a.factors.BeginPasskeyEnrollment(r.Context(), principal, input.Name)
 		if err != nil {
 			a.writeAccountError(w, err)
 			return
 		}
+
 		httpresponse.WriteJSON(w, http.StatusOK, ceremony)
 	})
 	router.Post("/passkeys/finish", func(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +131,7 @@ func (a *BrowserAuth) AccountHandler() http.Handler {
 		if !httpresponse.DecodeJSON(w, r, &input) {
 			return
 		}
+
 		principal, _ := identity.PrincipalFromContext(r.Context())
 		a.finishFactorChange(
 			w,
@@ -131,6 +152,7 @@ func (a *BrowserAuth) AccountHandler() http.Handler {
 		if !httpresponse.DecodeJSON(w, r, &input) {
 			return
 		}
+
 		principal, _ := identity.PrincipalFromContext(r.Context())
 		a.finishFactorChange(
 			w,
@@ -147,6 +169,7 @@ func (a *BrowserAuth) AccountHandler() http.Handler {
 			a.writeAccountError(w, err)
 			return
 		}
+
 		httpresponse.WriteJSON(w, http.StatusOK, map[string]any{"codes": codes})
 	})
 	return router
@@ -163,6 +186,7 @@ func (a *BrowserAuth) finishFactorChange(
 		a.writeAccountError(w, err)
 		return
 	}
+
 	// The committed account epoch invalidates all existing sessions, including
 	// this one. Redis cleanup cannot undo that security boundary.
 	if token, ok := a.sessionToken(r); ok {
@@ -170,9 +194,11 @@ func (a *BrowserAuth) finishFactorChange(
 			a.logger.WarnContext(r.Context(), "changed-factor session cleanup unavailable")
 		}
 	}
+
 	http.SetCookie(w, expiredCookie(sessionCookieName))
 	http.SetCookie(w, expiredCookie(csrfCookieName))
 	http.SetCookie(w, expiredPreauthCookie())
+	http.SetCookie(w, expiredEnrollmentCookie())
 	w.WriteHeader(http.StatusNoContent)
 }
 

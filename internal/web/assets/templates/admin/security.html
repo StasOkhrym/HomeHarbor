@@ -46,7 +46,18 @@
         {{if .Security.SessionStartedAt}}
           <p class="help">Signed in {{timeLabel .Security.SessionStartedAt}}</p>
         {{end}}
-        <p class="help">Adding or removing a verification method ends all your existing sessions.</p>
+        <p class="help">End all your administrator sessions, including this one. Pending sign-in and account email links will expire. Your password, verification methods and recovery codes stay saved.</p>
+        <form method="post"
+              action="/admin/security"
+              data-security-action="sessions/revoke-all">
+          <fieldset disabled>
+            <label class="confirmation">
+              <input type="checkbox" name="confirmed" required>
+              End all my administrator sessions
+            </label>
+            <button class="secondary" type="submit">Sign out all devices</button>
+          </fieldset>
+        </form>
       </section>
       <section class="panel">
         <div class="panel-heading">

@@ -3,12 +3,15 @@ package auth
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/StasOkhrym/homeharbor/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/events"
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	authenticator "github.com/StasOkhrym/homeharbor/internal/testutil/webauthn"
 )
@@ -345,5 +348,97 @@ func TestPersonalPasskeyHTTPCompletesPasswordBoundLogin(t *testing.T) {
 		authenticated.AuthVersion != 3 ||
 		authenticated.Method != "passkey" {
 		t.Fatal("wrong personal session", authenticated, err)
+	}
+}
+
+func TestAccountSessionRevocationIsOwnScopedAndExpiresBrowserProofs(t *testing.T) {
+	auth, store, sessions := personalAuthFixture(t, true)
+
+	principal := accountPrincipal(t, sessions)
+	sink := &accountEventSink{}
+	auth.auditor = events.NewIdentityAuditor(sink, nil)
+	request := identity.SessionRequest{
+		AccountID:   principal.AccountID,
+		AuthVersion: principal.AuthVersion,
+		Purpose:     identity.SessionAdmin,
+		Method:      "totp",
+		TTL:         time.Hour,
+	}
+
+	old, err := sessions.CreateSession(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		principal identity.Principal
+		body      string
+		status    int
+	}{
+		{principal, `{"account_id":"another-admin"}`, http.StatusBadRequest},
+		{func() identity.Principal {
+			p := principal
+			p.AuthenticatedAt = p.AuthenticatedAt.Add(-5 * time.Minute)
+
+			return p
+		}(), "{}", http.StatusForbidden},
+		{func() identity.Principal { p := principal; p.AuthVersion--; return p }(), "{}", http.StatusUnauthorized},
+		{identity.Principal{}, "{}", http.StatusUnauthorized},
+	} {
+		response := accountRequest(t, auth, tc.principal, "/sessions/revoke-all", tc.body)
+
+		if response.Code != tc.status {
+			t.Fatal("unverified revocation admitted", response.Code, tc.status)
+		}
+	}
+
+	before, err := store.Account(t.Context(), principal.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response := accountRequest(t, auth, principal, "/sessions/revoke-all", "{}")
+
+	if response.Code != http.StatusNoContent ||
+		response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("scoped session revocation unavailable", response.Code)
+	}
+
+	expired := map[string]bool{}
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Value == "" && cookie.MaxAge < 0 {
+			expired[cookie.Name] = true
+		}
+	}
+
+	for _, name := range []string{sessionCookieName, csrfCookieName, preauthCookieName, enrollmentCookieName} {
+		if !expired[name] {
+			t.Fatal("browser proof survived sign-out everywhere", name)
+		}
+	}
+
+	if _, err := sessions.ValidateSession(
+		t.Context(),
+		old.Token,
+	); !errors.Is(
+		err,
+		identity.ErrInvalidCredential,
+	) {
+		t.Fatal("old session remained authorized", err)
+	}
+
+	after, err := store.Account(t.Context(), principal.AccountID)
+
+	if err != nil || after.AuthVersion != before.AuthVersion+1 ||
+		after.PasswordHash != before.PasswordHash {
+		t.Fatal("HTTP revocation changed password", err)
+	}
+
+	event := audit.PublicEvent(sink.event)
+
+	if event.Action != "admin.sessions_revoked" || event.ActorID != principal.AccountID ||
+		event.Metadata["auth_method"] != "password_totp" ||
+		audit.ActionLabel(event.Action) == "Other activity" {
+		t.Fatal("unattributed session revocation history", event.Action)
 	}
 }

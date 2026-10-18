@@ -388,3 +388,191 @@ func TestPostgresOwnerPasswordSetupSerializesAgainstReplayAndKeepsCredential(t *
 		t.Fatal("owner setup changed existing key", err)
 	}
 }
+
+func TestPostgresRedisSessionRevocationFencesBothReplicas(t *testing.T) {
+	endpoint := os.Getenv("TEST_REDIS_URL")
+	if endpoint == "" {
+		t.Skip("TEST_REDIS_URL required for PostgreSQL/Redis authority integration")
+	}
+
+	pool := testpostgres.OpenSchema(t)
+
+	if err := migrations.Up(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+
+	other, err := pgxpool.NewWithConfig(t.Context(), pool.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(other.Close)
+
+	options, err := redisclient.ParseURL(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := redisclient.NewClient(options)
+	t.Cleanup(func() { _ = client.Close() })
+	secondClient := redisclient.NewClient(options)
+	t.Cleanup(func() { _ = secondClient.Close() })
+	prefix := "test:personal-authority:" + uuid.NewString()
+	firstSessions, err := identityredis.NewSessions(client, prefix, time.Now, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secondSessions, err := identityredis.NewSessions(secondClient, prefix, time.Now, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstStore, secondStore := New(pool), New(other)
+	first := identity.NewService(firstStore, firstSessions, firstStore, time.Now, nil)
+	second := identity.NewService(secondStore, secondSessions, secondStore, time.Now, nil)
+
+	if _, err := pool.Exec(
+		t.Context(),
+		`INSERT INTO admin_accounts(account_id,email,role,status,password_hash,user_handle)VALUES('replica-admin','a@example.test','admin','active','hash','replica-admin')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	request := identity.SessionRequest{
+		AccountID:   "replica-admin",
+		AuthVersion: 1,
+		Purpose:     identity.SessionAdmin,
+		Method:      "totp",
+		TTL:         time.Hour,
+	}
+
+	issued, err := first.CreateSession(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	remember := func(token string) {
+		hash := sha256.Sum256([]byte(token))
+		key := prefix + ":browser-session:principal:" + hex.EncodeToString(hash[:])
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+
+			if err := client.Del(ctx, key).Err(); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+
+	remember(issued.Token)
+
+	another, err := second.CreateSession(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	remember(another.Token)
+
+	if _, err := pool.Exec(
+		t.Context(),
+		`INSERT INTO admin_accounts(account_id,email,role,status,password_hash,user_handle)VALUES('unrelated-admin','other@example.test','admin','active','hash','unrelated-admin')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	otherRequest := request
+	otherRequest.AccountID = "unrelated-admin"
+
+	unrelated, err := first.CreateSession(t.Context(), otherRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	remember(unrelated.Token)
+	scope := identity.AccountScope{
+		AccountID:   request.AccountID,
+		AuthVersion: 1,
+		Purpose:     identity.SessionAdmin,
+	}
+	restricted := scope
+	restricted.Purpose = identity.SessionMigration
+
+	if err := secondStore.RevokeSessions(
+		t.Context(),
+		restricted,
+	); !errors.Is(
+		err,
+		identity.ErrInvalidCredential,
+	) {
+		t.Fatal("restricted scope revoked sessions", err)
+	}
+
+	if err := secondStore.RevokeSessions(t.Context(), scope); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, service := range []*identity.Service{first, second} {
+		for _, token := range []string{issued.Token, another.Token} {
+			if _, err := service.ValidateSession(
+				t.Context(),
+				token,
+			); !errors.Is(
+				err,
+				identity.ErrInvalidCredential,
+			) {
+				t.Fatal("another replica admitted revoked session", err)
+			}
+		}
+	}
+
+	hash := sha256.Sum256([]byte(issued.Token))
+
+	if _, err := firstSessions.Session(t.Context(), hash); err != nil {
+		t.Fatal("revocation unexpectedly depended on deleting Redis records", err)
+	}
+
+	if _, err := second.ValidateSession(t.Context(), unrelated.Token); err != nil {
+		t.Fatal("another account's session revoked", err)
+	}
+
+	if err := firstStore.RevokeSessions(
+		t.Context(),
+		scope,
+	); !errors.Is(
+		err,
+		identity.ErrInvalidCredential,
+	) {
+		t.Fatal("old scope repeated session revocation", err)
+	}
+
+	if _, err := first.CreateSession(
+		t.Context(),
+		request,
+	); !errors.Is(
+		err,
+		identity.ErrInvalidCredential,
+	) {
+		t.Fatal("stale proof recreated a session", err)
+	}
+
+	account, err := firstStore.Account(t.Context(), request.AccountID)
+
+	if err != nil || account.AuthVersion != 2 || account.Status != identity.AccountActive ||
+		account.PasswordHash != "hash" {
+		t.Fatal("revocation changed account authentication", err)
+	}
+
+	request.AuthVersion = 2
+
+	fresh, err := first.CreateSession(t.Context(), request)
+	if err != nil {
+		t.Fatal("fresh current proof cannot create session", err)
+	}
+
+	remember(fresh.Token)
+
+	if _, err := second.ValidateSession(t.Context(), fresh.Token); err != nil {
+		t.Fatal("fresh session unavailable across replicas", err)
+	}
+}

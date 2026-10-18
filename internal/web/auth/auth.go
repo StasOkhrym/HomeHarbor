@@ -509,6 +509,7 @@ func (a *BrowserAuth) logout(w http.ResponseWriter, r *http.Request) {
 		httpresponse.WriteError(w, http.StatusForbidden, "invalid CSRF token")
 		return
 	}
+
 	// Audit only the account established by live session authority. Lookup failure
 	// must not prevent an otherwise valid CSRF-protected revocation request.
 	if principal, err := a.sessions.ValidateSession(
@@ -518,17 +519,22 @@ func (a *BrowserAuth) logout(w http.ResponseWriter, r *http.Request) {
 		principal.AccountID != "" {
 		r = r.WithContext(principalAuditContext(r.Context(), principal))
 	}
+
 	if err := a.sessions.RevokeSession(r.Context(), token); err != nil {
 		if errors.Is(err, identity.ErrSecurityStateUnavailable) {
 			httpresponse.WriteError(w, http.StatusServiceUnavailable, "security state unavailable")
 			return
 		}
+
 		a.audit(r.Context(), "admin.logout", false)
 		httpresponse.WriteError(w, http.StatusUnauthorized, "invalid session")
 		return
 	}
+
 	http.SetCookie(w, expiredCookie(sessionCookieName))
 	http.SetCookie(w, expiredCookie(csrfCookieName))
+	http.SetCookie(w, expiredPreauthCookie())
+	http.SetCookie(w, expiredEnrollmentCookie())
 	a.audit(r.Context(), "admin.logout", true)
 	w.WriteHeader(http.StatusNoContent)
 }

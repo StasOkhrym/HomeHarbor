@@ -40,6 +40,7 @@ type TOTPEnrollment struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 type MFARepository interface {
+	RevokeSessions(context.Context, AccountScope) error
 	AccountReader
 	TOTP(context.Context, string) (TOTPRecord, error)
 	SavePendingTOTP(context.Context, AccountScope, TOTPRecord) error
