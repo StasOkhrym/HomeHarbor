@@ -140,3 +140,42 @@ func (r *Repository) Finish(
 
 	return nil
 }
+
+// CancelPending scrubs obsolete credentials and fences any outstanding worker.
+// A message already accepted by SMTP cannot be recalled; its token is separately
+// invalidated in the same account transaction. An empty kind cancels all kinds.
+func (r *Repository) CancelPending(
+	ctx context.Context,
+	accountID string,
+	kind notifications.Kind,
+) error {
+	if r.db == nil {
+		return notifications.ErrUnavailable
+	}
+	if accountID == "" {
+		return notifications.ErrInvalidPayload
+	}
+
+	switch kind {
+	case "",
+		notifications.AdminInvitation,
+		notifications.EmailVerification,
+		notifications.PasswordReset,
+		notifications.SecurityNotice,
+		notifications.SMTPTest:
+	default:
+		return notifications.ErrInvalidPayload
+	}
+
+	_, err := r.db.Exec(
+		ctx,
+		`UPDATE notification_deliveries SET status='cancelled',private_payload=NULL,next_attempt_at=NULL,lease_token=NULL,leased_until=NULL,completed_at=now(),last_error_code='cancelled' WHERE account_id=$1 AND status='pending' AND ($2::text='' OR kind=$2)`,
+		accountID,
+		string(kind),
+	)
+	if err != nil {
+		return notifications.ErrUnavailable
+	}
+
+	return nil
+}

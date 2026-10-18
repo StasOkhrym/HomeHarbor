@@ -12,9 +12,18 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 )
 
-type Repository struct{ pool *pgxpool.Pool }
+type database interface {
+	Begin(context.Context) (pgx.Tx, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+type Repository struct{ pool database }
 
 func New(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
+
+// Bind keeps nested operations inside a caller-owned transaction. pgx creates
+// savepoints for Begin; committing them never commits the outer transaction.
+func Bind(tx pgx.Tx) *Repository { return &Repository{pool: tx} }
 
 func (s *Repository) SaveRecoveryCodes(
 	ctx context.Context,

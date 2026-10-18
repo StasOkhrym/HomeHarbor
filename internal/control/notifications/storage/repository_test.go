@@ -371,3 +371,40 @@ func TestPostgresMailAbandonedFinalAttemptBecomesTerminal(t *testing.T) {
 		t.Fatal("abandoned last attempt remained pending with private payload", err)
 	}
 }
+
+func TestPostgresMailCancellationFencesClaimedDelivery(t *testing.T) {
+	store, replica, pool, codec, intent := mailSQLFixture(t)
+
+	if err := store.Enqueue(t.Context(), prepare(t, codec, intent)); err != nil {
+		t.Fatal(err)
+	}
+
+	delivery, found, err := store.Claim(t.Context())
+
+	if err != nil || !found {
+		t.Fatal(err)
+	}
+
+	if err := replica.CancelPending(t.Context(), intent.AccountID, intent.Kind); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Finish(
+		t.Context(),
+		delivery,
+		notifications.DeliverySent,
+	); !errors.Is(
+		err,
+		notifications.ErrLeaseLost,
+	) {
+		t.Fatal("obsolete worker acknowledged a cancelled delivery", err)
+	}
+
+	var private bool
+
+	if err := pool.QueryRow(t.Context(), `SELECT status='cancelled' AND private_payload IS NULL AND lease_token IS NULL AND completed_at IS NOT NULL FROM notification_deliveries WHERE id=$1`, intent.ID).
+		Scan(&private); err != nil ||
+		!private {
+		t.Fatal("cancelled secret payload retained", err)
+	}
+}
