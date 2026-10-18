@@ -20,9 +20,9 @@ import (
 	"github.com/StasOkhrym/homeharbor/internal/control/httpapi"
 	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 	identityredis "github.com/StasOkhrym/homeharbor/internal/control/identity/redis"
-	identitystorage "github.com/StasOkhrym/homeharbor/internal/control/identity/storage"
 	controlinvites "github.com/StasOkhrym/homeharbor/internal/control/invites"
 	invitesstorage "github.com/StasOkhrym/homeharbor/internal/control/invites/storage"
+	"github.com/StasOkhrym/homeharbor/internal/control/notifications"
 	"github.com/StasOkhrym/homeharbor/internal/control/policy"
 	policystorage "github.com/StasOkhrym/homeharbor/internal/control/policy/storage"
 	"github.com/StasOkhrym/homeharbor/internal/control/profiles"
@@ -49,6 +49,7 @@ func buildHTTP(
 	cfg config.Control,
 	logger *slog.Logger,
 	stores *runtimeStores,
+	mail *notificationRuntime,
 ) (*httpapi.Server, *coordination.Handler, *events.Dispatcher, error) {
 	pool, redisClient := stores.pool, stores.redis
 	securityState := redissecurity.New(redisClient, "homeharbor:"+cfg.Networking.NetworkID)
@@ -91,7 +92,11 @@ func buildHTTP(
 		trustedProxyCIDRs = append(trustedProxyCIDRs, prefix)
 	}
 	var signedSnapshots *controlsnapshots.Service
-	identityStore := identitystorage.New(pool)
+	var mailCodec *notifications.Codec
+	if mail != nil {
+		mailCodec = mail.codec
+	}
+	identityStore := workflowstorage.NewIdentityWithNotifications(pool, mailCodec, time.Now)
 	sessionStore, err := identityredis.NewSessions(
 		redisClient,
 		"homeharbor:"+cfg.Networking.NetworkID,

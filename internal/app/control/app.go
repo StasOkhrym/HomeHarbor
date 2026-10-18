@@ -79,6 +79,7 @@ func (a *App) assemble(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	a.stores = stores
 	keepStores := false
 	defer func() {
@@ -86,14 +87,22 @@ func (a *App) assemble(ctx context.Context) error {
 			stores.close()
 		}
 	}()
+
 	a.notifications, err = buildNotifications(cfg, notificationstorage.New(stores.pool), logger)
 	if err != nil {
 		return err
 	}
-	httpServer, coordinationHandler, auditDispatcher, err := buildHTTP(cfg, logger, stores)
+
+	httpServer, coordinationHandler, auditDispatcher, err := buildHTTP(
+		cfg,
+		logger,
+		stores,
+		a.notifications,
+	)
 	if err != nil {
 		return err
 	}
+
 	a.coordination = coordinationHandler
 	a.auditDispatcher = auditDispatcher
 	a.shutdownTimeout = cfg.Runtime.ShutdownTimeout
@@ -108,6 +117,7 @@ func (a *App) assemble(ctx context.Context) error {
 		MaxHeaderBytes:    64 << 10,
 	}
 	keepStores = true
+
 	return nil
 }
 
