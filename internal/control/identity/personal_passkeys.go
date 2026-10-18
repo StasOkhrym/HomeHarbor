@@ -116,19 +116,32 @@ func (s *MFAService) BeginPasskeyEnrollment(
 	if err != nil {
 		return BeginCeremony{}, err
 	}
+
+	return s.beginPasskeyEnrollment(ctx, scope, name, [32]byte{})
+}
+
+func (s *MFAService) beginPasskeyEnrollment(
+	ctx context.Context,
+	scope AccountScope,
+	name string,
+	binding [32]byte,
+) (BeginCeremony, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "Passkey"
 	}
+
 	if !utf8.ValidString(name) || utf8.RuneCountInString(name) > 80 {
 		return BeginCeremony{}, ErrInvalidCredential
 	}
+
 	for _, r := range name {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return BeginCeremony{}, ErrInvalidCredential
 		}
 	}
-	return s.passkeys.beginPersonalEnrollment(ctx, scope, name)
+
+	return s.passkeys.beginPersonalEnrollment(ctx, scope, name, binding)
 }
 
 func (s *MFAService) FinishPasskeyEnrollment(
@@ -141,7 +154,8 @@ func (s *MFAService) FinishPasskeyEnrollment(
 	if err != nil {
 		return err
 	}
-	return s.passkeys.finishPersonalEnrollment(ctx, scope, id, response)
+
+	return s.passkeys.finishPersonalEnrollment(ctx, scope, id, response, [32]byte{})
 }
 
 func (s *MFAService) BeginPasskeyLogin(
@@ -197,18 +211,22 @@ func (s *PasskeyService) personalUser(
 	if err != nil {
 		return passkeyUser{}, err
 	}
-	if scope.Purpose != SessionAdmin || !scope.Allows(account) {
+	if (scope.Purpose != SessionAdmin && scope.Purpose != SessionEnrollment) ||
+		!scope.Allows(account) {
 		return passkeyUser{}, ErrInvalidCredential
 	}
 	if len(account.UserHandle) < 1 || len(account.UserHandle) > 64 {
 		return passkeyUser{}, ErrSecurityStateUnavailable
 	}
+
 	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+
 	credentials, err := s.store.Credentials(operation, account.UserHandle)
 	if err != nil {
 		return passkeyUser{}, ErrSecurityStateUnavailable
 	}
+
 	return passkeyUser{
 		handle:      account.UserHandle,
 		name:        account.Email,
@@ -220,6 +238,7 @@ func (s *PasskeyService) beginPersonalEnrollment(
 	ctx context.Context,
 	scope AccountScope,
 	name string,
+	binding [32]byte,
 ) (BeginCeremony, error) {
 	user, err := s.personalUser(ctx, scope)
 	if err != nil {
@@ -228,6 +247,7 @@ func (s *PasskeyService) beginPersonalEnrollment(
 	if len(user.credentials) >= MaxPasskeys {
 		return BeginCeremony{}, ErrFactorLimit
 	}
+
 	options, session, err := s.webAuthn.BeginRegistration(
 		user,
 		webauthn.WithExclusions(webauthn.Credentials(user.credentials).CredentialDescriptors()),
@@ -235,10 +255,14 @@ func (s *PasskeyService) beginPersonalEnrollment(
 	if err != nil {
 		return BeginCeremony{}, ErrInvalidCredential
 	}
-	payload, err := json.Marshal(personalCeremony{Scope: scope, Name: name, Session: *session})
+
+	payload, err := json.Marshal(
+		personalCeremony{Scope: scope, Binding: binding, Name: name, Session: *session},
+	)
 	if err != nil {
 		return BeginCeremony{}, ErrSecurityStateUnavailable
 	}
+
 	return s.saveCeremonyPayload(ctx, "account.register", options, payload)
 }
 
@@ -247,28 +271,34 @@ func (s *PasskeyService) finishPersonalEnrollment(
 	scope AccountScope,
 	id string,
 	response []byte,
+	binding [32]byte,
 ) error {
 	envelope, err := s.personalCeremony(ctx, id, "account.register")
 	if err != nil {
 		return err
 	}
-	if envelope.Scope != scope || envelope.Binding != ([32]byte{}) {
+	if envelope.Scope != scope || envelope.Binding != binding {
 		return ErrInvalidCredential
 	}
+
 	user, err := s.personalUser(ctx, scope)
 	if err != nil {
 		return err
 	}
+
 	parsed, err := protocol.ParseCredentialCreationResponseBytes(response)
 	if err != nil {
 		return ErrInvalidCredential
 	}
+
 	credential, err := s.webAuthn.CreateCredential(user, envelope.Session, parsed)
 	if err != nil {
 		return ErrInvalidCredential
 	}
+
 	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+
 	return mfaStoreError(
 		s.store.SavePersonalCredential(
 			operation,
@@ -282,20 +312,27 @@ func (s *PasskeyService) beginPersonalLogin(
 	ctx context.Context,
 	factor FactorContext,
 ) (BeginCeremony, error) {
+	if factor.Purpose != SessionAdmin {
+		return BeginCeremony{}, ErrInvalidCredential
+	}
+
 	user, err := s.personalUser(ctx, factor.AccountScope)
 	if err != nil {
 		return BeginCeremony{}, err
 	}
+
 	options, session, err := s.webAuthn.BeginLogin(user)
 	if err != nil {
 		return BeginCeremony{}, ErrInvalidCredential
 	}
+
 	payload, err := json.Marshal(
 		personalCeremony{Scope: factor.AccountScope, Binding: factor.Binding, Session: *session},
 	)
 	if err != nil {
 		return BeginCeremony{}, ErrSecurityStateUnavailable
 	}
+
 	return s.saveCeremonyPayload(ctx, "account.login", options, payload)
 }
 
@@ -305,6 +342,10 @@ func (s *PasskeyService) finishPersonalLogin(
 	id string,
 	response []byte,
 ) error {
+	if factor.Purpose != SessionAdmin {
+		return ErrInvalidCredential
+	}
+
 	envelope, err := s.personalCeremony(ctx, id, "account.login")
 	if err != nil {
 		return err
@@ -312,20 +353,25 @@ func (s *PasskeyService) finishPersonalLogin(
 	if envelope.Scope != factor.AccountScope || envelope.Binding != factor.Binding {
 		return ErrInvalidCredential
 	}
+
 	user, err := s.personalUser(ctx, factor.AccountScope)
 	if err != nil {
 		return err
 	}
+
 	parsed, err := protocol.ParseCredentialRequestResponseBytes(response)
 	if err != nil {
 		return ErrInvalidCredential
 	}
+
 	credential, err := s.webAuthn.ValidateLogin(user, envelope.Session, parsed)
 	if err != nil {
 		return ErrInvalidCredential
 	}
+
 	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+
 	return mfaStoreError(
 		s.store.UpdatePersonalCredential(
 			operation,

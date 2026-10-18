@@ -30,14 +30,20 @@ func (s *Repository) SaveRecoveryCodes(
 	scope identity.AccountScope,
 	codes []identity.RecoveryCode,
 ) error {
+	if scope.Purpose != identity.SessionAdmin && scope.Purpose != identity.SessionMigration {
+		return identity.ErrInvalidCredential
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
 	if err := lockAccountScope(ctx, tx, scope); err != nil {
 		return err
 	}
+
 	if _, err = tx.Exec(
 		ctx,
 		`DELETE FROM recovery_codes WHERE account_id=$1`,
@@ -45,6 +51,7 @@ func (s *Repository) SaveRecoveryCodes(
 	); err != nil {
 		return err
 	}
+
 	for _, code := range codes {
 		if _, err = tx.Exec(
 			ctx,
@@ -56,6 +63,7 @@ func (s *Repository) SaveRecoveryCodes(
 			return err
 		}
 	}
+
 	return tx.Commit(ctx)
 }
 
@@ -269,14 +277,21 @@ func updateCredentialData(
 }
 
 func (s *Repository) ConsumeRecoveryCode(ctx context.Context, use identity.RecoveryUse) error {
+	if use.Scope.Purpose != identity.SessionAdmin &&
+		use.Scope.Purpose != identity.SessionMigration {
+		return identity.ErrInvalidCredential
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
 	if err := lockAccountScope(ctx, tx, use.Scope); err != nil {
 		return err
 	}
+
 	tag, err := tx.Exec(
 		ctx,
 		`UPDATE recovery_codes SET used_at=$3 WHERE account_id=$1 AND code_hash=$2 AND used_at IS NULL`,
@@ -290,6 +305,7 @@ func (s *Repository) ConsumeRecoveryCode(ctx context.Context, use identity.Recov
 	if tag.RowsAffected() != 1 {
 		return identity.ErrInvalidCredential
 	}
+
 	return tx.Commit(ctx)
 }
 

@@ -35,20 +35,24 @@ func (s *Repository) SavePendingTOTP(
 	scope identity.AccountScope,
 	record identity.TOTPRecord,
 ) error {
-	if scope.Purpose != identity.SessionAdmin || record.AccountID != scope.AccountID ||
+	if (scope.Purpose != identity.SessionAdmin && scope.Purpose != identity.SessionEnrollment) ||
+		record.AccountID != scope.AccountID ||
 		record.EnrollmentVersion != scope.AuthVersion ||
 		record.ConfirmedAt != nil ||
 		record.LastStep != -1 {
 		return identity.ErrInvalidCredential
 	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
 	if err := lockAccountScope(ctx, tx, scope); err != nil {
 		return err
 	}
+
 	tag, err := tx.Exec(
 		ctx,
 		`INSERT INTO admin_totp(account_id,totp_id,enrollment_auth_version,seed_ciphertext,created_at,pending_expires_at,last_used_step)VALUES($1,$2,$3,$4,$5,$6,-1) ON CONFLICT(account_id)DO UPDATE SET totp_id=EXCLUDED.totp_id,enrollment_auth_version=EXCLUDED.enrollment_auth_version,seed_ciphertext=EXCLUDED.seed_ciphertext,created_at=EXCLUDED.created_at,pending_expires_at=EXCLUDED.pending_expires_at,last_used_step=-1 WHERE admin_totp.confirmed_at IS NULL`,
@@ -65,6 +69,7 @@ func (s *Repository) SavePendingTOTP(
 	if tag.RowsAffected() != 1 {
 		return identity.ErrFactorExists
 	}
+
 	return tx.Commit(ctx)
 }
 
@@ -75,17 +80,21 @@ func (s *Repository) ConfirmTOTP(
 	step int64,
 	now time.Time,
 ) error {
-	if scope.Purpose != identity.SessionAdmin || step < 0 {
+	if (scope.Purpose != identity.SessionAdmin && scope.Purpose != identity.SessionEnrollment) ||
+		step < 0 {
 		return identity.ErrInvalidCredential
 	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
 	if err := lockAccountScope(ctx, tx, scope); err != nil {
 		return err
 	}
+
 	tag, err := tx.Exec(
 		ctx,
 		`UPDATE admin_totp SET confirmed_at=$5,pending_expires_at=NULL,last_used_step=$4 WHERE account_id=$1 AND totp_id=$2 AND enrollment_auth_version=$3 AND confirmed_at IS NULL AND created_at<=$5 AND pending_expires_at>$5 AND last_used_step<$4`,
@@ -101,9 +110,11 @@ func (s *Repository) ConfirmTOTP(
 	if tag.RowsAffected() != 1 {
 		return identity.ErrInvalidCredential
 	}
-	if err := advanceAuthVersion(ctx, tx, scope.AccountID); err != nil {
+
+	if err := completeMFAEnrollment(ctx, tx, scope); err != nil {
 		return err
 	}
+
 	return tx.Commit(ctx)
 }
 
@@ -207,3 +218,29 @@ func advanceAuthVersion(ctx context.Context, tx pgx.Tx, id string) error {
 }
 
 var _ identity.MFARepository = (*Repository)(nil)
+
+// First confirmed MFA and invited-account activation share the account lock and
+// commit. Competing setup proofs are fenced by the epoch change.
+func completeMFAEnrollment(ctx context.Context, tx pgx.Tx, scope identity.AccountScope) error {
+	if scope.Purpose == identity.SessionAdmin {
+		return advanceAuthVersion(ctx, tx, scope.AccountID)
+	}
+	if scope.Purpose != identity.SessionEnrollment {
+		return identity.ErrInvalidCredential
+	}
+
+	tag, err := tx.Exec(
+		ctx,
+		`UPDATE admin_accounts SET status='active',auth_version=auth_version+1 WHERE account_id=$1 AND auth_version=$2 AND status='invited' AND role='admin' AND email_verified_at IS NOT NULL AND password_hash IS NOT NULL`,
+		scope.AccountID,
+		scope.AuthVersion,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return identity.ErrInvalidCredential
+	}
+
+	return nil
+}

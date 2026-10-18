@@ -93,17 +93,15 @@ func lockedAccountScope(
 	tx pgx.Tx,
 	scope identity.AccountScope,
 ) (identity.Account, error) {
-	var account identity.Account
-	err := tx.QueryRow(ctx, `SELECT account_id,role,status,auth_version,user_handle FROM admin_accounts WHERE account_id=$1 FOR UPDATE`, scope.AccountID).
-		Scan(&account.ID, &account.Role, &account.Status, &account.AuthVersion, &account.UserHandle)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return identity.Account{}, identity.ErrInvalidCredential
-	}
+	account, err := readAccountRow(
+		tx.QueryRow(ctx, accountProjection+` WHERE account_id=$1 FOR UPDATE`, scope.AccountID),
+	)
 	if err != nil {
 		return identity.Account{}, err
 	}
 	if !scope.Allows(account) {
 		return identity.Account{}, identity.ErrInvalidCredential
 	}
+
 	return account, nil
 }

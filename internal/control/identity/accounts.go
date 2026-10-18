@@ -30,8 +30,9 @@ const (
 type SessionPurpose string
 
 const (
-	SessionAdmin     SessionPurpose = "admin"
-	SessionMigration SessionPurpose = "migration"
+	SessionAdmin      SessionPurpose = "admin"
+	SessionMigration  SessionPurpose = "migration"
+	SessionEnrollment SessionPurpose = "enrollment"
 )
 
 type Account struct {
@@ -172,10 +173,16 @@ func (scope AccountScope) Allows(account Account) bool {
 		scope.AuthVersion != account.AuthVersion {
 		return false
 	}
+
 	switch scope.Purpose {
 	case SessionAdmin:
 		return account.Status == AccountActive &&
 			(account.Role == RoleOwner || account.Role == RoleAdmin)
+	case SessionEnrollment:
+		return account.Status == AccountInvited && account.Role == RoleAdmin &&
+			account.EmailVerifiedAt != nil &&
+			account.PasswordHash != "" &&
+			account.Email != ""
 	case SessionMigration:
 		return account.ID == OwnerAccountID && account.Role == RoleOwner &&
 			account.Status == AccountSetup

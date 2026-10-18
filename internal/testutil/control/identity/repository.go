@@ -67,17 +67,22 @@ func (s *Repository) SaveRecoveryCodes(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !scope.Allows(s.accounts[scope.AccountID]) {
+
+	if (scope.Purpose != domainpkg.SessionAdmin && scope.Purpose != domainpkg.SessionMigration) ||
+		!scope.Allows(s.accounts[scope.AccountID]) {
 		return domainpkg.ErrInvalidCredential
 	}
+
 	// Generating a replacement set invalidates every older unused code. Keeping
 	// both sets would make a supposedly rotated emergency credential valid.
 	s.recoveryCodes[scope.AccountID] = make(map[[32]byte]domainpkg.RecoveryCode, len(codes))
 	for _, code := range codes {
 		s.recoveryCodes[scope.AccountID][code.Hash] = cloneRecoveryCode(code)
 	}
+
 	return nil
 }
 
@@ -85,20 +90,26 @@ func (s *Repository) ConsumeRecoveryCode(ctx context.Context, use domainpkg.Reco
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	scope := use.Scope
 	hash := use.Hash
 	now := use.UsedAt
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !scope.Allows(s.accounts[scope.AccountID]) {
+
+	if (scope.Purpose != domainpkg.SessionAdmin && scope.Purpose != domainpkg.SessionMigration) ||
+		!scope.Allows(s.accounts[scope.AccountID]) {
 		return domainpkg.ErrInvalidCredential
 	}
+
 	code, ok := s.recoveryCodes[scope.AccountID][hash]
 	if !ok || code.UsedAt != nil {
 		return domainpkg.ErrInvalidCredential
 	}
+
 	code.UsedAt = &now
 	s.recoveryCodes[scope.AccountID][hash] = code
+
 	return nil
 }
 

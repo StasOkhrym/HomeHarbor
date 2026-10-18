@@ -148,19 +148,31 @@ func (s *MFAService) BeginTOTP(ctx context.Context, principal Principal) (TOTPEn
 	if err != nil {
 		return TOTPEnrollment{}, err
 	}
+
+	return s.beginTOTP(ctx, scope, account)
+}
+
+func (s *MFAService) beginTOTP(
+	ctx context.Context,
+	scope AccountScope,
+	account Account,
+) (TOTPEnrollment, error) {
 	seed := make([]byte, 20)
 	if _, err := io.ReadFull(s.random, seed); err != nil {
 		return TOTPEnrollment{}, ErrSecurityStateUnavailable
 	}
 	defer clear(seed)
+
 	id, err := uuid.NewRandomFromReader(s.random)
 	if err != nil {
 		return TOTPEnrollment{}, ErrSecurityStateUnavailable
 	}
+
 	ciphertext, err := s.seeds.Seal(scope.AccountID, seed)
 	if err != nil {
 		return TOTPEnrollment{}, ErrSecurityStateUnavailable
 	}
+
 	now := s.now().UTC()
 	record := TOTPRecord{
 		ID:                id.String(),
@@ -173,9 +185,11 @@ func (s *MFAService) BeginTOTP(ctx context.Context, principal Principal) (TOTPEn
 	}
 	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+
 	if err := s.store.SavePendingTOTP(operation, scope, record); err != nil {
 		return TOTPEnrollment{}, mfaStoreError(err)
 	}
+
 	secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(seed)
 	uri := url.URL{Scheme: "otpauth", Host: "totp", Path: "HomeHarbor:" + account.Email}
 	query := url.Values{
@@ -186,6 +200,7 @@ func (s *MFAService) BeginTOTP(ctx context.Context, principal Principal) (TOTPEn
 		"period":    {"30"},
 	}
 	uri.RawQuery = query.Encode()
+
 	return TOTPEnrollment{Secret: secret, URI: uri.String(), ExpiresAt: record.ExpiresAt}, nil
 }
 
@@ -214,23 +229,32 @@ func (s *MFAService) ConfirmTOTP(ctx context.Context, principal Principal, code 
 	if err != nil {
 		return err
 	}
+
+	return s.confirmTOTP(ctx, scope, code)
+}
+
+func (s *MFAService) confirmTOTP(ctx context.Context, scope AccountScope, code string) error {
 	record, seed, err := s.readTOTP(ctx, scope)
 	if err != nil {
 		return err
 	}
 	defer clear(seed)
+
 	now := s.now().UTC()
 	if record.ConfirmedAt != nil || record.EnrollmentVersion != scope.AuthVersion ||
 		now.Before(record.CreatedAt) ||
 		!now.Before(record.ExpiresAt) {
 		return ErrInvalidCredential
 	}
+
 	step, ok := matchingTOTPStep(seed, code, now, record.LastStep)
 	if !ok {
 		return ErrInvalidCredential
 	}
+
 	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+
 	return mfaStoreError(s.store.ConfirmTOTP(operation, scope, record.ID, step, now))
 }
 

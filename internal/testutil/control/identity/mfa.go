@@ -32,20 +32,27 @@ func (s *Repository) SavePendingTOTP(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if scope.Purpose != domain.SessionAdmin || !scope.Allows(s.accounts[scope.AccountID]) ||
+
+	if (scope.Purpose != domain.SessionAdmin && scope.Purpose != domain.SessionEnrollment) ||
+		!scope.Allows(s.accounts[scope.AccountID]) ||
 		record.AccountID != scope.AccountID ||
 		record.EnrollmentVersion != scope.AuthVersion {
 		return domain.ErrInvalidCredential
 	}
+
 	if current, exists := s.totp[scope.AccountID]; exists && current.ConfirmedAt != nil {
 		return domain.ErrFactorExists
 	}
+
 	if s.totp == nil {
 		s.totp = make(map[string]domain.TOTPRecord)
 	}
+
 	s.totp[scope.AccountID] = cloneTOTP(record)
+
 	return nil
 }
 
@@ -59,11 +66,15 @@ func (s *Repository) ConfirmTOTP(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if scope.Purpose != domain.SessionAdmin || !scope.Allows(s.accounts[scope.AccountID]) {
+
+	if (scope.Purpose != domain.SessionAdmin && scope.Purpose != domain.SessionEnrollment) ||
+		!scope.Allows(s.accounts[scope.AccountID]) {
 		return domain.ErrInvalidCredential
 	}
+
 	record, exists := s.totp[scope.AccountID]
 	if !exists || record.ID != id || record.ConfirmedAt != nil ||
 		record.EnrollmentVersion != scope.AuthVersion ||
@@ -71,13 +82,19 @@ func (s *Repository) ConfirmTOTP(
 		step <= record.LastStep {
 		return domain.ErrInvalidCredential
 	}
+
 	record.ConfirmedAt = &now
 	record.ExpiresAt = time.Time{}
 	record.LastStep = step
 	s.totp[scope.AccountID] = cloneTOTP(record)
 	account := s.accounts[scope.AccountID]
+	if scope.Purpose == domain.SessionEnrollment {
+		account.Status = domain.AccountActive
+	}
+
 	account.AuthVersion++
 	s.accounts[scope.AccountID] = account
+
 	return nil
 }
 

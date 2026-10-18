@@ -19,16 +19,21 @@ func (s *Repository) SavePersonalCredential(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	account := s.accounts[scope.AccountID]
-	if scope.Purpose != domain.SessionAdmin || !scope.Allows(account) {
+	if (scope.Purpose != domain.SessionAdmin && scope.Purpose != domain.SessionEnrollment) ||
+		!scope.Allows(account) {
 		return domain.ErrInvalidCredential
 	}
+
 	handle := string(account.UserHandle)
 	if len(s.credentials[handle]) >= domain.MaxPasskeys {
 		return domain.ErrFactorLimit
 	}
+
 	for _, credentials := range s.credentials {
 		for _, existing := range credentials {
 			if bytes.Equal(existing.ID, value.Credential.ID) {
@@ -36,16 +41,23 @@ func (s *Repository) SavePersonalCredential(
 			}
 		}
 	}
+
 	s.credentials[handle] = append(s.credentials[handle], cloneCredential(value.Credential))
 	if s.passkeyInfo == nil {
 		s.passkeyInfo = make(map[string]domain.PasskeyInfo)
 	}
+
 	s.passkeyInfo[string(value.Credential.ID)] = domain.PasskeyInfo{
 		Name:      value.Name,
 		CreatedAt: value.CreatedAt,
 	}
+	if scope.Purpose == domain.SessionEnrollment {
+		account.Status = domain.AccountActive
+	}
+
 	account.AuthVersion++
 	s.accounts[scope.AccountID] = account
+
 	return nil
 }
 

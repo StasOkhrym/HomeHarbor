@@ -25,18 +25,30 @@ func (s *Repository) withAdminAccount(
 	if scope.Purpose != identity.SessionAdmin {
 		return identity.ErrInvalidCredential
 	}
+
+	return s.withAccountScope(ctx, scope, operation)
+}
+
+func (s *Repository) withAccountScope(
+	ctx context.Context,
+	scope identity.AccountScope,
+	operation func(pgx.Tx, identity.Account) error,
+) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
 	account, err := lockedAccountScope(ctx, tx, scope)
 	if err != nil {
 		return err
 	}
+
 	if err := operation(tx, account); err != nil {
 		return err
 	}
+
 	return tx.Commit(ctx)
 }
 
@@ -49,19 +61,28 @@ func (s *Repository) SavePersonalCredential(
 	if err != nil {
 		return err
 	}
+
 	transports := make([]string, len(value.Credential.Transport))
 	for i, transport := range value.Credential.Transport {
 		transports[i] = string(transport)
 	}
-	return s.withAdminAccount(ctx, scope, func(tx pgx.Tx, account identity.Account) error {
+
+	if scope.Purpose != identity.SessionAdmin && scope.Purpose != identity.SessionEnrollment {
+		return identity.ErrInvalidCredential
+	}
+
+	return s.withAccountScope(ctx, scope, func(tx pgx.Tx, account identity.Account) error {
 		var count int
+
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM webauthn_credentials WHERE user_handle=$1`, account.UserHandle).
 			Scan(&count); err != nil {
 			return err
 		}
+
 		if count >= identity.MaxPasskeys {
 			return identity.ErrFactorLimit
 		}
+
 		_, err := tx.Exec(
 			ctx,
 			`INSERT INTO webauthn_credentials(credential_id,public_key,attestation_type,transport,sign_count,user_handle,credential_data,credential_name,created_at)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
@@ -80,9 +101,11 @@ func (s *Repository) SavePersonalCredential(
 			if errors.As(err, &conflict) && conflict.Code == "23505" {
 				return identity.ErrInvalidCredential
 			}
+
 			return err
 		}
-		return advanceAuthVersion(ctx, tx, scope.AccountID)
+
+		return completeMFAEnrollment(ctx, tx, scope)
 	})
 }
 
