@@ -49,6 +49,9 @@ type BrowserAuthConfig struct {
 	Accounts          identity.AccountReader
 	PasswordLogin     PasswordLogin
 	Factors           MFAActions
+	Mail              MailActions
+	Enrollment        AccountEnrollment
+	EmailEnabled      bool
 	AllowRemoteSetup  bool
 	TrustedProxyCIDRs []netip.Prefix
 	Origin            string
@@ -76,6 +79,9 @@ type BrowserAuth struct {
 	accounts          identity.AccountReader
 	passwordLogin     PasswordLogin
 	factors           MFAActions
+	mail              MailActions
+	enrollment        AccountEnrollment
+	emailEnabled      bool
 	allowRemoteSetup  bool
 	trustedProxyCIDRs []netip.Prefix
 	origin            string
@@ -106,14 +112,26 @@ func NewBrowserAuth(
 	if config.Origin == "" {
 		return nil, errors.New("auth origin is required")
 	}
+	if (config.EmailEnabled && config.Mail == nil) ||
+		(config.Mail != nil) != (config.Enrollment != nil) ||
+		(config.Mail != nil && (config.Factors == nil || config.PasswordLogin == nil || config.Accounts == nil)) {
+		return nil, errors.New(
+			"mail authentication requires account, password, MFA and enrollment capabilities",
+		)
+	}
+
 	logger := config.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
+
 	return &BrowserAuth{
 		accounts:          config.Accounts,
 		passwordLogin:     config.PasswordLogin,
 		factors:           config.Factors,
+		mail:              config.Mail,
+		enrollment:        config.Enrollment,
+		emailEnabled:      config.EmailEnabled,
 		allowRemoteSetup:  config.AllowRemoteSetup,
 		trustedProxyCIDRs: append([]netip.Prefix(nil), config.TrustedProxyCIDRs...),
 		origin:            strings.TrimSuffix(config.Origin, "/"),
@@ -144,6 +162,8 @@ func (a *BrowserAuth) Handler() http.Handler {
 		write.Post("/login/begin", a.beginLogin)
 		write.Post("/login/finish", a.finishLogin)
 		write.Post("/recovery", a.recoveryLogin)
+		a.registerMailRoutes(write)
+		a.registerEnrollmentRoutes(write)
 		write.Post("/password", a.passwordProof)
 		write.Post("/factor", a.factorProof)
 		write.Post("/passkey/begin", a.beginPersonalPasskey)
@@ -154,7 +174,16 @@ func (a *BrowserAuth) Handler() http.Handler {
 }
 
 // LoginHandler serves the browser entry point separately from the JSON API.
-func (a *BrowserAuth) LoginHandler() http.Handler { return http.HandlerFunc(a.loginPage) }
+func (a *BrowserAuth) LoginHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if flow, _ := mailFlow(r.URL.Path); flow != "" {
+			a.mailPage(w, r)
+			return
+		}
+
+		a.loginPage(w, r)
+	})
+}
 
 // LoginAssetHandler serves the browser code from the same origin so CSP does
 // not need an inline-script exception or a third-party CDN dependency.
@@ -285,9 +314,11 @@ var loginTemplate = template.Must(template.New("login").Parse(string(loginPage))
 func (a *BrowserAuth) loginPage(w http.ResponseWriter, r *http.Request) {
 	model, status := a.loginState(w, r)
 	model.ReturnToSecurity = r.URL.Query().Get("return_to") == "security"
+	model.EmailEnabled = a.emailEnabled
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
+
 	if err := loginTemplate.Execute(w, model); err != nil {
 		a.logger.ErrorContext(r.Context(), "render login page", "error", err)
 	}

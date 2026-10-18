@@ -118,7 +118,7 @@ func buildHTTP(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	preauthStore, err := identityredis.NewPreauth(
+	proofs, err := newPasswordProofStores(
 		redisClient,
 		"homeharbor:"+cfg.Networking.NetworkID,
 		time.Now,
@@ -130,7 +130,7 @@ func buildHTTP(
 	loginService, err := identity.NewLoginService(
 		identity.LoginConfig{SessionTTL: cfg.Auth.SessionDuration()},
 		identityStore,
-		preauthStore,
+		proofs.login,
 		identityService,
 		passwordHasher,
 		time.Now,
@@ -159,8 +159,31 @@ func buildHTTP(
 	if err != nil {
 		return nil, nil, nil, errors.Join(errors.New("configure account security"), err)
 	}
+	accountMail, err := workflows.NewAccountMail(
+		workflowstorage.NewAccountMailUnitOfWork(pool),
+		identityStore,
+		passwordHasher,
+		mailCodec,
+		time.Now,
+		nil,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	enrollment, err := identity.NewEnrollmentService(
+		identityStore,
+		proofs.enrollment,
+		passwordHasher,
+		mfaService,
+		time.Now,
+		nil,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	auth, err := webauth.NewBrowserAuth(webauth.BrowserAuthConfig{
 		Accounts: identityStore, PasswordLogin: loginService, Factors: mfaService,
+		Mail: accountMail, Enrollment: enrollment, EmailEnabled: cfg.SMTP.Enabled,
 		AllowRemoteSetup: cfg.Auth.AllowRemoteSetup, TrustedProxyCIDRs: trustedProxyCIDRs,
 		Origin:     cfg.Auth.RPOrigin,
 		SigningKey: []byte(cfg.Auth.SessionSigningKey),

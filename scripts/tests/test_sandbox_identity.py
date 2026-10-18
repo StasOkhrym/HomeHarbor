@@ -233,10 +233,12 @@ class SandboxIdentityTests(unittest.TestCase):
                 "sandbox_pair.py",
                 "sandbox_preflight.py",
                 "dev_init.py",
+                "private_state.py",
                 "tls_material.py",
                 "tooling.py",
             ):
                 shutil.copy(ROOT / "scripts" / name, scripts / name)
+
             shutil.copytree(ROOT / "deploy/sandbox", root / "deploy/sandbox")
             sandbox = root / ".sandbox"
             sandbox.mkdir()
@@ -247,18 +249,25 @@ class SandboxIdentityTests(unittest.TestCase):
             (sandbox / "root-key.age").write_bytes(b"private-root-sentinel")
             command = [sys.executable, str(scripts / "sandbox_bind.py")]
             result = subprocess.run(command, capture_output=True, timeout=10, check=False)
+
             self.assertEqual(result.returncode, 0, result.stderr.decode())
+
             bound = manifest.read_bytes()
+
             self.assertEqual(
                 tomllib.loads(bound.decode())["devices"][0]["id"], "_enrolled-gateway_1"
             )
             self.assertEqual(manifest.stat().st_mode & 0o777, 0o600)
+
             result = subprocess.run(command, capture_output=True, timeout=10, check=False)
+
             self.assertEqual(result.returncode, 0, result.stderr.decode())
             self.assertEqual(manifest.read_bytes(), bound)
+
             changed = bound.replace(b"port_to = 8080", b"port_to = 9000")
             manifest.write_bytes(changed)
             result = subprocess.run(command, capture_output=True, timeout=10, check=False)
+
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(manifest.read_bytes(), changed)
             self.assertEqual(result.stdout, b"")

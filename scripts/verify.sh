@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 python_command=${PYTHON:-python3}
 make lint
 "$python_command" -m unittest discover -s scripts/tests
-node --test internal/web/assets/tests/browser.test.cjs
+node --test internal/web/assets/tests/*.test.cjs
 # Package scope comes from Make; direct script invocation has the same fallback.
 # shellcheck disable=SC2086
 set -- ${GO_PACKAGES:-./cmd/... ./internal/... ./migrations/...}

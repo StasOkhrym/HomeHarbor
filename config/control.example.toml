@@ -24,6 +24,20 @@ ceremony_encryption_key_file = "/run/secrets/ceremony_encryption_key"
 session_ttl = "12h"
 ceremony_ttl = "5m"
 
+# Optional authenticated SMTP. Development uses a capture-only Compose overlay.
+# Secrets resolve only when enabled; migrations do not open these files.
+[smtp]
+enabled = false
+host = ""
+port = 587
+username = ""
+password_file = "/run/secrets/smtp_password"
+from = "homeharbor@example.test"
+mode = "starttls"
+timeout = "10s"
+# Optional private SMTP CA. Omit to use the system certificate roots.
+# ca_file = "/run/secrets/smtp_tls_ca"
+
 [relay]
 public_url = "wss://relay.example.com/relay/udp"
 ticket_key_file = "/run/secrets/relay_ticket_key"

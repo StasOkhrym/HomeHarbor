@@ -233,10 +233,12 @@ class SandboxPairTests(unittest.TestCase):
                 "sandbox_identity.py",
                 "sandbox_preflight.py",
                 "dev_init.py",
+                "private_state.py",
                 "tls_material.py",
                 "tooling.py",
             ):
                 shutil.copy(ROOT / "scripts" / name, scripts / name)
+
             shutil.copytree(ROOT / "config", root / "config")
             sandbox = root / ".sandbox"
             sandbox.mkdir()
@@ -250,6 +252,7 @@ class SandboxPairTests(unittest.TestCase):
                 ("root-key.age", "private-root-sentinel"),
             ):
                 (sandbox / name).write_text(content)
+
             # The production command requires a non-root operator. Pin only
             # that OS dependency in this subprocess so root CI exercises it.
             runner = "import os,runpy,sys; os.getuid=lambda:501; sys.argv=sys.argv[1:]; sys.path.insert(0,os.path.dirname(sys.argv[0])); runpy.run_path(sys.argv[0],run_name='__main__')"
@@ -260,24 +263,32 @@ class SandboxPairTests(unittest.TestCase):
                 timeout=10,
                 check=False,
             )
+
             self.assertEqual(result.returncode, 0, result.stderr.decode())
+
             paths = [
                 sandbox / name
                 for name in ("gateway.toml", "native-client.toml", "network-helper.json")
             ]
             before = {path: path.read_bytes() for path in paths}
             policy = json.loads(before[sandbox / "network-helper.json"])
+
             self.assertEqual(policy["wireguard_listen_port"], 58830)
             self.assertEqual(policy["bridge_endpoint"], "127.0.0.1:58831")
             self.assertTrue(all(path.stat().st_mode & 0o777 == 0o600 for path in paths))
+
             result = subprocess.run(command, capture_output=True, timeout=10, check=False)
+
             self.assertEqual(result.returncode, 0, result.stderr.decode())
             self.assertTrue(all(path.read_bytes() == data for path, data in before.items()))
+
             (sandbox / "client-public.json").write_text(json.dumps(identity("other-client", 4)))
             result = subprocess.run(command, capture_output=True, timeout=10, check=False)
+
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(result.stdout, b"")
             self.assertTrue(all(path.read_bytes() == data for path, data in before.items()))
+
             for sentinel, name in (
                 ("private-client-sentinel", "client.json"),
                 ("private-root-sentinel", "root-key.age"),

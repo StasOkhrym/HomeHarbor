@@ -458,6 +458,12 @@ summary {
   padding: 8px 0;
 }
 
+.auth-card summary {
+  min-height: 44px;
+  padding-block: 12px;
+  cursor: pointer;
+}
+
 .recovery-details button {
   margin-top: 12px;
 }
@@ -1094,4 +1100,8 @@ summary {
   gap: 8px;
   min-height: 44px;
   margin: 0;
+}
+
+.auth-card :where(.secret-value, .muted) {
+  overflow-wrap: anywhere;
 }

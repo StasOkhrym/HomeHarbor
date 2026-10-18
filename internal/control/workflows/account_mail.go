@@ -22,6 +22,7 @@ type MailAccountReader interface {
 	AccountByEmail(context.Context, string) (identity.Account, error)
 }
 type MailAccountTransaction interface {
+	identity.AccountReader
 	PrepareAdminInvitation(context.Context, identity.AccountScope, identity.Account) error
 	SaveMailToken(context.Context, identity.MailToken) error
 	ConsumeMailToken(context.Context, identity.MailTokenUse) (identity.Account, error)
@@ -298,17 +299,17 @@ func (s *AccountMail) InviteAdmin(
 	ctx context.Context,
 	principal identity.Principal,
 	input string,
-) error {
+) (identity.AccountSubject, error) {
 	owner, _, err := s.recent(ctx, principal, true)
 	if err != nil {
-		return err
+		return identity.AccountSubject{}, err
 	}
 	if s.codec == nil {
-		return ErrMailDisabled
+		return identity.AccountSubject{}, ErrMailDisabled
 	}
 	email, err := identity.CanonicalEmail(input)
 	if err != nil {
-		return err
+		return identity.AccountSubject{}, err
 	}
 	operation, cancel := context.WithTimeout(ctx, 5*time.Second)
 	candidate, err := s.accounts.AccountByEmail(operation, email)
@@ -317,11 +318,11 @@ func (s *AccountMail) InviteAdmin(
 	case errors.Is(err, identity.ErrInvalidCredential):
 		id, err := uuid.NewRandomFromReader(s.random)
 		if err != nil {
-			return identity.ErrSecurityStateUnavailable
+			return identity.AccountSubject{}, identity.ErrSecurityStateUnavailable
 		}
 		handle := make([]byte, 32)
 		if _, err := io.ReadFull(s.random, handle); err != nil {
-			return identity.ErrSecurityStateUnavailable
+			return identity.AccountSubject{}, identity.ErrSecurityStateUnavailable
 		}
 		candidate = identity.Account{
 			ID:          id.String(),
@@ -333,10 +334,10 @@ func (s *AccountMail) InviteAdmin(
 			CreatedAt:   s.clock(),
 		}
 	case err != nil:
-		return mailStateError(err)
+		return identity.AccountSubject{}, mailStateError(err)
 	default:
 		if candidate.Role != identity.RoleAdmin || candidate.Status != identity.AccountInvited {
-			return identity.ErrInvalidCredential
+			return identity.AccountSubject{}, identity.ErrInvalidCredential
 		}
 		candidate.AuthVersion++
 		candidate.PasswordHash = ""
@@ -344,14 +345,18 @@ func (s *AccountMail) InviteAdmin(
 	}
 	token, prepared, err := s.prepareToken(candidate, identity.MailAdminInvitation)
 	if err != nil {
-		return err
+		return identity.AccountSubject{}, err
 	}
-	return s.within(ctx, func(ctx context.Context, tx AccountMailTransaction) error {
+	err = s.within(ctx, func(ctx context.Context, tx AccountMailTransaction) error {
 		if err := tx.Accounts.PrepareAdminInvitation(ctx, owner, candidate); err != nil {
 			return err
 		}
 		return s.issue(ctx, tx, token, prepared)
 	})
+	if err != nil {
+		return identity.AccountSubject{}, err
+	}
+	return candidate.Subject(), nil
 }
 
 func parseMailToken(token string) ([32]byte, error) {
@@ -374,22 +379,27 @@ func (s *AccountMail) consume(
 	token string,
 	purpose identity.MailPurpose,
 	password string,
-) error {
+) (identity.AccountSubject, error) {
 	hash, err := parseMailToken(token)
 	if err != nil {
-		return err
+		return identity.AccountSubject{}, err
 	}
+
 	passwordHash := ""
 	if purpose != identity.MailEmailVerification {
 		if err := identity.ValidateNewPassword(password); err != nil {
-			return identity.ErrInvalidCredential
+			return identity.AccountSubject{}, identity.ErrInvalidCredential
 		}
+
 		passwordHash, err = s.passwords.Hash(ctx, password)
 		if err != nil {
-			return mailStateError(err)
+			return identity.AccountSubject{}, mailStateError(err)
 		}
 	}
-	return s.within(ctx, func(ctx context.Context, tx AccountMailTransaction) error {
+
+	var subject identity.AccountSubject
+
+	err = s.within(ctx, func(ctx context.Context, tx AccountMailTransaction) error {
 		account, err := tx.Accounts.ConsumeMailToken(
 			ctx,
 			identity.MailTokenUse{
@@ -402,29 +412,48 @@ func (s *AccountMail) consume(
 		if err != nil {
 			return err
 		}
+
+		subject = account.Subject()
 		kind := notifications.Kind("")
 		if purpose == identity.MailEmailVerification {
 			kind = notifications.EmailVerification
 		}
+
 		if err := tx.Deliveries.CancelPending(ctx, account.ID, kind); err != nil {
 			return err
 		}
+
 		if purpose == identity.MailEmailVerification {
 			return nil
 		}
+
 		return s.notice(ctx, tx, account)
 	})
+	if err != nil {
+		return identity.AccountSubject{}, err
+	}
+
+	return subject, nil
 }
 
-func (s *AccountMail) ResetPassword(ctx context.Context, token, password string) error {
+func (s *AccountMail) ResetPassword(
+	ctx context.Context,
+	token, password string,
+) (identity.AccountSubject, error) {
 	return s.consume(ctx, token, identity.MailPasswordReset, password)
 }
 
-func (s *AccountMail) AcceptInvitation(ctx context.Context, token, password string) error {
+func (s *AccountMail) AcceptInvitation(
+	ctx context.Context,
+	token, password string,
+) (identity.AccountSubject, error) {
 	return s.consume(ctx, token, identity.MailAdminInvitation, password)
 }
 
-func (s *AccountMail) VerifyEmail(ctx context.Context, token string) error {
+func (s *AccountMail) VerifyEmail(
+	ctx context.Context,
+	token string,
+) (identity.AccountSubject, error) {
 	return s.consume(ctx, token, identity.MailEmailVerification, "")
 }
 
@@ -464,15 +493,31 @@ func (s *AccountMail) RevokeAdmin(
 	ctx context.Context,
 	principal identity.Principal,
 	accountID string,
-) error {
+) (identity.AccountSubject, error) {
 	owner, _, err := s.recent(ctx, principal, true)
 	if err != nil {
-		return err
+		return identity.AccountSubject{}, err
 	}
-	return s.within(ctx, func(ctx context.Context, tx AccountMailTransaction) error {
+
+	var subject identity.AccountSubject
+
+	err = s.within(ctx, func(ctx context.Context, tx AccountMailTransaction) error {
 		if err := tx.Accounts.RevokeAdmin(ctx, owner, accountID); err != nil {
 			return err
 		}
+
+		account, err := tx.Accounts.Account(ctx, accountID)
+		if err != nil {
+			return err
+		}
+
+		subject = account.Subject()
+
 		return tx.Deliveries.CancelPending(ctx, accountID, "")
 	})
+	if err != nil {
+		return identity.AccountSubject{}, err
+	}
+
+	return subject, nil
 }

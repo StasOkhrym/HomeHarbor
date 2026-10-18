@@ -1,7 +1,9 @@
 # Local development
 
 Run `make dev-up`, then open <https://control.localhost:8443/admin/login>.
-The admin page uses the real passkey flow; there is no development auth bypass.
+The admin page uses email and password followed by a passkey or an authenticator
+code. Existing passkey-only installations first finish the owner migration flow;
+there is no development auth bypass.
 `make dev-trust-ca` explicitly trusts the test CA in the Mac login keychain. On
 Linux it prints the CA path for installation in your browser/system.
 
@@ -12,6 +14,27 @@ A failed preflight or build leaves the running stack available.
 It preserves volumes, node state and companion keys. No `--volumes` or implicit
 reset is used. `make dev-down` stops the stack; `make dev-logs` follows its logs.
 Use `make help` for the small command surface.
+
+The development stack captures account invitations, verification, password reset
+and security notices in [Mailpit](http://127.0.0.1:8025). It never forwards them to
+real recipients. `DEV_MAILPIT_PORT=9025 make dev-up` changes its loopback-only inbox
+port; SMTP stays private to Docker. The development overlay explicitly selects
+Mailpit, even if the application config contains another SMTP server. This overlay
+is separate from the optional manual VPN sandbox.
+
+`python3 scripts/dev_mail.py` initializes a dedicated SMTP CA, server certificate
+and matching authentication files. These files survive repeated runs; partial or
+mismatched sets fail instead of silently replacing them. This CA is used only by
+the control container and is never installed in the Mac keychain. The inbox is
+local and contains private account links: do not expose or share it. Messages
+are ephemeral across container recreation.
+
+Outside this development overlay, email is disabled by default. Enable `[smtp]`
+in the control config and supply a verified STARTTLS or implicit-TLS SMTP server,
+its credentials and a sender address. A hosted provider such as Mailgun is
+optional: a properly operated SMTP relay works too. Configure a CA file only for
+a private SMTP authority. Password reset changes the password and invalidates
+old sessions; it keeps the account's existing MFA methods.
 
 Configuration, certificates and the companion root live in ignored `.local/`
 and `secrets/`. The private companion key is age-encrypted; Compose mounts only

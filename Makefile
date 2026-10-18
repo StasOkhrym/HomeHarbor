@@ -52,7 +52,7 @@ lint:
 test:
 	cd "$(ROOT)" && go test $(GO_PACKAGES) -count=1
 	cd "$(ROOT)" && $(PYTHON) -m unittest discover -s scripts/tests
-	cd "$(ROOT)" && node --test internal/web/assets/tests/browser.test.cjs
+	cd "$(ROOT)" && node --test internal/web/assets/tests/*.test.cjs
 
 verify:
 	cd "$(ROOT)" && FULL=$(FULL) sh scripts/verify.sh

@@ -1,5 +1,6 @@
 """Run real entrypoints in disposable repositories; fake only external CLIs."""
 
+import copy
 import json
 import os
 import shutil
@@ -99,6 +100,7 @@ class ToolingTests(unittest.TestCase):
     def run_script(self, name, *args):
         python_scripts = {
             "dev-init": "dev_init",
+            "dev-mail-init": "dev_mail",
             "compose-check": "compose_check",
             "integration": "integration",
             "integration-local": "integration",
@@ -355,6 +357,58 @@ class ToolingTests(unittest.TestCase):
             (secrets / name).chmod(0o600)
 
         return local, secrets
+
+    def test_dev_mail_creates_dedicated_verified_tls_without_rotating_app_trust(self):
+        local, secret_dir = self.local_state()
+        existing = {p: p.read_bytes() for p in (*local.iterdir(), *secret_dir.iterdir())}
+        result = self.run_script("dev-mail-init")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        ca = secret_dir / "smtp_tls_ca"
+        cert = secret_dir / "smtp_tls_cert"
+        key = secret_dir / "smtp_tls_key"
+        strict_tls_handshake(ca, cert, key, "mailpit")
+        strict_tls_handshake(ca, cert, key, "localhost")
+        password = (secret_dir / "smtp_password").read_bytes()
+
+        self.assertEqual(len(password), 44)
+        self.assertEqual((secret_dir / "smtp_auth").read_bytes(), b"homeharbor:" + password + b"\n")
+
+        private = [
+            key,
+            local / "smtp-ca-key.pem",
+            secret_dir / "smtp_password",
+            secret_dir / "smtp_auth",
+        ]
+        material = {p: p.read_bytes() for p in [ca, cert, *private]}
+        for path in private:
+            path.chmod(0o644)
+
+        result = self.run_script("dev-mail-init")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        for path, content in {**existing, **material}.items():
+            self.assertEqual(path.read_bytes(), content)
+
+        for path in private:
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+        self.assertFalse(
+            (local / "control.toml").exists(), "capture init rewrote app configuration"
+        )
+
+    def test_dev_mail_rejects_partial_trust_before_creating_credentials(self):
+        _, secret_dir = self.local_state()
+        (secret_dir / "smtp_tls_ca").write_bytes(b"existing-public-marker")
+        result = self.run_script("dev-mail-init")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("incomplete", result.stderr)
+        self.assertEqual((secret_dir / "smtp_tls_ca").read_bytes(), b"existing-public-marker")
+        self.assertFalse((secret_dir / "smtp_password").exists())
+        self.assertFalse((secret_dir / "smtp_auth").exists())
 
     def test_local_restart_preserves_existing_state(self):
         local, secrets = self.local_state()
@@ -1093,12 +1147,99 @@ exit 94
 
         return local, integration
 
-    def serve_compose_fixtures(self, local, integration):
+    def mail_capture_fixture(self, local):
+        capture = copy.deepcopy(local)
+        capture["services"]["control"]["secrets"].extend(
+            {"source": name} for name in ("smtp_password", "smtp_tls_ca")
+        )
+        capture["services"]["control"]["environment"] = {
+            "HOMEHARBOR_SMTP_ENABLED": "true",
+            "HOMEHARBOR_SMTP_HOST": "mailpit",
+            "HOMEHARBOR_SMTP_PORT": "1025",
+            "HOMEHARBOR_SMTP_USERNAME": "homeharbor",
+            "HOMEHARBOR_SMTP_PASSWORD_FILE": "/run/secrets/smtp_password",
+            "HOMEHARBOR_SMTP_FROM": "homeharbor@example.test",
+            "HOMEHARBOR_SMTP_MODE": "starttls",
+            "HOMEHARBOR_SMTP_TIMEOUT": "10s",
+            "HOMEHARBOR_SMTP_CA_FILE": "/run/secrets/smtp_tls_ca",
+        }
+        capture["services"]["mailpit"] = {
+            "image": "axllent/mailpit:v1.31.6",
+            "user": "65532:65532",
+            "read_only": True,
+            "mem_limit": 268435456,
+            "cap_drop": ["ALL"],
+            "security_opt": ["no-new-privileges:true"],
+            "secrets": [
+                {"source": name} for name in ("smtp_auth", "smtp_tls_cert", "smtp_tls_key")
+            ],
+            "ports": [{"host_ip": "127.0.0.1", "target": 8025, "published": "8025"}],
+            "environment": {
+                "MP_DATABASE": "/tmp/mailpit.db",
+                "MP_DISABLE_VERSION_CHECK": "true",
+                "MP_SMTP_TLS_CERT": "/run/secrets/smtp_tls_cert",
+                "MP_SMTP_TLS_KEY": "/run/secrets/smtp_tls_key",
+                "MP_SMTP_REQUIRE_STARTTLS": "true",
+                "MP_SMTP_AUTH_FILE": "/run/secrets/smtp_auth",
+                "MP_ALLOWED_HOSTS": "localhost,mailpit",
+            },
+        }
+
+        return capture
+
+    def test_mail_capture_validation_rejects_external_delivery_and_private_secret_leaks(self):
+        for fault in (
+            "external",
+            "plaintext",
+            "public-ui",
+            "smtp-port",
+            "private-ca",
+            "relay",
+            "root",
+            "capability",
+            "hosts",
+        ):
+            with self.subTest(fault=fault):
+                local, integration = self.local_compose_fixtures()
+                capture = self.mail_capture_fixture(local)
+                control, mailpit = (capture["services"][name] for name in ("control", "mailpit"))
+                if fault == "external":
+                    control["environment"]["HOMEHARBOR_SMTP_HOST"] = "smtp.example.net"
+                elif fault == "plaintext":
+                    mailpit["environment"].pop("MP_SMTP_REQUIRE_STARTTLS")
+                elif fault == "public-ui":
+                    mailpit["ports"][0]["host_ip"] = "0.0.0.0"
+                elif fault == "smtp-port":
+                    mailpit["ports"].append(
+                        {"host_ip": "127.0.0.1", "target": 1025, "published": "1025"}
+                    )
+                elif fault == "private-ca":
+                    control["secrets"].append({"source": "smtp_ca_key"})
+                elif fault == "relay":
+                    mailpit["environment"]["MP_SMTP_RELAY_CONFIG"] = "/tmp/relay.yaml"
+                elif fault == "root":
+                    mailpit["user"] = "0:0"
+                elif fault == "hosts":
+                    mailpit["environment"].pop("MP_ALLOWED_HOSTS")
+                else:
+                    mailpit["cap_add"] = ["NET_ADMIN"]
+
+                self.serve_compose_fixtures(local, integration, capture)
+                result = self.run_script("compose-check")
+
+                self.assertNotEqual(result.returncode, 0, fault + " was accepted")
+                self.assertIn("mail", result.stderr.lower())
+                self.assertFalse((self.root / "secrets").exists())
+
+    def serve_compose_fixtures(self, local, integration, capture=None):
+        capture = capture or self.mail_capture_fixture(local)
         self.cli(
             "docker",
             'printf "%s\\n" "$*" >> docker-calls\n'
             + "case \"$*\" in *compose.integration.yaml*) printf '%s\\n' '"
             + json.dumps(integration)
+            + "' ;; *compose.mailpit.yaml*) printf '%s\\n' '"
+            + json.dumps(capture)
             + "' ;; *) printf '%s\\n' '"
             + json.dumps(local)
             + "' ;; esac\n",
@@ -1108,10 +1249,13 @@ exit 94
         local, integration = self.local_compose_fixtures()
         self.serve_compose_fixtures(local, integration)
         result = self.run_script("compose-check")
+
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.root / ".local").exists())
+
         calls = (self.root / "docker-calls").read_text().splitlines()
-        self.assertEqual(len(calls), 2)
+
+        self.assertEqual(len(calls), 3)
         self.assertFalse(any("compose.local.yaml" in call for call in calls))
 
     def test_local_validation_rejects_unsafe_proxy(self):

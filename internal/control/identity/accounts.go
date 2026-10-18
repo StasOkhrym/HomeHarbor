@@ -47,6 +47,15 @@ type Account struct {
 	CreatedAt       time.Time     `json:"created_at"`
 }
 
+// AccountSubject is a safe operation result for rendering/audit attribution.
+// It contains no proof, role, password or authority and cannot admit a session.
+type AccountSubject struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
+func (a Account) Subject() AccountSubject { return AccountSubject{ID: a.ID, Email: a.Email} }
+
 // Principal is derived from current durable account authority and an admitted
 // opaque session. Neither an audit context nor a client-supplied role can make it.
 type Principal struct {

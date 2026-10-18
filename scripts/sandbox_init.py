@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import tomlkit
-from dev_init import SECRET_BYTES, complete
+from dev_init import SECRET_BYTES
+from private_state import complete
 from sandbox_identity import load_public_identity, validate_public_identity
 from sandbox_pair import stored_pair_documents
 from sandbox_preflight import NETWORK_FILE, PROFILES, load_profile

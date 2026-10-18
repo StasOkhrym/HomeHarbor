@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import tomlkit
+from private_state import complete
 from tls_material import issue, issue_authority, verify_pair
 from tooling import ROOT, atomic_write, cli, port, quiet_run, require_commands
 
@@ -105,18 +106,6 @@ def configs(control_name, relay_name, https_port):
         ROOT / f".local/{name}.toml": (tomlkit.dumps(doc).encode(), 0o600)
         for name, doc in (("control", control), ("relay", relay), ("admin", admin))
     }
-
-
-def complete(paths, label):
-    present = [p.exists() for p in paths]
-    if any(present) and not all(present):
-        raise ValueError(f"{label} incomplete; restore the complete existing set")
-    for path in paths:
-        if path.is_symlink():
-            raise ValueError(f"{label}: symlink is not supported: {path.name}")
-        if path.exists() and not path.read_bytes():
-            raise ValueError(f"{label}: {path.name} is empty; restore it")
-    return all(present)
 
 
 def initialize():

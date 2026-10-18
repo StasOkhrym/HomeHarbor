@@ -134,35 +134,46 @@ func queuedAccountToken(
 
 func TestPostgresAccountMailResetIsPrivateAtomicAndGeneric(t *testing.T) {
 	flow, store, pool, codec, owner, now := accountMailFixture(t)
+
 	if _, err := pool.Exec(
 		t.Context(),
 		`INSERT INTO admin_accounts(account_id,email,role,status,password_hash,user_handle)VALUES('unverified','unverified@example.test','admin','active','hash','unverified')`,
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	for _, address := range []string{owner.Email, "missing@example.test", "unverified@example.test", "invalid address", owner.Email} {
 		if err := flow.RequestPasswordReset(t.Context(), address); err != nil {
 			t.Fatal("reset request exposed account existence or duplicate state", err)
 		}
 	}
+
 	var count int
+
 	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM notification_deliveries`).
 		Scan(&count); err != nil ||
 		count != 1 {
 		t.Fatal("unknown/unverified/duplicate reset queued extra mail", err)
 	}
+
 	token := queuedAccountToken(t, pool, codec, notifications.PasswordReset, *now)
+
 	hash := sha256.Sum256([]byte(token))
 	var private bool
+
 	if err := pool.QueryRow(t.Context(), `SELECT token_hash=$1 FROM admin_mail_tokens WHERE account_id=$2`, hash[:], owner.AccountID).
 		Scan(&private); err != nil ||
 		!private {
 		t.Fatal("reset token hash differs", err)
 	}
-	if err := flow.ResetPassword(t.Context(), token, "replacement long password"); err != nil {
-		t.Fatal(err)
+
+	resetSubject, err := flow.ResetPassword(t.Context(), token, "replacement long password")
+
+	if err != nil || resetSubject.ID != owner.AccountID || resetSubject.Email != owner.Email {
+		t.Fatal("reset lost its committed safe account subject", err)
 	}
-	if err := flow.ResetPassword(
+
+	if _, err := flow.ResetPassword(
 		t.Context(),
 		token,
 		"another long password",
@@ -172,14 +183,18 @@ func TestPostgresAccountMailResetIsPrivateAtomicAndGeneric(t *testing.T) {
 	) {
 		t.Fatal("reset replay admitted", err)
 	}
+
 	account, err := store.Account(t.Context(), owner.AccountID)
+
 	if err != nil || account.AuthVersion != 2 || account.Status != identity.AccountActive {
 		t.Fatal("reset account authority incorrect", err)
 	}
+
 	hasher, err := identity.NewPasswordHasher(1)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := hasher.Verify(
 		t.Context(),
 		account.PasswordHash,
@@ -187,6 +202,7 @@ func TestPostgresAccountMailResetIsPrivateAtomicAndGeneric(t *testing.T) {
 	); err != nil {
 		t.Fatal("new password not stored", err)
 	}
+
 	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM notification_deliveries WHERE kind='security_notice' AND status='pending'`).
 		Scan(&count); err != nil ||
 		count != 1 {
@@ -227,7 +243,8 @@ func TestPostgresAccountInvitationRequiresRecentOwnerAndVerifiesWithoutActivatio
 	flow, store, pool, codec, owner, now := accountMailFixture(t)
 	stale := owner
 	stale.AuthenticatedAt = now.Add(-5 * time.Minute)
-	if err := flow.InviteAdmin(
+
+	if _, err := flow.InviteAdmin(
 		t.Context(),
 		stale,
 		"guest@example.test",
@@ -237,9 +254,11 @@ func TestPostgresAccountInvitationRequiresRecentOwnerAndVerifiesWithoutActivatio
 	) {
 		t.Fatal("stale owner invited administrator", err)
 	}
+
 	forged := owner
 	forged.Role = identity.RoleAdmin
-	if err := flow.InviteAdmin(
+
+	if _, err := flow.InviteAdmin(
 		t.Context(),
 		forged,
 		"guest@example.test",
@@ -249,11 +268,14 @@ func TestPostgresAccountInvitationRequiresRecentOwnerAndVerifiesWithoutActivatio
 	) {
 		t.Fatal("non-owner invited administrator", err)
 	}
-	if err := flow.InviteAdmin(t.Context(), owner, "Guest@Example.Test"); err != nil {
+
+	if _, err := flow.InviteAdmin(t.Context(), owner, "Guest@Example.Test"); err != nil {
 		t.Fatal(err)
 	}
+
 	token := queuedAccountToken(t, pool, codec, notifications.AdminInvitation, *now)
-	if err := flow.InviteAdmin(
+
+	if _, err := flow.InviteAdmin(
 		t.Context(),
 		owner,
 		"guest@example.test",
@@ -263,15 +285,20 @@ func TestPostgresAccountInvitationRequiresRecentOwnerAndVerifiesWithoutActivatio
 	) {
 		t.Fatal("repeated invitation bypassed account mail quota", err)
 	}
+
 	unchanged, err := store.AccountByEmail(t.Context(), "guest@example.test")
+
 	if err != nil || unchanged.AuthVersion != 1 {
 		t.Fatal("rate-limited invitation committed an epoch change", err)
 	}
+
 	*now = now.Add(61 * time.Second)
-	if err := flow.InviteAdmin(t.Context(), owner, "guest@example.test"); err != nil {
+
+	if _, err := flow.InviteAdmin(t.Context(), owner, "guest@example.test"); err != nil {
 		t.Fatal("expired delivery could not be reissued", err)
 	}
-	if err := flow.AcceptInvitation(
+
+	if _, err := flow.AcceptInvitation(
 		t.Context(),
 		token,
 		"invited long password",
@@ -281,16 +308,25 @@ func TestPostgresAccountInvitationRequiresRecentOwnerAndVerifiesWithoutActivatio
 	) {
 		t.Fatal("superseded invitation survived reissue", err)
 	}
+
 	token = queuedAccountToken(t, pool, codec, notifications.AdminInvitation, *now)
-	if err := flow.AcceptInvitation(t.Context(), token, "invited long password"); err != nil {
-		t.Fatal(err)
+
+	acceptedSubject, err := flow.AcceptInvitation(t.Context(), token, "invited long password")
+
+	if err != nil || acceptedSubject.Email != "guest@example.test" || acceptedSubject.ID == "" {
+		t.Fatal("accepted invitation lost its verified recipient", err)
 	}
+
 	account, err := store.AccountByEmail(t.Context(), "guest@example.test")
-	if err != nil || account.Status != identity.AccountInvited || account.EmailVerifiedAt == nil ||
+
+	if err != nil || account.ID != acceptedSubject.ID ||
+		account.Status != identity.AccountInvited ||
+		account.EmailVerifiedAt == nil ||
 		account.AuthVersion != 3 {
 		t.Fatal("invited administrator activated before MFA", err)
 	}
-	if err := flow.AcceptInvitation(
+
+	if _, err := flow.AcceptInvitation(
 		t.Context(),
 		token,
 		"another long password",
@@ -300,7 +336,8 @@ func TestPostgresAccountInvitationRequiresRecentOwnerAndVerifiesWithoutActivatio
 	) {
 		t.Fatal("invitation replay accepted", err)
 	}
-	if err := flow.RevokeAdmin(
+
+	if _, err := flow.RevokeAdmin(
 		t.Context(),
 		owner,
 		identity.OwnerAccountID,
@@ -310,10 +347,13 @@ func TestPostgresAccountInvitationRequiresRecentOwnerAndVerifiesWithoutActivatio
 	) {
 		t.Fatal("owner revoked", err)
 	}
-	if err := flow.RevokeAdmin(t.Context(), owner, account.ID); err != nil {
+
+	if _, err := flow.RevokeAdmin(t.Context(), owner, account.ID); err != nil {
 		t.Fatal(err)
 	}
+
 	revoked, err := store.Account(t.Context(), account.ID)
+
 	if err != nil || revoked.Status != identity.AccountRevoked {
 		t.Fatal("revocation failed", err)
 	}
@@ -321,6 +361,7 @@ func TestPostgresAccountInvitationRequiresRecentOwnerAndVerifiesWithoutActivatio
 
 func TestPostgresAccountMailVerificationUsesPurposeWithoutSession(t *testing.T) {
 	flow, store, pool, codec, owner, now := accountMailFixture(t)
+
 	if _, err := pool.Exec(
 		t.Context(),
 		`UPDATE admin_accounts SET email_verified_at=NULL WHERE account_id=$1`,
@@ -328,11 +369,14 @@ func TestPostgresAccountMailVerificationUsesPurposeWithoutSession(t *testing.T) 
 	); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := flow.RequestEmailVerification(t.Context(), owner); err != nil {
 		t.Fatal(err)
 	}
+
 	token := queuedAccountToken(t, pool, codec, notifications.EmailVerification, *now)
-	if err := flow.ResetPassword(
+
+	if _, err := flow.ResetPassword(
 		t.Context(),
 		token,
 		"replacement long password",
@@ -342,10 +386,13 @@ func TestPostgresAccountMailVerificationUsesPurposeWithoutSession(t *testing.T) 
 	) {
 		t.Fatal("verification token reset password", err)
 	}
-	if err := flow.VerifyEmail(t.Context(), token); err != nil {
+
+	if _, err := flow.VerifyEmail(t.Context(), token); err != nil {
 		t.Fatal(err)
 	}
+
 	account, err := store.Account(t.Context(), owner.AccountID)
+
 	if err != nil || account.EmailVerifiedAt == nil || account.AuthVersion != 1 {
 		t.Fatal("email proof changed authority", err)
 	}
@@ -353,21 +400,26 @@ func TestPostgresAccountMailVerificationUsesPurposeWithoutSession(t *testing.T) 
 
 func TestPostgresAccountMailResetRollsBackWhenNoticeQueueRejects(t *testing.T) {
 	flow, store, pool, codec, owner, now := accountMailFixture(t)
+
 	if err := flow.RequestPasswordReset(t.Context(), owner.Email); err != nil {
 		t.Fatal(err)
 	}
+
 	token := queuedAccountToken(t, pool, codec, notifications.PasswordReset, *now)
+
 	before, err := store.Account(t.Context(), owner.AccountID)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := pool.Exec(
 		t.Context(),
 		`ALTER TABLE notification_deliveries ADD CONSTRAINT test_notice_rejection CHECK(kind<>'security_notice')`,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := flow.ResetPassword(
+
+	if _, err := flow.ResetPassword(
 		t.Context(),
 		token,
 		"replacement long password",
@@ -377,18 +429,22 @@ func TestPostgresAccountMailResetRollsBackWhenNoticeQueueRejects(t *testing.T) {
 	) {
 		t.Fatal("notice failure did not abort reset", err)
 	}
+
 	after, err := store.Account(t.Context(), owner.AccountID)
+
 	if err != nil || after.PasswordHash != before.PasswordHash ||
 		after.AuthVersion != before.AuthVersion {
 		t.Fatal("password changed despite failed atomic notice", err)
 	}
+
 	if _, err := pool.Exec(
 		t.Context(),
 		`ALTER TABLE notification_deliveries DROP CONSTRAINT test_notice_rejection`,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := flow.ResetPassword(t.Context(), token, "replacement long password"); err != nil {
+
+	if _, err := flow.ResetPassword(t.Context(), token, "replacement long password"); err != nil {
 		t.Fatal("aborted reset burned the one-use token", err)
 	}
 }

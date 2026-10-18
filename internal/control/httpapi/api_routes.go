@@ -174,8 +174,11 @@ func (s *Server) registerBrowserAdmin(admin chi.Router) {
 	admin.Use(limitRequestBody)
 	admin.Use(s.apiLimiter.Middleware(s.clientKey))
 	if s.loginPage != nil {
-		admin.Handle("/login", s.loginPage)
+		for _, path := range []string{"/login", "/invitation", "/reset-password", "/verify-email", "/complete-account"} {
+			admin.Handle(path, s.loginPage)
+		}
 	}
+
 	admin.Group(func(protected chi.Router) {
 		protected.Use(websession.ParseForm)
 		protected.Use(s.requireAdmin)

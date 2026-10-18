@@ -11,6 +11,7 @@ import (
 
 type loginPageModel struct {
 	ReturnToSecurity bool
+	EmailEnabled     bool
 	FirstRun         bool
 	Migration        bool
 	OwnerPassword    bool

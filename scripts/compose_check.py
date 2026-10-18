@@ -133,6 +133,71 @@ def validate(services, integration):
     print("Compose SQL/Redis secret boundaries and limits are valid")
 
 
+def validate_mail_capture(local, capture):
+    if set(capture) != {*local, "mailpit"}:
+        raise ValueError("Development mail capture must add only Mailpit")
+
+    control = capture["control"]
+    if secrets(control) != secrets(local["control"]) | {"smtp_password", "smtp_tls_ca"}:
+        raise ValueError("Development mail control must receive only its password and public CA")
+
+    expected = {
+        "HOMEHARBOR_SMTP_ENABLED": "true",
+        "HOMEHARBOR_SMTP_HOST": "mailpit",
+        "HOMEHARBOR_SMTP_PORT": "1025",
+        "HOMEHARBOR_SMTP_USERNAME": "homeharbor",
+        "HOMEHARBOR_SMTP_PASSWORD_FILE": "/run/secrets/smtp_password",
+        "HOMEHARBOR_SMTP_FROM": "homeharbor@example.test",
+        "HOMEHARBOR_SMTP_MODE": "starttls",
+        "HOMEHARBOR_SMTP_TIMEOUT": "10s",
+        "HOMEHARBOR_SMTP_CA_FILE": "/run/secrets/smtp_tls_ca",
+    }
+    if {
+        k: v for k, v in control.get("environment", {}).items() if k.startswith("HOMEHARBOR_SMTP_")
+    } != expected:
+        raise ValueError("Development mail must use only authenticated verified-TLS local capture")
+
+    for name, service in local.items():
+        if name != "control" and capture[name] != service:
+            raise ValueError("Development mail must preserve other service boundaries")
+
+    mailpit = capture["mailpit"]
+    expected_environment = {
+        "MP_DATABASE": "/tmp/mailpit.db",
+        "MP_DISABLE_VERSION_CHECK": "true",
+        "MP_SMTP_TLS_CERT": "/run/secrets/smtp_tls_cert",
+        "MP_SMTP_TLS_KEY": "/run/secrets/smtp_tls_key",
+        "MP_SMTP_REQUIRE_STARTTLS": "true",
+        "MP_SMTP_AUTH_FILE": "/run/secrets/smtp_auth",
+        "MP_ALLOWED_HOSTS": "localhost,mailpit",
+    }
+    if mailpit.get("environment") != expected_environment:
+        raise ValueError(
+            "Development mail requires TLS, authentication and allowed hosts without forwarding"
+        )
+    if secrets(mailpit) != {"smtp_auth", "smtp_tls_cert", "smtp_tls_key"} or mailpit.get("volumes"):
+        raise ValueError(
+            "Development mail capture must receive only its authentication and server TLS files"
+        )
+
+    ports = mailpit.get("ports", [])
+    if len(ports) != 1 or ports[0].get("host_ip") != "127.0.0.1" or ports[0].get("target") != 8025:
+        raise ValueError("Development mail must publish only its UI on loopback")
+    if (
+        mailpit.get("image") != "axllent/mailpit:v1.31.6"
+        or not mailpit.get("user")
+        or mailpit["user"].split(":")[0] in ("0", "root")
+        or not mailpit.get("read_only")
+        or set(mailpit.get("cap_drop", [])) != {"ALL"}
+        or mailpit.get("cap_add")
+        or mailpit.get("privileged")
+        or mailpit.get("network_mode") == "host"
+        or str(mailpit.get("mem_limit")) != "268435456"
+        or "no-new-privileges:true" not in mailpit.get("security_opt", [])
+    ):
+        raise ValueError("Development mail capture must remain bounded, non-root and isolated")
+
+
 def environment():
     return {
         **os.environ,
@@ -157,6 +222,8 @@ def main():
     local = render([base], env)["services"]
     integration = render([ROOT / "deploy/compose.integration.yaml"], env)["services"]
     validate(local, integration)
+    capture = render([base, ROOT / "deploy/compose.mailpit.yaml"], env)["services"]
+    validate_mail_capture(local, capture)
     print("Local and integration Compose contracts are valid")
 
 

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 )
 
 type AuditSink interface {
@@ -47,4 +48,38 @@ func (a *IdentityAuditor) RecordIdentity(ctx context.Context, action string, suc
 		Action: action, TargetType: targetType, TargetID: facts.ActorID,
 		Metadata: metadata,
 	})
+}
+
+// RecordAccount keeps the proven account target separate from the caller.
+// Mailbox proof establishes a target, never an authenticated owner actor.
+func (a *IdentityAuditor) RecordAccount(
+	ctx context.Context,
+	action string,
+	subject identity.AccountSubject,
+	success bool,
+) error {
+	facts := audit.FromContext(ctx).Safe()
+	metadata := facts.Metadata()
+	metadata["success"] = success
+	for key, value := range (audit.SubjectSnapshot{Name: subject.Email}).Metadata() {
+		metadata[key] = value
+	}
+
+	id := subject.ID
+	if !audit.PublicText(id, 128) {
+		id = ""
+	}
+
+	return a.sink.Write(
+		ctx,
+		audit.Event{
+			OccurredAt: a.now().UTC(),
+			ActorType:  facts.ActorType,
+			ActorID:    facts.ActorID,
+			Action:     action,
+			TargetType: "admin_account",
+			TargetID:   id,
+			Metadata:   metadata,
+		},
+	)
 }

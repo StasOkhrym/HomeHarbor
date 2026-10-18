@@ -54,6 +54,7 @@ func (a *BrowserAuth) AccountHandler() http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	})
+	a.registerAccountMailRoutes(router)
 	router.Post("/totp/begin", func(w http.ResponseWriter, r *http.Request) {
 		principal, _ := identity.PrincipalFromContext(r.Context())
 		enrollment, err := a.factors.BeginTOTP(r.Context(), principal)

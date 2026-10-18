@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/StasOkhrym/homeharbor/internal/control/audit"
+	"github.com/StasOkhrym/homeharbor/internal/control/identity"
 )
 
 func TestIdentityAuditUsesVerifiedContext(t *testing.T) {
@@ -112,5 +113,53 @@ func TestFactorAuditTargetsPersonalAccountAndKnownActivity(t *testing.T) {
 			audit.ActionLabel(action) == "Other activity" {
 			t.Fatalf("unusable factor history: %+v", sink.event)
 		}
+	}
+}
+
+func TestMailAuditKeepsProvenTargetSeparateFromAdministratorActor(t *testing.T) {
+	sink := &recordingAuditSink{}
+	recorder := NewIdentityAuditor(sink, nil)
+	subject := identity.AccountSubject{ID: "invited-account", Email: "guest@example.test"}
+
+	ctx := audit.WithContext(
+		t.Context(),
+		audit.Context{
+			ActorType:      "admin",
+			ActorID:        identity.OwnerAccountID,
+			ActorName:      "owner@example.test",
+			Authentication: "password_passkey",
+			SourceIP:       "192.0.2.10",
+		},
+	)
+
+	if err := recorder.RecordAccount(ctx, "admin.invited", subject, true); err != nil {
+		t.Fatal(err)
+	}
+
+	event := audit.PublicEvent(sink.event)
+
+	if event.ActorID != identity.OwnerAccountID || event.TargetID != subject.ID ||
+		event.TargetType != "admin_account" ||
+		event.Metadata["target_name"] != subject.Email ||
+		event.Metadata["source_ip"] != "192.0.2.10" ||
+		audit.ActionLabel(event.Action) == "Other activity" {
+		t.Fatal("invitation history attributed target to its owner")
+	}
+
+	proof := audit.WithContext(
+		t.Context(),
+		audit.Context{Authentication: "identity_proof", SourceIP: "192.0.2.20"},
+	)
+
+	if err := recorder.RecordAccount(proof, "admin.password_reset", subject, true); err != nil {
+		t.Fatal(err)
+	}
+
+	event = audit.PublicEvent(sink.event)
+
+	if event.ActorType != "unknown" || event.ActorID != "" || event.TargetID != subject.ID ||
+		event.Metadata["target_name"] != subject.Email ||
+		event.Metadata["auth_method"] != "identity_proof" {
+		t.Fatal("mailbox proof invented an administrative actor or lost target")
 	}
 }

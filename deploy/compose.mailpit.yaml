@@ -1,0 +1,45 @@
+# Development-only capture. Never forwards mail and never changes host trust.
+services:
+  control:
+    environment:
+      HOMEHARBOR_SMTP_ENABLED: "true"
+      HOMEHARBOR_SMTP_HOST: mailpit
+      HOMEHARBOR_SMTP_PORT: "1025"
+      HOMEHARBOR_SMTP_USERNAME: homeharbor
+      HOMEHARBOR_SMTP_PASSWORD_FILE: /run/secrets/smtp_password
+      HOMEHARBOR_SMTP_FROM: homeharbor@example.test
+      HOMEHARBOR_SMTP_MODE: starttls
+      HOMEHARBOR_SMTP_TIMEOUT: 10s
+      HOMEHARBOR_SMTP_CA_FILE: /run/secrets/smtp_tls_ca
+    secrets: [smtp_password, smtp_tls_ca]
+  mailpit:
+    image: axllent/mailpit:v1.31.6
+    user: "${RUNTIME_UID:-65532}:${RUNTIME_GID:-65532}"
+    environment:
+      MP_DATABASE: /tmp/mailpit.db
+      MP_DISABLE_VERSION_CHECK: "true"
+      MP_SMTP_TLS_CERT: /run/secrets/smtp_tls_cert
+      MP_SMTP_TLS_KEY: /run/secrets/smtp_tls_key
+      MP_SMTP_REQUIRE_STARTTLS: "true"
+      MP_SMTP_AUTH_FILE: /run/secrets/smtp_auth
+      MP_ALLOWED_HOSTS: localhost,mailpit
+    secrets: [smtp_auth, smtp_tls_cert, smtp_tls_key]
+    ports: ["127.0.0.1:${DEV_MAILPIT_PORT:-8025}:8025"]
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    read_only: true
+    tmpfs: [/tmp:size=64m]
+    mem_limit: 256m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    init: true
+    restart: unless-stopped
+secrets:
+  smtp_password: { file: "${DEV_MAIL_SECRETS_DIR:-../secrets}/smtp_password" }
+  smtp_auth: { file: "${DEV_MAIL_SECRETS_DIR:-../secrets}/smtp_auth" }
+  smtp_tls_ca: { file: "${DEV_MAIL_SECRETS_DIR:-../secrets}/smtp_tls_ca" }
+  smtp_tls_cert: { file: "${DEV_MAIL_SECRETS_DIR:-../secrets}/smtp_tls_cert" }
+  smtp_tls_key: { file: "${DEV_MAIL_SECRETS_DIR:-../secrets}/smtp_tls_key" }

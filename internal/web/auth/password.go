@@ -35,30 +35,22 @@ func (a *BrowserAuth) passwordProof(w http.ResponseWriter, r *http.Request) {
 		httpresponse.WriteError(w, http.StatusServiceUnavailable, "sign-in unavailable")
 		return
 	}
+
 	var input passwordInput
 	if !httpresponse.DecodeJSON(w, r, &input) {
 		return
 	}
+
 	http.SetCookie(w, expiredPreauthCookie())
+
 	issued, err := a.passwordLogin.Password(r.Context(), input.Email, input.Password)
 	if err != nil {
 		a.audit(r.Context(), "admin.login", false)
 		a.writeProofError(w, err)
 		return
 	}
-	http.SetCookie(
-		w,
-		&http.Cookie{
-			Name:     preauthCookieName,
-			Value:    issued.Token,
-			Path:     "/",
-			Secure:   true,
-			HttpOnly: true,
-			SameSite: http.SameSiteStrictMode,
-			Expires:  issued.ExpiresAt,
-			MaxAge:   300,
-		},
-	)
+
+	http.SetCookie(w, passwordProofCookie(preauthCookieName, issued))
 	w.Header().Set("Cache-Control", "no-store")
 	httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"next": "second_factor"})
 }

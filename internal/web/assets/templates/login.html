@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sign in · HomeHarbor</title>
-    <link rel="stylesheet" href="/assets/admin.css?v=ui-7">
-    <script src="/assets/login.js?v=auth-5" defer></script>
+    <link rel="stylesheet" href="/assets/admin.css?v=ui-8">
+    <script src="/assets/login.js?v=auth-6" defer></script>
   </head>
   <body class="auth-page"
         data-login-return="{{if .ReturnToSecurity}}security{{end}}">
@@ -158,6 +158,9 @@
               <button class="button" type="submit">Continue to verification</button>
             </fieldset>
           </form>
+          {{if .EmailEnabled}}
+            <p class="help"><a href="/admin/reset-password">Forgot your password?</a></p>
+          {{end}}
         {{end}}
         <p id="status" class="auth-status" role="status" aria-live="polite"></p>
         <section id="recovery-codes"

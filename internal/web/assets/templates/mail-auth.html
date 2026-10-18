@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>{{.Title}} · HomeHarbor</title>
+    <link rel="stylesheet" href="/assets/admin.css?v=ui-8">
+    <script src="/assets/login.js?v=auth-6" defer></script>
+  </head>
+  <body class="auth-page">
+    <main class="auth-card"
+          id="mail-flow"
+          data-mail-flow="{{.Flow}}"
+          data-email-enabled="{{.EmailEnabled}}"
+          data-enrolling="{{.Enrolling}}"
+          aria-labelledby="mail-title">
+      <a class="brand"
+         href="/admin/"><span class="brand-mark"
+      aria-hidden="true">↗</span> HomeHarbor</a>
+      {{if .Unavailable}}
+        <h1 id="mail-title">Account setup is unavailable</h1>
+        <p class="muted">We could not check your setup. Try again shortly.</p>
+        <a class="button" href="/admin/complete-account">Try again</a>
+      {{else}}
+        <p class="eyebrow">{{if eq .Flow "invitation"}}Administrator setup · 1 of 2{{else if .Enrolling}}Administrator setup · 2 of 2{{else}}Your HomeHarbor account{{end}}</p>
+        <h1 id="mail-title">{{.Title}}</h1>
+        {{if eq .Flow "invitation"}}
+          <p class="muted">Your network owner invited you to help manage this home. Choose a password, then save a verification method.</p>
+          <form id="accept-invitation" method="post" action="/admin/invitation">
+            <fieldset disabled>
+              <label for="email">Email from your invitation</label>
+              <input id="email"
+                     name="email"
+                     type="email"
+                     autocomplete="username"
+                     spellcheck="false"
+                     maxlength="254"
+                     required>
+              <label for="new-password">Create a password</label>
+              <input id="new-password"
+                     name="password"
+                     type="password"
+                     autocomplete="new-password"
+                     minlength="12"
+                     maxlength="1024"
+                     aria-describedby="password-help"
+                     required>
+              <button id="toggle-new-password"
+                      class="button secondary"
+                      type="button"
+                      aria-controls="new-password"
+                      aria-pressed="false">Show password</button>
+              <p id="password-help"
+                 class="help">At least 12 characters. Save a unique password in your password manager.</p>
+              <button class="button" type="submit">Save password and continue</button>
+            </fieldset>
+          </form>
+        {{else if eq .Flow "reset"}}
+          <section id="reset-request-panel">
+            <p class="muted">We'll send a one-time recovery link if this address has a verified account.</p>
+            {{if .EmailEnabled}}
+              <form id="request-reset" method="post" action="/admin/reset-password">
+                <fieldset disabled>
+                  <label for="email">Email</label>
+                  <input id="email"
+                         name="email"
+                         type="email"
+                         autocomplete="username"
+                         spellcheck="false"
+                         maxlength="254"
+                         required>
+                  <button class="button" type="submit">Send recovery link</button>
+                </fieldset>
+              </form>
+            {{else}}
+              <p class="alert alert-info">Email recovery is not configured. Contact your network owner for help.</p>
+            {{end}}
+          </section>
+          <section id="reset-password-panel" hidden>
+            <p class="muted">Choose a new password. Your passkeys and authenticator stay in place.</p>
+            <form id="reset-password" method="post" action="/admin/reset-password">
+              <fieldset disabled>
+                <label for="new-password">New password</label>
+                <input id="new-password"
+                       name="password"
+                       type="password"
+                       autocomplete="new-password"
+                       minlength="12"
+                       maxlength="1024"
+                       aria-describedby="password-help"
+                       required>
+                <button id="toggle-new-password"
+                        class="button secondary"
+                        type="button"
+                        aria-controls="new-password"
+                        aria-pressed="false">Show password</button>
+                <p id="password-help"
+                   class="help">At least 12 characters. Save a unique password in your password manager.</p>
+                <button class="button" type="submit">Update password</button>
+              </fieldset>
+            </form>
+          </section>
+        {{else if eq .Flow "verify"}}
+          <p class="muted">Confirm the email address you use for HomeHarbor. This step does not sign you in.</p>
+          <form id="verify-email" method="post" action="/admin/verify-email">
+            <fieldset disabled>
+              <button class="button" type="submit">Confirm email address</button>
+            </fieldset>
+          </form>
+        {{else if .Enrolling}}
+          <div id="enrollment-options">
+            <p class="muted">Choose one method for {{.Email}}. You can add another after signing in.</p>
+            <form id="enrollment-passkey"
+                  method="post"
+                  action="/admin/complete-account">
+              <fieldset disabled>
+                <label for="passkey-name">Name this passkey</label>
+                <input id="passkey-name"
+                       name="name"
+                       type="text"
+                       autocomplete="off"
+                       maxlength="80"
+                       placeholder="For example, iPhone or MacBook">
+                <button class="button" type="submit">Create a passkey</button>
+                <p class="help">Use your fingerprint, face recognition, password manager or a security key.</p>
+              </fieldset>
+            </form>
+            <details class="recovery-details">
+              <summary>Use an authenticator app instead</summary>
+              <p class="help">Add an account in your authenticator app and choose to enter a setup key.</p>
+              <form id="enrollment-totp-begin"
+                    method="post"
+                    action="/admin/complete-account">
+                <fieldset disabled>
+                  <button class="button secondary" type="submit">Show setup key</button>
+                </fieldset>
+              </form>
+              <section id="enrollment-totp" hidden>
+                <p class="help">Keep this setup key private. Enter it in your authenticator app.</p>
+                <pre id="enrollment-secret" class="secret-value"></pre>
+                <form id="enrollment-totp-confirm"
+                      method="post"
+                      action="/admin/complete-account">
+                  <fieldset disabled>
+                    <label for="one-time-code">Authenticator code</label>
+                    <input id="one-time-code"
+                           name="code"
+                           type="text"
+                           inputmode="numeric"
+                           autocomplete="one-time-code"
+                           pattern="[0-9]{6}"
+                           maxlength="6"
+                           required>
+                    <button class="button" type="submit">Verify and finish setup</button>
+                  </fieldset>
+                </form>
+              </section>
+            </details>
+          </div>
+        {{else}}
+          <p class="muted">Use the email and password from your invitation to finish setting up a verification method.</p>
+          <form id="enrollment-password"
+                method="post"
+                action="/admin/complete-account">
+            <fieldset disabled>
+              <label for="email">Email</label>
+              <input id="email"
+                     name="email"
+                     type="email"
+                     autocomplete="username"
+                     spellcheck="false"
+                     maxlength="254"
+                     required>
+              <label for="current-password">Password</label>
+              <input id="current-password"
+                     name="password"
+                     type="password"
+                     autocomplete="current-password"
+                     maxlength="1024"
+                     required>
+              <button id="toggle-current-password"
+                      class="button secondary"
+                      type="button"
+                      aria-controls="current-password"
+                      aria-pressed="false">Show password</button>
+              <button class="button" type="submit">Continue account setup</button>
+            </fieldset>
+          </form>
+          <p class="help">Already saved a verification method? Sign in below.</p>
+        {{end}}
+        <p id="status"
+           class="auth-status"
+           role="status"
+           aria-live="polite"
+           tabindex="-1"></p>
+        <section id="mail-complete" hidden aria-labelledby="complete-title">
+          <h2 id="complete-title" tabindex="-1">All set</h2>
+          <p id="complete-message"></p>
+          <a class="button" href="/admin/login?restart=1">Go to sign in</a>
+        </section>
+        <noscript>
+          <p class="alert">Enable JavaScript to continue securely, then reload this page.</p>
+        </noscript>
+      {{end}}
+      <p class="auth-footer"><a href="/admin/login?restart=1">Back to sign in</a> · Private access. Trusted configuration.</p>
+    </main>
+  </body>
+</html>
