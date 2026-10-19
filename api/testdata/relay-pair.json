@@ -1,0 +1,8 @@
+{
+  "network_id": "home",
+  "root_public_key": "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik=",
+  "device_a": "client-1",
+  "device_b": "gateway-1",
+  "payload_hex": "a46776657273696f6e016a6465766963655f6964738268636c69656e742d3169676174657761792d316a6e6574776f726b5f696464686f6d656f726f6f745f7075626c69635f6b657958203b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
+  "session_id": "pair-Kiacja1EQwnhpu9d3m9Dx6Tek6H-MyC3CA1xSPg7fvI"
+}
