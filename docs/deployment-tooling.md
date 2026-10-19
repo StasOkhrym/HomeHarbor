@@ -13,7 +13,17 @@ Shell formatting and workflow validation use pinned Go modules. Install Hadolint
 2.15.1 from its official release and verify the release checksum before execution;
 the macOS ARM64 Python wrapper is not used because its wheel was corrupt.
 
-`make integration` uses disposable DB/Redis containers. `make security` runs
+`make integration` uses disposable DB/Redis containers. `make integration-mail`
+checks authenticated STARTTLS/implicit TLS, MIME and trust/authentication rejection
+against disposable Mailpit captures. `make integration-accounts` combines those
+owned fixtures with the real HTTP composition: owner migration, confirmation,
+invitation/MFA setup, password reset, session/revocation/logout and replica outages.
+Its software authenticator signs real WebAuthn responses; it does not verify native
+browser/Touch ID prompts or VPN access. No host certificate trust changes or real
+provider deliveries are involved. CI and the full gate run these durable contracts;
+the physical macOS sandbox remains a separate optional manual flow.
+
+`make security` runs
 bounded parser fuzzing and the pinned vulnerability scan. `FULL=1 make verify`
 adds these gates, local Compose validation and Linux acceptance. These
 acceptance tests are component tests, not the full invite-to-LAN product scenario.
@@ -43,7 +53,7 @@ still requires a full gate on its exact commit, not merely a successful fast gat
 
 Categories overlap: identity/session/snapshot storage changes run durable contracts
 and protected networking/security checks. Activation workflows live under
-`internal/app/control/workflows`; their transaction contracts are mandatory.
+`internal/control/workflows`; their transaction contracts are mandatory.
 Protected backend changes select both bounded fuzzing and vulnerability scanning.
 
 Current limitations: TOML lint checks syntax; runtime validation rejects invalid

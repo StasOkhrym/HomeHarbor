@@ -59,7 +59,7 @@ jobs:
         run: make verify
       - name: SQL, Redis and captured SMTP integration
         if: fromJSON(needs.changes.outputs.gates).integration
-        run: make integration integration-mail
+        run: make integration integration-mail integration-accounts
       - name: Parser fuzzing
         if: fromJSON(needs.changes.outputs.gates).fuzz
         run: make security SECURITY=fuzz

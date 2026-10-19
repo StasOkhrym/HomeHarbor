@@ -136,12 +136,15 @@ def contracts(env):
     return 0
 
 
-def main():
+def main(contract_runner=None, environment=None):
+    contract_runner = contract_runner or contracts
     require_commands("docker", "go", "openssl")
     if os.getuid() == 0:
         raise ValueError("Run SMTP capture integration as a non-root user")
+
     project = "homeharbor-smtp-integration-" + uuid.uuid4().hex[:12]
     result = 1
+
     with tempfile.TemporaryDirectory(prefix=project + "-") as temporary:
         directory = Path(temporary).resolve()
         ca, private_ca = issue_authority(directory, "HomeHarbor SMTP integration CA")
@@ -153,18 +156,21 @@ def main():
         password_file.chmod(0o600)
         auth.chmod(0o600)
         reservations = []
+
         try:
             for _ in range(4):
                 listener = socket.socket()
                 listener.bind(("127.0.0.1", 0))
                 reservations.append(listener)
+
             ports = [listener.getsockname()[1] for listener in reservations]
             config = capture(directory, ports, certificate, key, auth)
         finally:
             for listener in reservations:
                 listener.close()
+
         env = {
-            **os.environ,
+            **(os.environ if environment is None else environment),
             "TEST_MAILPIT_CAPTURE": "1",
             "TEST_MAILPIT_CA_FILE": str(ca),
             "TEST_MAILPIT_PASSWORD_FILE": str(password_file),
@@ -174,6 +180,7 @@ def main():
             "TEST_MAILPIT_TLS_URL": f"http://127.0.0.1:{ports[3]}",
         }
         compose = ["docker", "compose", "--project-name", project, "--file", str(config)]
+
         try:
             result = run(
                 [*compose, "up", "--detach", "--wait", "--wait-timeout", "60"],
@@ -186,10 +193,11 @@ def main():
                     "Owned Mailpit capture failed to start; no application services were selected"
                 )
             else:
-                result = contracts(env)
+                result = contract_runner(env)
         finally:
             for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
                 signal.signal(sig, signal.SIG_IGN)
+
             try:
                 cleanup = subprocess.run(
                     [*compose, "down", "--volumes", "--remove-orphans"],
@@ -204,6 +212,7 @@ def main():
             except (OSError, subprocess.TimeoutExpired):
                 print("Owned Mailpit cleanup unavailable")
                 result = result or 1
+
     return result
 
 

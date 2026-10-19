@@ -22,14 +22,14 @@ endif
 FUZZ_TIME ?= 5s
 SECURITY ?= all
 
-.PHONY: help doctor fmt lint test verify security integration integration-mail acceptance dev-up dev-down dev-logs dev-trust-ca
+.PHONY: help doctor fmt lint test verify security integration integration-mail integration-accounts acceptance dev-up dev-down dev-logs dev-trust-ca
 
 help:
 	@printf '%s\n' \
 	  'doctor: report missing local dependencies (PROFILE=backend|compose|e2e|sandbox)' \
 	  'fmt / lint / test / verify: format, read-only checks, tests, portable gate' \
 	  'verify FULL=1: additionally integration, security, local Compose and Linux acceptance' \
-	  'security / integration / integration-mail / acceptance: explicit heavier gates' \
+	  'security / integration / integration-mail / integration-accounts / acceptance: explicit heavier gates' \
 	  'dev-up / dev-down / dev-logs / dev-trust-ca: local UI stack and test CA' \
 	  'sandbox-up/trust-ca/client/gateway/prepare/status/logs/check/down/reset: optional manual Mac flow'
 
@@ -73,6 +73,9 @@ integration:
 
 integration-mail:
 	cd "$(ROOT)" && $(PYTHON) scripts/integration_mail.py
+
+integration-accounts:
+	cd "$(ROOT)" && $(PYTHON) scripts/integration_accounts.py
 
 acceptance:
 	cd "$(ROOT)" && sh scripts/acceptance.sh

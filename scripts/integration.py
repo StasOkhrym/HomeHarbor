@@ -154,7 +154,8 @@ def interrupted(signum, _frame):
     raise SystemExit(128 + signum)
 
 
-def main():
+def main(contract_runner=None):
+    contract_runner = contract_runner or contracts
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--external",
@@ -164,6 +165,7 @@ def main():
     args = parser.parse_args()
     for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, interrupted)
+
     env = dict(os.environ)
     if args.external:
         for name, schemes in (
@@ -174,16 +176,20 @@ def main():
                 raise ValueError(f"{name} is required with --external")
             if urlsplit(env[name]).scheme not in schemes or not urlsplit(env[name]).hostname:
                 raise ValueError(f"{name} must be a valid test service URL")
+
         require_commands("go")
-        return contracts(env)
+        return contract_runner(env)
+
     postgres_port = port(env.get("INTEGRATION_POSTGRES_PORT", "55432"), "INTEGRATION_POSTGRES_PORT")
     redis_port = port(env.get("INTEGRATION_REDIS_PORT", "56379"), "INTEGRATION_REDIS_PORT")
     if postgres_port == redis_port:
         raise ValueError("Integration PostgreSQL and Redis ports must differ")
+
     require_commands("docker", "go")
     result = run(["docker", "info"], env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if result:
         raise ValueError("Docker daemon unavailable; start Docker first")
+
     project = "homeharbor-integration-" + uuid.uuid4().hex[:12]
     compose = [
         "docker",
@@ -194,6 +200,7 @@ def main():
         str(ROOT / "deploy/compose.integration.yaml"),
     ]
     status = 0
+
     with tempfile.TemporaryDirectory(prefix=project + "-") as directory:
         env.update(
             INTEGRATION_SECRETS_DIR=directory,
@@ -205,7 +212,9 @@ def main():
             path = Path(directory) / f"{name}_password"
             path.write_text(password)
             path.chmod(0o600)
+
         env.update(test_urls(*passwords, postgres_port, redis_port))
+
         try:
             status = run(
                 [
@@ -221,12 +230,13 @@ def main():
                 env,
             )
             if not status:
-                status = contracts(env)
+                status = contract_runner(env)
         finally:
             # Signals cannot interrupt cleanup halfway; the original exit status
             # or exception remains authoritative when teardown also fails.
             for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
                 signal.signal(sig, signal.SIG_IGN)
+
             try:
                 cleanup = subprocess.run(
                     [*compose, "down", "--volumes", "--remove-orphans"],
@@ -251,6 +261,7 @@ def main():
                 )
                 if not status:
                     status = 1
+
     return status
 
 

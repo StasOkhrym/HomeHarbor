@@ -102,6 +102,7 @@ class ToolingTests(unittest.TestCase):
             "dev-init": "dev_init",
             "dev-mail-init": "dev_mail",
             "integration-mail": "integration_mail",
+            "integration-accounts": "integration_accounts",
             "compose-check": "compose_check",
             "integration": "integration",
             "integration-local": "integration",
@@ -113,6 +114,7 @@ class ToolingTests(unittest.TestCase):
         )
         if name == "integration":
             command.append("--external")
+
         return subprocess.run(
             [*command, *args], cwd=self.root, env=self.env, capture_output=True, text=True
         )
@@ -919,12 +921,18 @@ exit 94
         self.cli("python3", 'printf "%s\\n" "$*" >> python-calls\n')
         for name in ("go", "node"):
             self.cli(name)
+
         result = self.run_script("verify")
+
         self.assertEqual(result.returncode, 0, result.stderr)
+
         calls = (self.root / "make-calls").read_text()
-        self.assertIn("integration integration-mail security", calls)
+
+        self.assertIn("integration integration-mail integration-accounts security", calls)
         self.assertIn("acceptance", calls)
+
         python = (self.root / "python-calls").read_text()
+
         self.assertIn("compose_check.py", python)
         self.assertNotIn("deploy_check.py", python)
 
@@ -1088,6 +1096,66 @@ exit 94
                 self.assertIn("down --volumes --remove-orphans", calls[-1])
                 self.assertFalse((self.root / ".local").exists())
                 self.assertFalse((self.root / "secrets").exists())
+
+    def test_account_journey_gate_requires_contract_and_cleans_both_owned_fixtures(self):
+        for fault in ("none", "missing", "skipped", "go-failure"):
+            with self.subTest(fault=fault):
+                event = {
+                    "Action": "skip" if fault == "skipped" else "pass",
+                    "Test": "OtherTest"
+                    if fault == "missing"
+                    else "TestPostgresRedisMailpitAccountJourney",
+                    "Package": "github.com/StasOkhrym/homeharbor/internal/app/control",
+                }
+                self.cli(
+                    "go",
+                    'test "$TEST_ACCOUNT_JOURNEY" = 1 || exit 91\n'
+                    'test -n "$TEST_DATABASE_URL" && test -n "$TEST_REDIS_URL" || exit 92\n'
+                    'test -s "$TEST_MAILPIT_CA_FILE" || exit 93\n'
+                    + "printf '%s\\n' '"
+                    + json.dumps(event)
+                    + "'\n"
+                    + ("exit 17\n" if fault == "go-failure" else ""),
+                )
+                self.cli("docker", 'printf "%s\\n" "$*" >> docker-calls\n')
+                result = self.run_script("integration-accounts")
+                if fault == "none":
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                elif fault == "go-failure":
+                    self.assertEqual(result.returncode, 17, result.stderr)
+                else:
+                    self.assertNotEqual(
+                        result.returncode, 0, "missing/skipped account journey passed"
+                    )
+
+                calls = (self.root / "docker-calls").read_text().splitlines()
+
+                self.assertEqual(sum(" up --detach --wait " in line for line in calls), 2)
+                self.assertEqual(
+                    sum(" down --volumes --remove-orphans" in line for line in calls), 2
+                )
+                self.assertIn("compose.integration.yaml", calls[-1])
+
+                (self.root / "docker-calls").unlink()
+
+                self.assertFalse((self.root / ".local").exists())
+
+    def test_account_journey_cleans_outer_sql_after_inner_mail_start_failure(self):
+        self.cli(
+            "docker",
+            'printf "%s\\n" "$*" >> docker-calls\n'
+            'case " $* " in *compose.json*" up "*) echo PRIVATE_PROVIDER_REPLY >&2; exit 19 ;; esac\n',
+        )
+        self.cli("go", "exit 93\n")
+        result = self.run_script("integration-accounts")
+
+        self.assertEqual(result.returncode, 19, result.stderr)
+        self.assertNotIn("PRIVATE_PROVIDER_REPLY", result.stdout + result.stderr)
+
+        calls = (self.root / "docker-calls").read_text().splitlines()
+
+        self.assertEqual(sum(" down --volumes --remove-orphans" in line for line in calls), 2)
+        self.assertIn("compose.integration.yaml", calls[-1])
 
     def test_mail_capture_gate_cleans_owned_project_after_failed_start_without_raw_reply(self):
         self.cli(
