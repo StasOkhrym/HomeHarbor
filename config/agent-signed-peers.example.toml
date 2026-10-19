@@ -1,0 +1,32 @@
+# Opt-in Linux gateway for root-signed clients, including the native iOS client.
+# Fixed-session mode remains in agent.example.toml. Do not combine the two modes.
+[node]
+state_path = "state/agent.json"
+control_url = "https://control.example"
+# enrollment_token_file = "state/gateway-enrollment-token"
+name = "linux-gateway"
+
+[relay]
+signed_peers = true
+websocket_url = "wss://relay.example/relay/udp"
+wireguard_address = "127.0.0.1:51820"
+# Each signed client gets an owned dynamic loopback endpoint. Do not set a fixed
+# session, destination, ticket, peer key, overlay, route or direct candidate here.
+
+[wireguard]
+interface = "wg0"
+listen_port = 51820
+
+[coordination]
+url = "wss://control.example/api/v1/coordination"
+root_public_key_file = "state/root.pub"
+network_id = "home"
+
+[dns]
+# Enable only when this gateway is intended to forward the signed LAN scope.
+enable_forwarding = false
+
+[runtime]
+shutdown_timeout = "10s"
+operation_timeout = "30s"
+cleanup_timeout = "5s"

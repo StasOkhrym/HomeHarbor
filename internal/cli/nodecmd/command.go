@@ -19,8 +19,9 @@ var configKeys = map[string]string{
 	"state": "node.state_path", "control": "node.control_url", "token": "node.token",
 	"ca-file": "node.ca_file",
 	"refresh": "node.refresh", "name": "node.name",
-	"relay":        "relay.websocket_url",
-	"relay-ticket": "relay.ticket", "relay-session": "relay.session_id",
+	"relay":              "relay.websocket_url",
+	"relay-signed-peers": "relay.signed_peers",
+	"relay-ticket":       "relay.ticket", "relay-session": "relay.session_id",
 	"relay-destination": "relay.destination_device_id", "bridge-listen": "relay.listen_address",
 	"wireguard-address": "relay.wireguard_address",
 	"wg-interface":      "wireguard.interface", "wg-port": "wireguard.listen_port",
@@ -49,6 +50,7 @@ func newCommand(role nodeapp.Role, run runner) *cobra.Command {
 	if role == nodeapp.Gateway {
 		defaults = config.DefaultAgent()
 	}
+
 	var path string
 	cmd := &cobra.Command{
 		Use:   roleName(role),
@@ -58,9 +60,11 @@ func newCommand(role nodeapp.Role, run runner) *cobra.Command {
 			if err := cmd.Context().Err(); err != nil {
 				return err
 			}
+
 			if role != nodeapp.Client && role != nodeapp.Gateway {
 				return errors.New("invalid node role")
 			}
+
 			changed := make(map[string]string)
 			cmd.Flags().Visit(func(flag *pflag.Flag) {
 				if key, ok := configKeys[flag.Name]; ok {
@@ -75,16 +79,24 @@ func newCommand(role nodeapp.Role, run runner) *cobra.Command {
 			} else {
 				cfg, err = config.LoadClient(source)
 			}
+
 			if err != nil {
 				return err
 			}
+
 			if err := host.ConfigureDrain(cmd.Context(), cfg.Runtime.ShutdownTimeout); err != nil {
 				return err
 			}
+
 			return run(cmd.Context(), role, cfg)
 		},
 	}
 	bindFlags(cmd, &defaults, &path)
+	if role == nodeapp.Gateway {
+		cmd.Flags().BoolVar(&defaults.Relay.SignedPeers, "relay-signed-peers", false,
+			"opt into relay-only paths for signed clients; requires signed coordination")
+	}
+
 	cmd.AddCommand(newIdentityCommand())
 	if role == nodeapp.Client {
 		f := cmd.Flags()
@@ -113,6 +125,7 @@ func newCommand(role nodeapp.Role, run runner) *cobra.Command {
 			"independently provisioned native DNS suffix",
 		)
 	}
+
 	return cmd
 }
 

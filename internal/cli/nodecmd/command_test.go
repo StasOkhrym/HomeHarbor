@@ -83,6 +83,44 @@ func TestHelpDoesNotReadConfigOrStartNode(t *testing.T) {
 	}
 }
 
+func TestSignedRelayOptionIsGatewayOnlyAndExplicitFalseOverridesViperEnvironment(t *testing.T) {
+	t.Setenv("HOMEHARBOR_NODE_RELAY_SIGNED_PEERS", "true")
+	for _, args := range [][]string{nil, {"--relay-signed-peers=false"}} {
+		var got config.Node
+
+		cmd := newCommand(
+			nodeapp.Gateway,
+			func(_ context.Context, _ nodeapp.Role, cfg config.Node) error { got = cfg; return nil },
+		)
+		var stdout, stderr bytes.Buffer
+
+		code := host.Execute(context.Background(), args, &stdout, &stderr, cmd)
+
+		if code != 0 || got.Relay.SignedPeers != (len(args) == 0) {
+			t.Fatalf("gateway source precedence failed: code=%d stderr=%s", code, stderr.String())
+		}
+	}
+
+	called := false
+
+	client := newCommand(
+		nodeapp.Client,
+		func(context.Context, nodeapp.Role, config.Node) error { called = true; return nil },
+	)
+	var stdout, stderr bytes.Buffer
+
+	if code := host.Execute(
+		context.Background(),
+		[]string{"--relay-signed-peers"},
+		&stdout,
+		&stderr,
+		client,
+	); code == 0 ||
+		called {
+		t.Fatal("gateway option admitted at client CLI")
+	}
+}
+
 func TestNativeOptionsBindOnlyAtClientCLI(t *testing.T) {
 	var got config.Node
 

@@ -30,6 +30,7 @@ type NodeIdentity struct {
 }
 
 type NodeRelay struct {
+	SignedPeers       bool   `toml:"signed_peers"`
 	WebSocketURL      string `toml:"websocket_url"`
 	TicketFile        string `toml:"ticket_file"`
 	SessionID         string `toml:"session_id"`

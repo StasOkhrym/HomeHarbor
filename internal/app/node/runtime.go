@@ -55,6 +55,7 @@ func startRuntimeWithNativeHelper(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+
 	kernel := cfg.WireGuard.InterfaceName != "" || cfg.Coordination.URL != ""
 	var root ed25519.PublicKey
 	var err error
@@ -64,6 +65,7 @@ func startRuntimeWithNativeHelper(
 			return nil, err
 		}
 	}
+
 	handedOff := false
 	var httpClient *http.Client
 	if cfg.Identity.CAFile != "" {
@@ -77,6 +79,7 @@ func startRuntimeWithNativeHelper(
 			httpClient.CloseIdleConnections()
 		}
 	}()
+
 	store, err := localstate.Open(cfg.Identity.StatePath)
 	if err != nil {
 		return nil, err
@@ -86,6 +89,7 @@ func startRuntimeWithNativeHelper(
 			result = errors.Join(result, store.Close())
 		}
 	}()
+
 	var guard *nft.Applier
 	if kernel && role == Gateway {
 		guard = nft.NewApplier(cfg.WireGuard.InterfaceName, nil)
@@ -96,16 +100,19 @@ func startRuntimeWithNativeHelper(
 			return nil, err
 		}
 	}
+
 	state, err := prepareIdentity(ctx, cfg, store, httpClient)
 	if err != nil {
 		return nil, err
 	}
+
 	var nativeOwner *macos.Controller
 	if cfg.Native.Enabled {
 		nativeOwner, err = prepareNativeController(cfg, state, root, helper)
 		if err != nil {
 			return nil, err
 		}
+
 		operation, cancel := context.WithTimeout(ctx, cfg.Runtime.OperationTimeout)
 		err = nativeOwner.Close(operation)
 		cancel()
@@ -113,6 +120,7 @@ func startRuntimeWithNativeHelper(
 			return nil, err
 		}
 	}
+
 	var leases *credentials.Owner
 	if cfg.Identity.ControlURL != "" {
 		leases = prepareCredentials(cfg, state, store, httpClient)
@@ -120,10 +128,12 @@ func startRuntimeWithNativeHelper(
 			return nil, err
 		}
 	}
+
 	var source credentials.LeaseSource
 	if leases != nil {
 		source = leases
 	}
+
 	var peers *node.SnapshotWireGuardReconciler
 	var paths *nodepath.PathSelector
 	if kernel && !cfg.Native.Enabled {
@@ -136,17 +146,29 @@ func startRuntimeWithNativeHelper(
 		if err != nil {
 			return nil, err
 		}
+
 		paths = nodepath.NewPathSelector()
 	}
+
 	candidates, err := prepareCandidates(cfg, state, peers, paths)
 	if err != nil {
 		return nil, err
 	}
+
 	var workers []lifecycle.Worker
 	if leases != nil {
 		workers = append(workers, lifecycle.Worker{Name: "credentials", Component: leases})
 	}
-	if cfg.Relay.WebSocketURL != "" || cfg.Relay.Ticket != "" {
+
+	var signedRelay *node.SignedRelaySupervisor
+	if cfg.Relay.SignedPeers {
+		signedRelay, err = prepareSignedRelay(cfg, state, source, root, peers, httpClient)
+		if err != nil {
+			return nil, err
+		}
+
+		workers = append(workers, lifecycle.Worker{Name: "signed-relay", Component: signedRelay})
+	} else if cfg.Relay.WebSocketURL != "" || cfg.Relay.Ticket != "" {
 		relay, err := prepareRelay(
 			ctx,
 			cfg,
@@ -160,8 +182,10 @@ func startRuntimeWithNativeHelper(
 		if err != nil {
 			return nil, err
 		}
+
 		workers = append(workers, lifecycle.Worker{Name: "relay", Component: relay})
 	}
+
 	var coordinationOwner *coordinationRuntime
 	if kernel {
 		coordination, err := prepareCoordination(
@@ -172,6 +196,7 @@ func startRuntimeWithNativeHelper(
 			root,
 			nativeOwner,
 			peers,
+			signedRelay,
 			candidates,
 			paths,
 			httpClient,
@@ -179,10 +204,13 @@ func startRuntimeWithNativeHelper(
 		if err != nil {
 			return nil, err
 		}
+
 		coordinationOwner = coordination
 		workers = append(workers, lifecycle.Worker{Name: "coordination", Component: coordination})
 	}
+
 	handedOff = true
+
 	return &App{workers: workers, close: func() error {
 		// App calls close only after every worker and its cleanup have joined.
 		// A bounded fresh context allows deny installation during cancellation.
@@ -193,20 +221,24 @@ func startRuntimeWithNativeHelper(
 			nativeErr = nativeOwner.Close(cleanup)
 			cancel()
 		}
+
 		if guard != nil {
 			cleanup, cancel := context.WithTimeout(context.Background(), cfg.Runtime.CleanupTimeout)
 			denyErr = guard.Guard(cleanup)
 			cancel()
 		}
+
 		var networkErr error
 		if coordinationOwner != nil {
 			cleanup, cancel := context.WithTimeout(context.Background(), cfg.Runtime.CleanupTimeout)
 			networkErr = coordinationOwner.Close(cleanup, errors.Join(denyErr, nativeErr))
 			cancel()
 		}
+
 		if httpClient != nil {
 			httpClient.CloseIdleConnections()
 		}
+
 		return errors.Join(denyErr, nativeErr, networkErr, store.Close())
 	}}, nil
 }
@@ -404,6 +436,7 @@ func prepareCoordination(
 	root ed25519.PublicKey,
 	nativeOwner *macos.Controller,
 	peers *node.SnapshotWireGuardReconciler,
+	signedRelay *node.SignedRelaySupervisor,
 	candidates candidateBindings,
 	paths *nodepath.PathSelector,
 	httpClient *http.Client,
@@ -411,10 +444,12 @@ func prepareCoordination(
 	if leases == nil {
 		return nil, errors.New("coordination requires a control credential owner")
 	}
+
 	telemetry, err := prepareRuntimeTelemetry(role, cfg, state, paths)
 	if err != nil {
 		return nil, err
 	}
+
 	connection := node.CoordinationConfig{
 		Telemetry:         telemetry,
 		URL:               cfg.Coordination.URL,
@@ -430,11 +465,13 @@ func prepareCoordination(
 	if candidates.set != nil {
 		connection.CandidateChanges = candidates.set.Changes()
 	}
+
 	if role == Client {
 		if cfg.Native.Enabled {
 			if nativeOwner == nil {
 				return nil, errors.New("native client requires its signed network owner")
 			}
+
 			return &coordinationRuntime{
 				connection: connection,
 				worker: lifecycle.Func(func(ctx context.Context) error {
@@ -442,8 +479,10 @@ func prepareCoordination(
 				}),
 			}, nil
 		}
+
 		link := node.NewClientReconciler(cfg.WireGuard.InterfaceName, state.DeviceID)
 		applier := node.NewCompositeSnapshotApplier(nil, link, peers)
+
 		return &coordinationRuntime{
 			connection: connection,
 			worker: lifecycle.Func(func(ctx context.Context) error {
@@ -452,37 +491,79 @@ func prepareCoordination(
 			cleanup: func(ctx context.Context) error { return errors.Join(peers.Close(ctx), link.Close(ctx)) },
 		}, nil
 	}
+
 	var managedDNS *dns.Manager
 	var resolver *node.DNSReconciler
 	if cfg.DNS.Link != "" {
 		var err error
+
 		managedDNS, err = dns.NewManager(cfg.DNS.Link)
 		if err != nil {
 			return nil, err
 		}
+
 		resolver = node.NewDNSReconciler(managedDNS)
 	}
+
 	gateway := node.NewGatewayReconcilerWithOptions(
 		cfg.WireGuard.InterfaceName,
 		state.DeviceID,
 		resolver,
 		cfg.DNS.EnableForwarding,
 	)
-	applier := node.NewCompositeSnapshotApplier(gateway, peers)
+	components := []node.PreparedSnapshotApplier{peers}
+	if signedRelay != nil {
+		components = append(components, signedRelay)
+	}
+
+	applier := node.NewCompositeSnapshotApplier(gateway, components...)
 	worker := lifecycle.Func(func(ctx context.Context) error {
 		return node.RunCoordinationLoop(ctx, connection, applier)
 	})
+
 	return &coordinationRuntime{
 		connection: connection,
 		worker:     worker,
 		cleanup: func(ctx context.Context) error {
-			networkErr := errors.Join(gateway.Close(ctx), peers.Close(ctx))
+			var relayErr error
+			if signedRelay != nil {
+				relayErr = signedRelay.Close(ctx)
+			}
+
+			networkErr := errors.Join(relayErr, gateway.Close(ctx), peers.Close(ctx))
 			if managedDNS != nil {
 				return errors.Join(networkErr, managedDNS.Close(ctx))
 			}
+
 			return networkErr
 		},
 	}, nil
+}
+
+func prepareSignedRelay(
+	cfg config.Node, state node.State, leases credentials.LeaseSource, root ed25519.PublicKey,
+	endpoints node.PeerEndpointUpdater, httpClient *http.Client,
+) (*node.SignedRelaySupervisor, error) {
+	if leases == nil {
+		return nil, errors.New("signed relay requires a current credential owner")
+	}
+
+	return node.NewSignedRelaySupervisor(node.SignedRelayConfig{
+		NetworkID:        cfg.Coordination.NetworkID,
+		RootPublicKey:    root,
+		DeviceID:         state.DeviceID,
+		RelayURL:         cfg.Relay.WebSocketURL,
+		WireGuardAddress: cfg.Relay.WireGuardAddress,
+		HTTPClient:       httpClient,
+		Endpoints:        endpoints,
+		Issue: func(ctx context.Context, sessionID, destinationID string) (node.RelaySession, error) {
+			selected := cfg
+			selected.Relay.SessionID = sessionID
+			selected.Relay.DestinationDevice = destinationID
+
+			return issueRelaySession(ctx, selected, state.DeviceID, leases, httpClient)
+		},
+	})
 }
 
 // RunCommand is shared by the thin entrypoints; it never exits the process.
