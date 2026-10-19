@@ -38,7 +38,8 @@ type RelayBridgeConfig struct {
 	// OnObservedEndpoint is called when udp_pair confirms the address from
 	// which this node reached the relay. It is metadata for candidate exchange,
 	// not an authorization decision or a proof that direct UDP will succeed.
-	OnObservedEndpoint func(netip.AddrPort)
+	OnObservedEndpoint       func(netip.AddrPort)
+	RejectUnconfirmedSources bool
 }
 
 // RelayTicketProvider obtains a fresh short-lived relay ticket. It is called

@@ -32,6 +32,9 @@ type UDPPairBridgeConfig struct {
 	BindTimeout        time.Duration
 	MaxDatagramBytes   int
 	OnObservedEndpoint func(netip.AddrPort)
+	// Relay-only owners reject sources outside the bound relay and local WG
+	// socket. False preserves the legacy encrypted direct-candidate path.
+	RejectUnconfirmedSources bool
 }
 
 type binding struct {
@@ -342,6 +345,7 @@ wait:
 
 func (b *UDPPairBridge) readUDP(socket *net.UDPConn, local bool) {
 	defer b.wg.Done()
+
 	buffer := make([]byte, 65535)
 	for {
 		n, source, err := socket.ReadFromUDP(buffer)
@@ -349,8 +353,10 @@ func (b *UDPPairBridge) readUDP(socket *net.UDPConn, local bool) {
 			if b.ctx.Err() == nil {
 				b.err <- err
 			}
+
 			return
 		}
+
 		b.mu.Lock()
 		relayAddress := cloneUDPAddr(b.relay)
 		pending := b.pending
@@ -361,14 +367,22 @@ func (b *UDPPairBridge) readUDP(socket *net.UDPConn, local bool) {
 				case pending.challenge <- string(buffer[4:n]):
 				default:
 				}
+
 				continue
 			}
 			// During renewal the probe and data ports are identical. Do not
 			// discard ordinary WireGuard packets while waiting for control ACK.
 		}
+
 		if n == 0 || n > b.cfg.MaxDatagramBytes {
 			continue
 		}
+		if b.cfg.RejectUnconfirmedSources &&
+			((local && !sameUDPAddr(source, b.cfg.WireGuardAddress)) ||
+				(!local && !sameUDPAddr(source, relayAddress))) {
+			continue
+		}
+
 		var target *net.UDPAddr
 		outbound := b.udp
 		// Only the configured local WireGuard socket may send to relay.
@@ -378,11 +392,13 @@ func (b *UDPPairBridge) readUDP(socket *net.UDPConn, local bool) {
 		} else {
 			target = b.cfg.WireGuardAddress
 		}
+
 		// Third-party UDP remains an opaque direct-path candidate; the kernel
 		// WireGuard peer authenticates it. It never changes the relay binding.
 		if target == nil {
 			continue
 		}
+
 		if _, err := outbound.WriteToUDP(buffer[:n], target); err != nil {
 			b.err <- err
 			return

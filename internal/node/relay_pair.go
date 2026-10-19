@@ -14,21 +14,24 @@ func newUDPPairBridge(cfg RelayBridgeConfig) (*relay.UDPPairBridge, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	wg, err := net.ResolveUDPAddr("udp", cfg.WireGuardAddress)
 	if err != nil {
 		return nil, err
 	}
+
 	return relay.NewUDPPairBridge(
 		relay.UDPPairBridgeConfig{
-			ControlURL:          cfg.RelayURL,
-			Ticket:              cfg.Ticket,
-			SessionID:           cfg.SessionID,
-			DeviceID:            cfg.DeviceID,
-			DestinationDeviceID: cfg.DestinationDeviceID,
-			ListenAddress:       listen,
-			WireGuardAddress:    wg,
-			HTTPClient:          cfg.RelayHTTPClient,
-			OnObservedEndpoint:  cfg.OnObservedEndpoint,
+			ControlURL:               cfg.RelayURL,
+			Ticket:                   cfg.Ticket,
+			SessionID:                cfg.SessionID,
+			DeviceID:                 cfg.DeviceID,
+			DestinationDeviceID:      cfg.DestinationDeviceID,
+			ListenAddress:            listen,
+			WireGuardAddress:         wg,
+			HTTPClient:               cfg.RelayHTTPClient,
+			OnObservedEndpoint:       cfg.OnObservedEndpoint,
+			RejectUnconfirmedSources: cfg.RejectUnconfirmedSources,
 		},
 	)
 }
