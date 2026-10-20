@@ -32,7 +32,7 @@ help:
 	  'security / integration / integration-mail / integration-accounts / acceptance: explicit heavier gates' \
 	  'dev-up / dev-down / dev-logs / dev-trust-ca: local UI stack and test CA' \
 	  'sandbox-up/trust-ca/client/gateway/prepare/status/logs/check/down/reset: optional manual Mac flow' \
-	  'sandbox-ios-prepare/up LAN_IP=<Mac IPv4>; sandbox-ios-status/down: optional iPhone LAN flow'
+	  'sandbox-ios-prepare/up LAN_IP=<Mac IPv4>; sandbox-ios-status/down/gateway/fingerprint/trust-ca: optional iPhone LAN flow'
 
 doctor:
 	cd "$(ROOT)" && sh scripts/doctor.sh $(or $(PROFILE),backend)
@@ -103,10 +103,18 @@ sandbox-check:
 	@case "$(CHECK)" in allowed|denied) ;; *) echo "Invalid sandbox CHECK" >&2; exit 2;; esac
 	cd "$(ROOT)" && PYTHON="$(PYTHON)" sh scripts/sandbox.sh check "$(CHECK)"
 
-.PHONY: sandbox-ios-prepare sandbox-ios-up sandbox-ios-status sandbox-ios-down
+.PHONY: sandbox-ios-prepare sandbox-ios-up sandbox-ios-status sandbox-ios-down sandbox-ios-gateway sandbox-ios-fingerprint sandbox-ios-trust-ca
 
 sandbox-ios-prepare sandbox-ios-up:
 	cd "$(ROOT)" && $(PYTHON) scripts/sandbox_ios_workflow.py $(patsubst sandbox-ios-%,%,$@) --lan-ip "$(LAN_IP)"
 
-sandbox-ios-status sandbox-ios-down:
+sandbox-ios-status sandbox-ios-down sandbox-ios-fingerprint:
 	cd "$(ROOT)" && $(PYTHON) scripts/sandbox_ios_workflow.py $(patsubst sandbox-ios-%,%,$@)
+
+sandbox-ios-gateway:
+	@case "$(ACTION)" in enroll|run) ;; *) echo "Invalid iPhone gateway ACTION" >&2; exit 2;; esac
+	cd "$(ROOT)" && $(PYTHON) scripts/sandbox_ios_workflow.py gateway --gateway-action "$(ACTION)"
+
+sandbox-ios-trust-ca:
+	@case "$(or $(TRUST_TARGET),control)" in control) ;; *) echo "iPhone Mac trust supports only TRUST_TARGET=control" >&2; exit 2;; esac
+	cd "$(ROOT)" && $(PYTHON) scripts/sandbox_ios_workflow.py trust-ca --browser "$(or $(TRUST_BROWSER),safari)"

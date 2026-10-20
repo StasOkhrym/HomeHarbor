@@ -42,18 +42,23 @@ class HostBoundary(RootBoundary):
         return super().__call__(args, **kwargs)
 
 
+def workflow_fixture(root, boundary):
+    try:
+        module = importlib.import_module("sandbox_ios_workflow")
+    except ModuleNotFoundError:
+        raise AssertionError("isolated iPhone preparation workflow is missing") from None
+
+    root = Path(root)
+    shutil.copytree(ROOT / "config", root / "config")
+    shutil.copytree(ROOT / "deploy", root / "deploy")
+    (root / ".sandbox").mkdir()
+    (root / ".sandbox/legacy").write_bytes(b"preserve-original")
+    return module.IOSWorkflow(root, run=boundary)
+
+
 class IOSWorkflowTests(unittest.TestCase):
     def flow(self, root, boundary):
-        try:
-            module = importlib.import_module("sandbox_ios_workflow")
-        except ModuleNotFoundError:
-            self.fail("isolated iPhone preparation workflow is missing")
-        root = Path(root)
-        shutil.copytree(ROOT / "config", root / "config")
-        shutil.copytree(ROOT / "deploy", root / "deploy")
-        (root / ".sandbox").mkdir()
-        (root / ".sandbox/legacy").write_bytes(b"preserve-original")
-        return module.IOSWorkflow(root, run=boundary)
+        return workflow_fixture(root, boundary)
 
     def bytes(self, state):
         return {p.relative_to(state): p.read_bytes() for p in state.rglob("*") if p.is_file()}

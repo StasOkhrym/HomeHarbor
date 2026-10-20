@@ -134,8 +134,10 @@ def configuration(
     return documents
 
 
-def render_manifest(selected: dict[str, str], gateway: dict[str, str] | None = None) -> bytes:
-    template = (ROOT / "deploy/sandbox/initial-snapshot.toml").read_text()
+def render_manifest(
+    selected: dict[str, str], gateway: dict[str, str] | None = None, *, template_root: Path = ROOT
+) -> bytes:
+    template = (template_root / "deploy/sandbox/initial-snapshot.toml").read_text()
     for original, replacement in (
         ("10.200.0.2", selected["SANDBOX_GATEWAY_OVERLAY_IP"]),
         ("172.29.50.0/24", selected["SANDBOX_PRIVATE_SUBNET"]),
@@ -143,8 +145,10 @@ def render_manifest(selected: dict[str, str], gateway: dict[str, str] | None = N
         ("172.29.50.80", selected["SANDBOX_SITE_IP"]),
     ):
         template = template.replace(original, replacement)
+
     if gateway is None:
         return template.encode()
+
     gateway = validate_public_identity(gateway)
     manifest = tomlkit.parse(template)
     device = manifest["devices"][0]
@@ -155,16 +159,20 @@ def render_manifest(selected: dict[str, str], gateway: dict[str, str] | None = N
     for item in manifest["gateways"]:
         if item["device_id"] == previous_id:
             item["device_id"] = gateway["device_id"]
+
     for item in manifest["routes"]:
         if item["gateway_id"] == previous_id:
             item["gateway_id"] = gateway["device_id"]
+
     for item in manifest["profiles"]:
         item["device_ids"] = [
             gateway["device_id"] if value == previous_id else value for value in item["device_ids"]
         ]
+
     for item in manifest["acl"]:
         if item["source_device_id"] == previous_id:
             item["source_device_id"] = gateway["device_id"]
+
     return tomlkit.dumps(manifest).encode()
 
 

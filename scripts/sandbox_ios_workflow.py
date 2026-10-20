@@ -1,6 +1,7 @@
 """Prepare the separate optional iPhone LAN sandbox; no native Mac helper effects."""
 
 import argparse
+import base64
 import contextlib
 import hashlib
 import ipaddress
@@ -13,14 +14,19 @@ from dataclasses import asdict
 
 from sandbox_identity import unique_fields
 from sandbox_ios_config import (
+    ADMIN_HOST,
+    CONTROL_HOST,
     DIRECTORY,
+    NETWORK_ID,
     PROJECT,
+    RELAY_HOST,
     LANEndpoints,
     configuration_documents,
     render_compose,
 )
+from sandbox_ios_gateway import bound_gateway, gateway_documents
 from sandbox_ios_handoff import public_handoff
-from sandbox_ios_material import material_documents
+from sandbox_ios_material import material_documents, public_root
 from sandbox_ownership import SandboxOwnership, quiet_command
 from sandbox_preflight import (
     PROFILES,
@@ -266,7 +272,7 @@ class IOSWorkflow(SandboxOwnership):
         )
         return env
 
-    def compose(self, *args, timeout=180):
+    def compose(self, *args, timeout=180, input=None):
         self.prepared()
         return self.command(
             [
@@ -286,6 +292,7 @@ class IOSWorkflow(SandboxOwnership):
             ],
             env=self.environment(),
             timeout=timeout,
+            input=input,
         )
 
     def up(self, address):
@@ -340,6 +347,105 @@ class IOSWorkflow(SandboxOwnership):
 
         return endpoints
 
+    def gateway(self, action, *, token=None):
+        if action not in {"enroll", "run"}:
+            raise ValueError("gateway action must be enroll or run")
+
+        self.require_local_docker()
+        self.require_owner()
+
+        with self.lock():
+            self.prepared()
+            resources = self.inventory()
+            existing = bound_gateway(self)
+            if action == "run":
+                if existing is None:
+                    raise ValueError("enroll and bind the actual gateway before starting")
+
+                self.compose("up", "--detach", "--no-deps", "gateway")
+                return
+            if any(
+                item.get("State", {}).get("Running")
+                and item.get("Config", {}).get("Labels", {}).get("com.docker.compose.service")
+                == "gateway"
+                for item in resources["container"]
+            ):
+                raise ValueError("stop the gateway runtime before enrollment/public export")
+
+            if token is None:
+                if sys.stdin.isatty():
+                    import getpass
+
+                    token = getpass.getpass("iPhone gateway-role enrollment token (hidden): ")
+                else:
+                    token = sys.stdin.readline(4097).rstrip("\r\n")
+
+            if (
+                not isinstance(token, str)
+                or not 1 <= len(token) <= 4096
+                or any(not 32 < ord(c) < 127 for c in token)
+            ):
+                raise ValueError("gateway enrollment token is missing or invalid")
+
+            output = self.compose(
+                "run",
+                "--rm",
+                "--no-deps",
+                "-T",
+                "gateway",
+                "enroll",
+                "--control",
+                f"https://{CONTROL_HOST}:8443",
+                "--ca-file",
+                "/run/secrets/relay_tls_ca",
+                "--state",
+                "/var/lib/homeharbor/gateway.json",
+                "--name",
+                "iPhone sandbox gateway",
+                input=token + "\n",
+                timeout=90,
+            )
+            documents = gateway_documents(self, output)
+            for path, (data, mode) in documents.items():
+                self.destination(path)
+                atomic_write(path, data, mode)
+
+    def browser_trust(self, *, browser="safari"):
+        from sandbox_trust import BrowserAudience, trust_ca
+
+        self.require_local_docker()
+        self.require_owner()
+
+        with self.lock():
+            endpoints = self.prepared()
+            audience = BrowserAudience(
+                control_host=ADMIN_HOST,
+                relay_host=RELAY_HOST,
+                server_names=frozenset({ADMIN_HOST, CONTROL_HOST, RELAY_HOST}),
+                ip_addresses=frozenset({endpoints.address}),
+            )
+
+        return trust_ca(self, browser=browser, audience=audience)
+
+    def trust_info(self):
+        self.require_owner()
+
+        with self.lock():
+            self.prepared()
+            path = self.sandbox / "root-public.key"
+            self.destination(path)
+            encoded = public_root(path.read_bytes()).strip()
+            raw = base64.urlsafe_b64decode(encoded + b"=")
+            fingerprint = hashlib.sha256(
+                b"homeharbor/network-trust/v1\0" + raw + NETWORK_ID.encode()
+            ).hexdigest()
+
+            return {
+                "network_id": NETWORK_ID,
+                "root_public_key": encoded.decode("ascii"),
+                "fingerprint": fingerprint,
+            }
+
     def down(self):
         self.require_local_docker()
         self.require_owner()
@@ -369,15 +475,21 @@ class IOSWorkflow(SandboxOwnership):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["prepare", "up", "down", "status"])
+    parser.add_argument(
+        "action", choices=["prepare", "up", "down", "status", "gateway", "fingerprint", "trust-ca"]
+    )
     parser.add_argument("--lan-ip")
+    parser.add_argument("--gateway-action", choices=["enroll", "run"])
+    parser.add_argument("--browser", choices=["safari", "chrome"], default="safari")
     args = parser.parse_args()
     if sys.platform != "darwin":
         raise ValueError("the optional iPhone LAN sandbox requires macOS")
+
     flow = IOSWorkflow()
     if args.action in {"prepare", "up"}:
         if args.lan_ip is None:
             parser.error("provide --lan-ip with the explicit Mac LAN IPv4")
+
         endpoints = flow.prepare(args.lan_ip) if args.action == "prepare" else flow.up(args.lan_ip)
         verb = (
             "prepared; services are stopped"
@@ -387,6 +499,20 @@ def main():
         print(f"iPhone sandbox {verb}")
         print(f"Control: {endpoints.control}; admin: {endpoints.admin}")
         print("Public certificate handoff: .sandbox-ios/public (not installed or trusted)")
+    elif args.action == "gateway":
+        if args.gateway_action is None:
+            parser.error("provide --gateway-action enroll or run")
+
+        flow.gateway(args.gateway_action)
+        print(
+            "Gateway enrolled and manifest bound; companion signing is still required"
+            if args.gateway_action == "enroll"
+            else "Gateway started; signed authorization and packet flow still require checks"
+        )
+    elif args.action == "trust-ca":
+        return flow.browser_trust(browser=args.browser)
+    elif args.action == "fingerprint":
+        print(json.dumps(flow.trust_info(), sort_keys=True))
     elif args.action == "down":
         flow.down()
         print("Owned iPhone sandbox stopped; identities and volumes preserved")
