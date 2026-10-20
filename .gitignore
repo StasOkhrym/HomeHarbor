@@ -18,6 +18,7 @@ config/control.toml
 config/relay.toml
 .local/
 .sandbox/
+.sandbox-ios/
 __pycache__/
 *.py[cod]
 .venv/

@@ -4,6 +4,7 @@
 **/generated/**
 .git/
 .local/
+.sandbox-ios/
 .superpowers/sdd/
 .worktrees/
 state/

@@ -4,6 +4,7 @@
 .worktrees
 .local
 .sandbox
+.sandbox-ios
 state
 secrets
 .env
