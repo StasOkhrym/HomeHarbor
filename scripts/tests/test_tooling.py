@@ -891,11 +891,12 @@ exit 94
         self.cli("python3", "exit 0\n")
         self.cli("go", "printf '%s\\n' \"$*\" >> go-calls\n")
         result = self.run_script("verify")
+
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
             (self.root / "go-calls").read_text().splitlines(),
             [
-                "test -race ./cmd/... ./internal/... ./migrations/... -count=1 -timeout=90s",
+                "test -race ./cmd/... ./internal/... ./migrations/... ./test/... -count=1 -timeout=90s",
                 "build ./cmd/...",
             ],
         )

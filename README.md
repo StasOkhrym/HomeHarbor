@@ -56,6 +56,13 @@ Dockerfiles and configuration formats; generated/vendor files are excluded.
 CI selects gates conservatively; docs-only changes do not build Go. A milestone
 requires the full gate on its exact commit, not just a successful fast job.
 
+The opt-in native contract fixture lives in `test/iosinterop`. From the separate
+iOS checkout, run `make test-go-contract BACKEND_CHECKOUT=/absolute/backend/path`
+to exercise actual Go handlers against Foundation/Network on macOS. It uses
+disposable loopback TLS/UDP sockets and never changes OS trust or routes. Regular
+checks compile and lint the fixture; starting it requires that explicit native
+command. Physical iPhone and real WireGuard acceptance remain separate manual work.
+
 ## Optional manual macOS sandbox
 
 The [one-Mac sandbox flow](docs/manual-testing/macos-sandbox.md) uses isolated
