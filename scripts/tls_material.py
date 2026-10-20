@@ -1,5 +1,6 @@
 """Shared staged TLS generation and verification for dev and manual sandbox."""
 
+import ipaddress
 import re
 import secrets
 
@@ -40,23 +41,53 @@ def issue_authority(directory, subject):
     return ca, key
 
 
-def verify_pair(cert, key, ca, names, *, exact_names=False):
+def ip_sans(addresses):
+    """Validate before any private material or OpenSSL configuration is written."""
+
+    values = []
+    for raw in addresses:
+        try:
+            if not isinstance(raw, str) or "%" in raw:
+                raise ValueError
+
+            address = str(ipaddress.ip_address(raw))
+        except ValueError:
+            raise ValueError("TLS IP SAN must be a numeric address without a scope") from None
+
+        if address in values:
+            raise ValueError("TLS IP SAN addresses must be distinct")
+
+        values.append(address)
+
+    return values
+
+
+def verify_pair(cert, key, ca, names, *, exact_names=False, ip_addresses=()):
+    addresses = ip_sans(ip_addresses)
     purpose = ["-purpose", "sslserver"] if exact_names else []
     quiet_run("openssl", "verify", *purpose, "-CAfile", str(ca), str(cert))
     cert_public = quiet_run("openssl", "x509", "-in", str(cert), "-pubkey", "-noout")
     key_public = quiet_run("openssl", "pkey", "-in", str(key), "-pubout")
     if cert_public != key_public:
         raise ValueError(f"TLS certificate/key mismatch: {cert.name}; restore the matching pair")
+
     description = quiet_run("openssl", "x509", "-in", str(cert), "-noout", "-text").decode()
-    # LibreSSL on macOS lacks verify_hostname. Local certificates use exact SANs.
+    # LibreSSL on macOS lacks verify_hostname. Match typed SANs, never treat a
+    # DNS:192.168.x.x entry as proof of a numeric IP endpoint's identity.
     extension = re.search(r"X509v3 Subject Alternative Name:\s*\n\s*([^\n]+)", description)
-    sans = set(re.findall(r"DNS:([^,\s]+)", extension[1])) if extension else set()
     all_sans = [item.strip() for item in extension[1].split(",")] if extension else []
-    if not set(names).issubset(sans) or (
+    normalized = [
+        "IP Address:" + str(ipaddress.ip_address(item.removeprefix("IP Address:")))
+        if item.startswith("IP Address:")
+        else item
+        for item in all_sans
+    ]
+    expected = {*("DNS:" + name for name in names), *("IP Address:" + ip for ip in addresses)}
+    if not expected.issubset(normalized) or (
         exact_names
         and (
-            set(all_sans) != {"DNS:" + name for name in names}
-            or len(all_sans) != len(names)
+            set(normalized) != expected
+            or len(all_sans) != len(names) + len(addresses)
             or "CA:FALSE" not in description
             or "CA:TRUE" in description
         )
@@ -72,7 +103,11 @@ def same_authority(first, second):
     )
 
 
-def issue(directory, prefix, ca, ca_key, names):
+def issue(directory, prefix, ca, ca_key, names, *, ip_addresses=()):
+    addresses = ip_sans(ip_addresses)
+    if not names and not addresses:
+        raise ValueError("TLS leaf must name at least one DNS or IP identity")
+
     key, cert, csr, ext = [directory / f"{prefix}.{part}" for part in ("key", "cert", "csr", "ext")]
     quiet_run(
         "openssl",
@@ -83,7 +118,7 @@ def issue(directory, prefix, ca, ca_key, names):
         "-nodes",
         "-sha256",
         "-subj",
-        "/CN=" + names[0],
+        "/CN=" + (names[0] if names else addresses[0]),
         "-keyout",
         str(key),
         "-out",
@@ -94,7 +129,7 @@ def issue(directory, prefix, ca, ca_key, names):
         "keyUsage=critical,digitalSignature,keyEncipherment\n"
         "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n"
         "extendedKeyUsage=serverAuth\nsubjectAltName="
-        + ",".join("DNS:" + name for name in names)
+        + ",".join([*("DNS:" + name for name in names), *("IP:" + ip for ip in addresses)])
         + "\n"
     )
     quiet_run(
@@ -117,5 +152,5 @@ def issue(directory, prefix, ca, ca_key, names):
         "-out",
         str(cert),
     )
-    verify_pair(cert, key, ca, names)
+    verify_pair(cert, key, ca, names, ip_addresses=addresses)
     return cert, key

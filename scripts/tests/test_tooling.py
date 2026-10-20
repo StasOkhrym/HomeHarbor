@@ -51,6 +51,80 @@ def strict_tls_handshake(ca, certificate, key, hostname):
     raise AssertionError("bounded in-memory TLS handshake did not complete")
 
 
+class TLSAddressTests(unittest.TestCase):
+    def test_explicit_ip_sans_pass_real_strict_tls_and_exact_identity_verification(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        self.addCleanup(lambda: sys.path.remove(str(ROOT / "scripts")))
+        from tls_material import issue, issue_authority, verify_pair
+
+        with tempfile.TemporaryDirectory(prefix="homeharbor-lan-tls-") as temporary:
+            directory = Path(temporary)
+            ca, ca_key = issue_authority(directory, "Disposable phone LAN CA")
+            certificate, key = issue(
+                directory,
+                "lan",
+                ca,
+                ca_key,
+                ["ios-admin.localhost"],
+                ip_addresses=["192.168.50.7", "127.0.0.1"],
+            )
+            for hostname in ["192.168.50.7", "127.0.0.1", "ios-admin.localhost"]:
+                strict_tls_handshake(ca, certificate, key, hostname)
+
+            for hostname in ["192.168.50.8", "control.localhost"]:
+                with (
+                    self.subTest(hostname=hostname),
+                    self.assertRaises(ssl.SSLCertVerificationError),
+                ):
+                    strict_tls_handshake(ca, certificate, key, hostname)
+
+            verify_pair(
+                certificate,
+                key,
+                ca,
+                ["ios-admin.localhost"],
+                ip_addresses=["192.168.50.7", "127.0.0.1"],
+                exact_names=True,
+            )
+            for addresses in [[], ["192.168.50.8"], ["192.168.50.7"]]:
+                with self.subTest(addresses=addresses), self.assertRaises(ValueError):
+                    verify_pair(
+                        certificate,
+                        key,
+                        ca,
+                        ["ios-admin.localhost"],
+                        ip_addresses=addresses,
+                        exact_names=True,
+                    )
+
+    def test_invalid_ip_sans_fail_before_creating_private_material(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        self.addCleanup(lambda: sys.path.remove(str(ROOT / "scripts")))
+        from tls_material import issue
+
+        for addresses in [
+            ["192.168.1.1\nDNS:other.example"],
+            ["example.com"],
+            ["fe80::1%en0"],
+            ["192.168.1.1", "192.168.1.1"],
+            [True],
+        ]:
+            with self.subTest(addresses=addresses), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+
+                with self.assertRaises(ValueError):
+                    issue(
+                        directory,
+                        "invalid",
+                        directory / "unused-ca",
+                        directory / "unused-key",
+                        ["ios-admin.localhost"],
+                        ip_addresses=addresses,
+                    )
+
+                self.assertEqual(list(directory.iterdir()), [])
+
+
 class ToolingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="homeharbor-tooling-")
