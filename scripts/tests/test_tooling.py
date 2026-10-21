@@ -931,6 +931,21 @@ exit 94
         self.assertIn("down --volumes --remove-orphans", (self.root / "docker-calls").read_text())
         self.assertFalse((self.root / ".local").exists())
 
+    def test_integration_overrides_foreign_identity_with_private_secret_owner(self):
+        self.integration_events()
+        self.env.update(INTEGRATION_UID="42", INTEGRATION_GID="43")
+        self.cli(
+            "docker",
+            'case "$1" in compose) printf "%s:%s" "$INTEGRATION_UID" "$INTEGRATION_GID" '
+            "> integration-identity ;; esac\n",
+        )
+        result = self.run_script("integration-local")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (self.root / "integration-identity").read_text(), f"{os.getuid()}:{os.getgid()}"
+        )
+
     def test_verify_rejects_formatting_changes_without_editing_sources(self):
         source = self.root / "unformatted.go"
         source.write_text("package sample\n")

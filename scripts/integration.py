@@ -217,6 +217,8 @@ def main(contract_runner=None):
             INTEGRATION_SECRETS_DIR=directory,
             INTEGRATION_POSTGRES_PORT=str(postgres_port),
             INTEGRATION_REDIS_PORT=str(redis_port),
+            INTEGRATION_UID=str(os.getuid()),
+            INTEGRATION_GID=str(os.getgid()),
         )
         passwords = [base64.b64encode(secrets.token_bytes(32)).decode() for _ in range(2)]
         for name, password in zip(("postgres", "redis"), passwords, strict=True):
