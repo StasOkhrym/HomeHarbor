@@ -171,6 +171,7 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
   feed.querySelector = (selector) => {
     if (selector === ".resource-list") return { querySelectorAll: () => feed.rows };
     if (selector === "details[open]") return options.openDetails ? {} : null;
+
     return null;
   };
 
@@ -190,6 +191,7 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
       if (selector === `#${kind}-feed`) return feed;
       if (selector === `[data-${kind}-status]`) return status;
       if (selector === `[data-${kind}-apply]`) return apply;
+
       return null;
     },
   };
@@ -200,6 +202,7 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
     },
     addEventListener(name, listener) {
       const handlers = listeners.get(name) || [];
+
       handlers.push(listener);
       listeners.set(name, handlers);
     },
@@ -211,6 +214,7 @@ function activityPage(fetchImpl = async () => ({ ok: false, status: 503 }), opti
     },
     querySelector(selector) {
       if (selector === `[data-${kind}-live]`) return activityVisible ? root : null;
+
       return null;
     },
     querySelectorAll() {
@@ -626,10 +630,12 @@ test("recovery enables secret entry only after intercepting submission", () => {
   const recovery = {
     addEventListener(name, listener) {
       assert.equal(name, "submit");
+
       submit = listener;
     },
     querySelector(selector) {
       assert.equal(selector, "fieldset");
+
       return fieldset;
     },
   };
@@ -926,6 +932,7 @@ function securityPage(fetchImpl, credentialImpl) {
       if (selector === "[data-security-status]") return status;
       if (["[data-totp-secret]", "[data-totp-enrollment]"].includes(selector)) return seed;
       if (["[data-recovery-values]", "[data-security-codes]"].includes(selector)) return codes;
+
       return null;
     },
     querySelectorAll(selector) {

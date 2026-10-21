@@ -62,6 +62,7 @@ function mailPage(flow, fetchImpl, options = {}) {
             "function",
             "private entry enabled before interception",
           );
+
         disabled = value;
       },
     };
