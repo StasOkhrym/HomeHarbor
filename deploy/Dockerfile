@@ -1,4 +1,4 @@
-FROM golang:1.27.2-alpine AS build
+FROM golang:1.27.3-alpine AS build
 ARG TARGETARCH
 WORKDIR /src
 # The Go base already includes CA roots; public modules use the HTTPS proxy.

@@ -19,7 +19,7 @@ interrupted cleanup. It remains a separate manual scenario.
 ## Local backend and web UI
 
 Runtime: Python 3.11+, OpenSSL and running Docker with Compose 2.23+. Initial
-setup also needs Go 1.27.2 to create the encrypted companion signing root.
+setup also needs Go 1.27.3 to create the encrypted companion signing root.
 
 ```sh
 python3 -m venv .venv
