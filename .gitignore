@@ -6,7 +6,6 @@ bin/
 coverage.out
 dist/
 tmp/
-.superpowers/*
 .worktrees/
 secrets/
 *.local.toml
@@ -36,3 +35,5 @@ htmlcov/
 state/
 
 node_modules/
+
+/.superpowers/
