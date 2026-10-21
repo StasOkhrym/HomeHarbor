@@ -200,6 +200,20 @@ class IOSWorkflowTests(unittest.TestCase):
             )
             self.assertEqual((flow.root / ".sandbox/legacy").read_bytes(), b"preserve-original")
 
+    def test_up_refuses_unsupported_hosts_before_creating_state_or_running_commands(self):
+        for host in ["linux", "win32"]:
+            with self.subTest(host=host), tempfile.TemporaryDirectory() as temporary:
+                boundary = HostBoundary()
+                flow = self.flow(temporary, boundary)
+
+                with patch("sandbox_ios_workflow.sys.platform", host):
+                    with self.assertRaisesRegex(ValueError, "requires macOS"):
+                        flow.up("192.168.50.7")
+
+                self.assertFalse(flow.sandbox.exists())
+                self.assertEqual(boundary.effects, [])
+
+    @patch("sandbox_ios_workflow.sys.platform", "darwin")
     def test_up_starts_only_infrastructure_and_down_preserves_own_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
             boundary = HostBoundary()
@@ -236,13 +250,14 @@ class IOSWorkflowTests(unittest.TestCase):
                 any("network-close" in a or "security" == a[0] for a in boundary.effects)
             )
 
+    @patch("sandbox_ios_workflow.sys.platform", "darwin")
     def test_busy_ports_or_edited_compose_refuse_start_before_provisioning(self):
         with tempfile.TemporaryDirectory() as temporary:
             boundary = HostBoundary()
             flow = self.flow(temporary, boundary)
 
             with patch("sandbox_ios_workflow.available_ports", side_effect=ValueError("occupied")):
-                with self.assertRaises(ValueError):
+                with self.assertRaisesRegex(ValueError, "occupied"):
                     flow.up("192.168.50.7")
 
             self.assertFalse(any("compose" in a or "build" in a for a in boundary.effects))
