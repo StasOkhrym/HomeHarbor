@@ -70,28 +70,3 @@ Docker services and a host-native WireGuard client. `make sandbox-up` provisions
 the Docker side; join, companion approval, privileged helper provisioning and
 browser trust are explicit steps. `sandbox-down` preserves identities; reset
 requires stopped, owned resources. No sandbox provisioning runs in required gates.
-
-## Structure and trust
-
-- Thin `cmd/*` entrypoints; explicit application wiring in `internal/app/*`.
-- Vertical `internal/control/*` modules own small repository contracts and
-  `storage` adapters. PostgreSQL remains the actual durable driver.
-- Redis holds ephemeral security state, never LAN authorization or private keys.
-- Chi/`net/http`, typed TOML and a transactional SQL outbox; Traefik owns HTTPS/WSS,
-  not relay UDP. No process-local event bus or external broker is required.
-- Companion signatures authorize network state; ACL is default-deny and partial
-  runtime application must remain fail-closed.
-
-Linux supplies TUN, routing and nftables; Docker does not replace its kernel.
-See [architecture](docs/architecture.md), [local development](docs/local-development.md)
-and [tooling](docs/deployment-tooling.md). Architecture plans and reviews belong to `.superpowers/plans/` and
-`.superpowers/reviews/`; `docs/` contains product documentation.
-
-## Native clients — deferred
-
-Independent local repositories: `~/personal_code/homeharbor-ios` and
-`~/personal_code/homeharbor-android`. Extraction preserved commit history and all
-pending source changes; bytes and modes were verified before backend removal.
-Neither repository depends on a neighboring backend checkout. Native development,
-CI, signing and physical-device tests are deferred to the native-client/Mom Test
-gate. This milestone does not claim a native build or a working phone VPN.
