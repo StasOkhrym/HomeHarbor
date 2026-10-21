@@ -8,7 +8,7 @@ import integration_mail
 from process_owner import run
 from tooling import cli
 
-CONTRACT = "TestPostgresRedisMailpitAccountJourney"
+CONTRACT = integration.COMPOSED_ACCOUNT_CONTRACT
 PACKAGE = "github.com/StasOkhrym/homeharbor/internal/app/control"
 
 

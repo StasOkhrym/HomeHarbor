@@ -65,10 +65,12 @@ class LANEndpoints:
 
 def configuration_documents(root: Path, profile: PoolProfile, endpoints: LANEndpoints):
     """Read public templates only; return private-state candidates without writes."""
+
     if not root.is_absolute() or profile not in PROFILES:
         raise ValueError("iPhone sandbox needs an absolute workspace and vetted network profile")
     if any(ipaddress.ip_address(endpoints.address) in network for network in profile.pools):
         raise ValueError("LAN ingress overlaps the selected Docker or overlay network")
+
     state = root / DIRECTORY
     selected = profile.environment()
 
@@ -79,7 +81,11 @@ def configuration_documents(root: Path, profile: PoolProfile, endpoints: LANEndp
     control["server"]["public_url"] = endpoints.control
     control["auth"]["rp_id"] = ADMIN_HOST
     control["auth"]["rp_origin"] = endpoints.admin
-    control["auth"]["allow_remote_setup"] = False
+    # Docker Desktop does not preserve host loopback as the proxy client IP.
+    # Browser setup is exposed only on the loopback admin ingress; the physical
+    # LAN ingress rejects every auth/admin path. Registered-owner checks still
+    # close first-owner bootstrap after setup.
+    control["auth"]["allow_remote_setup"] = True
     control["relay"]["public_url"] = endpoints.relay
     control["networking"]["network_id"] = NETWORK_ID
     control["security"]["trusted_proxy_cidrs"] = [selected["SANDBOX_PROXY_BACKEND_IP"] + "/32"]
@@ -108,6 +114,7 @@ def configuration_documents(root: Path, profile: PoolProfile, endpoints: LANEndp
     gateway["wireguard"]["listen_port"] = 51820
     for key in ("peer_public_key", "overlay_address", "allowed_prefixes", "routes"):
         gateway["wireguard"][key] = ""
+
     gateway["coordination"]["url"] = f"wss://{CONTROL_HOST}:8443/api/v1/coordination"
     gateway["coordination"]["root_public_key_file"] = "/run/secrets/root_public_key"
     gateway["coordination"]["network_id"] = NETWORK_ID
@@ -152,6 +159,7 @@ def configuration_documents(root: Path, profile: PoolProfile, endpoints: LANEndp
             "service": service,
             "tls": {},
         }
+
     routers["mobilecontrol"]["rule"] += f" && PathRegexp(`{MOBILE_API_PATHS}`)"
     routers["mobilerelay"]["rule"] += " && Path(`/relay/udp`)"
     routes = {
@@ -176,9 +184,20 @@ def configuration_documents(root: Path, profile: PoolProfile, endpoints: LANEndp
                     "certFile": "/run/secrets/frontend_tls_cert",
                     "keyFile": "/run/secrets/frontend_tls_key",
                 }
-            ]
+            ],
+            # Numeric-IP clients omit DNS SNI; serve the same IP-SAN leaf rather
+            # than Traefik's generated self-signed fallback certificate.
+            "stores": {
+                "default": {
+                    "defaultCertificate": {
+                        "certFile": "/run/secrets/frontend_tls_cert",
+                        "keyFile": "/run/secrets/frontend_tls_key",
+                    }
+                }
+            },
         },
     }
+
     return {
         state / f"{name}.toml": tomlkit.dumps(document).encode()
         for name, document in (

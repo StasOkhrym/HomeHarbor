@@ -32,14 +32,17 @@ class IOSSandboxConfigurationTests(unittest.TestCase):
             documents = configuration_documents(root, PROFILES[2], LANEndpoints("192.168.50.7"))
             parsed = {path.name: tomllib.loads(data.decode()) for path, data in documents.items()}
             control = parsed["control.toml"]
+
             self.assertEqual(control["server"]["public_url"], "https://192.168.50.7:19443")
             self.assertEqual(control["auth"]["rp_id"], "ios-admin.localhost")
             self.assertEqual(control["auth"]["rp_origin"], "https://ios-admin.localhost:19445")
-            self.assertFalse(control["auth"]["allow_remote_setup"])
+            self.assertTrue(control["auth"]["allow_remote_setup"])
             self.assertEqual(control["relay"]["public_url"], "wss://192.168.50.7:19444/relay/udp")
             self.assertEqual(control["networking"]["network_id"], "ios-sandbox-network")
             self.assertEqual(control["security"]["trusted_proxy_cidrs"], ["10.252.60.10/32"])
+
             relay = parsed["relay.toml"]
+
             self.assertEqual(relay["server"]["udp_listen_address"], ":52120")
             self.assertEqual(relay["server"]["udp_port_min"], 52120)
             self.assertEqual(relay["server"]["udp_port_max"], 52135)
@@ -47,17 +50,23 @@ class IOSSandboxConfigurationTests(unittest.TestCase):
                 relay["server"]["udp_advertise_hosts"],
                 {"192.168.50.7": "192.168.50.7", "relay.ios-sandbox": "relay"},
             )
+
             admin = parsed["admin.toml"]
+
             self.assertEqual(admin["endpoint"], "https://ios-admin.localhost:19445")
             self.assertEqual(admin["base_url"], "https://192.168.50.7:19443/invite")
             self.assertEqual(admin["network_id"], "ios-sandbox-network")
             self.assertEqual(admin["profile_id"], "ios-sandbox")
             self.assertEqual(admin["root_key_file"], str(root / ".sandbox-ios/root-key.age"))
+
             proxy = parsed["proxy.toml"]
+
             self.assertEqual(proxy["entryPoints"]["websecure"]["address"], ":8443")
             self.assertEqual(proxy["entryPoints"]["mobilecontrol"]["address"], ":8444")
             self.assertEqual(proxy["entryPoints"]["mobilerelay"]["address"], ":8445")
+
             routers = parsed["proxy-routes.toml"]["http"]["routers"]
+
             self.assertEqual(routers["admin"]["rule"], "Host(`ios-admin.localhost`)")
             self.assertEqual(routers["mobilecontrol"]["entryPoints"], ["mobilecontrol"])
             self.assertEqual(routers["mobilecontrol"]["service"], "control")
@@ -65,8 +74,23 @@ class IOSSandboxConfigurationTests(unittest.TestCase):
             self.assertEqual(routers["mobilerelay"]["service"], "relay")
             self.assertEqual((root / ".sandbox/private-state").read_bytes(), b"old-mac-state")
             self.assertFalse((root / ".sandbox-ios").exists(), "Rendering must not write state")
+
             for path in documents:
                 self.assertTrue(path.is_relative_to(root / ".sandbox-ios"))
+
+    def test_numeric_ip_tls_has_a_default_certificate_for_clients_without_sni(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.fixture(temporary)
+            documents = configuration_documents(root, PROFILES[2], LANEndpoints("192.168.50.7"))
+            tls = tomllib.loads(documents[root / ".sandbox-ios/proxy-routes.toml"].decode())["tls"]
+
+            self.assertEqual(
+                tls.get("stores", {}).get("default", {}).get("defaultCertificate"),
+                {
+                    "certFile": "/run/secrets/frontend_tls_cert",
+                    "keyFile": "/run/secrets/frontend_tls_key",
+                },
+            )
 
     def test_gateway_uses_signed_dynamic_peers_without_static_scope(self):
         with tempfile.TemporaryDirectory() as temporary:

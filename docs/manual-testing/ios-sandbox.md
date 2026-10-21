@@ -46,6 +46,8 @@ make sandbox-ios-trust-ca TRUST_BROWSER=chrome
 
 The default adds SSL CA trust only for `ios-admin.localhost` in the login keychain. Chrome requires a different mode: SSL `trustAsRoot` for the exact `CA:FALSE` frontend server certificate, including the selected numeric IP and three generated DNS SANs. This affects that user's SSL applications, not just Chrome. Each mode displays the actual public certificate SHA256 fingerprint and requires you to enter it and complete any macOS prompt yourself. A renewed Chrome leaf needs a new explicit confirmation. Existing different/broader rules are refused; before/after snapshots are saved privately in `.sandbox-ios/browser-trust`. Existing Mac sandbox trust entries are preserved. `TRUST_TARGET=site` is not supported by this Mac admin trust action; phone site trust comes from the separate public profile.
 
+Docker Desktop replaces the original loopback source address before requests reach control. This isolated fixture therefore enables explicit owner setup mode. Its browser/auth routes remain restricted to the loopback admin ingress; the physical LAN allowlist excludes them, and the registered-owner authority closes first-owner bootstrap after setup. This does not change production setup defaults.
+
 Open `https://ios-admin.localhost:19445/admin/login` on the Mac and complete the [initial owner/account setup](../admin-panel.md). This uses a distinct WebAuthn RP from the existing Mac sandbox. SMTP is disabled in this fixture; use a passkey or configured authenticator as the second factor. Production email-delivery acceptance is a separate flow.
 
 Issue a gateway-role token in **Invites**, then use the hidden prompt:

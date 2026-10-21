@@ -16,6 +16,8 @@ from urllib.parse import quote, urlsplit
 from process_owner import run
 from tooling import ROOT, cli, port, require_commands
 
+COMPOSED_ACCOUNT_CONTRACT = "TestPostgresRedisMailpitAccountJourney"
+
 REQUIRED = {
     "PostgreSQL",
     "Redis",
@@ -129,9 +131,14 @@ def contracts(env):
         "./migrations",
         "-run",
         "Integration|Postgres|Redis|Contract|AdvisoryLock|ProfileMembershipRollback",
+        # This journey requires the separately mandatory SMTP capture fixture.
+        # Exclude it from selection; never accept a skipped required contract.
+        "-skip",
+        "^" + COMPOSED_ACCOUNT_CONTRACT + "$",
         "-count=1",
         "-timeout=120s",
     ]
+
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as output:
         status = run(args, env, stdout=output)
         output.seek(0)
@@ -142,10 +149,14 @@ def contracts(env):
                     event = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+
                 if event.get("Output"):
                     print(event["Output"], end="")
+
             return status
+
         validate_events(output)
+
     print("SQL, Redis and migration integration tests passed without skips")
     return 0
 
